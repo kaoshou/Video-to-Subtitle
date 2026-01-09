@@ -30,6 +30,24 @@ Video to Subtitle 是一款基於 OpenAI Whisper 模型的本地端桌面應用�
   6. **轉換完畢**：轉換完畢後，可開啟輸出檔案確認，根據模型不同精準度也有不同，所以請務必後續自行確認字幕的正確性，必要時請進行人工修訂。
   7. 後續可根據遠距教學平台之功能掛上字幕檔，或者將字幕檔與影片進行結合。
 
+## 模型下載位置
+這個程式使用的是 faster-whisper 函式庫，預設會將模型下載到 Hugging Face 的快取目錄中。
+根據作業系統，模型存放的位置如下：
+  * Windows
+    >通常位於： C:\Users\使用者名稱\.cache\huggingface\hub
+    >
+    >在此資料夾內，您會看到類似 models--Systran--faster-whisper-small 的資料夾，裡面就是模型檔案
+    >
+    >AppData 是一個隱藏資料夾，您可能需要在檔案總管中開啟「顯示隱藏的項目」才看得到
+    
+  * macOS
+    >通常位於： /Users/使用者名稱/.cache/huggingface/hub
+    >
+    >.cache 也是隱藏資料夾。您可以在 Finder 中按下 Cmd + Shift + . (句號) 來顯示隱藏檔案，或者在終端機中使用 open ~/.cache/huggingface/hub 直接開啟
+
+這些模型檔案（尤其是 large 模型）可能會佔用 2GB ~ 3GB 的空間；如果您之後想要釋放空間，可以直接刪除該資料夾內的內容，下次程式執行時會再自動下載
+
+
 ## 📥 下載與啟動 (一般 Windows 使用者)
 如果您不需要修改程式碼，請直接下載執行檔。
 1. 下載程式：[前往 Releases 頁面](https://github.com/kaoshou/Video-to-Subtitle/releases) 下載最新的 VideoToSubtitle.exe。
