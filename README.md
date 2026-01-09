@@ -24,6 +24,7 @@ Video to Subtitle 是一款基於 OpenAI Whisper 模型的本地端桌面應用�
       - **Large**：準確度最高，但轉換速度慢。
   3. **選擇運算單元與格式**：
       - **運算單元**：Windows (NVIDIA) 可選 cuda 加速；macOS 或無顯卡請選 cpu。
+          - 若要使用 CUDA 加速，需安裝對應版本的 [cuDNN](https://developer.nvidia.com/cudnn) 與 zlib DLL 檔，並放置於 Library Path 中。詳情請參閱 [CTranslate2 文件](https://opennmt.net/CTranslate2/installation.html)。
       - **輸出格式**：可選擇 SRT, VTT, TXT, TSV 或 JSON。
       - **進階功能**：可視需求勾選「強制繁體中文」(避免出現簡體中文)或「翻譯成英文」。
   5. **開始生成**：點選「開始生成」按鈕，程式將自動處理。等待進度條跑完後，會顯示總耗時與檔案儲存路徑。
@@ -78,14 +79,12 @@ Video to Subtitle 是一款基於 OpenAI Whisper 模型的本地端桌面應用�
     # 安裝套件
     pip install faster-whisper tk tkinterdnd2
     ```
-3. 硬體加速配置
-  * **Windows (NVIDIA GPU)**:若要使用 CUDA 加速，需安裝對應版本的 [cuDNN](https://developer.nvidia.com/cudnn) 與 zlib DLL 檔，並放置於 Library Path 中。詳情請參閱 [CTranslate2 文件](https://opennmt.net/CTranslate2/installation.html)。
-  * **macOS (Apple Silicon)**: 在 macOS 上僅支援 cpu 模式。
-4. 執行程式
+
+3. 執行程式
   ```
     python SubtitleTranscriber.py
   ```
-5. 補充：使用 PyInstaller 打包為單一執行檔
+4. 補充：使用 PyInstaller 打包為單一執行檔
   ```
     pyinstaller --noconsole --onefile --name "VideoToSubtitle" --collect-all tkinterdnd2 --collect-all faster_whisper SubtitleTranscriber.py
   ```
