@@ -330,8 +330,7 @@ class App(BaseClass):
         # List of libraries
         libs = [
             ("faster-whisper", "MIT License", "https://github.com/SYSTRAN/faster-whisper"),
-            ("CTranslate2", "MIT License", "https://github.com/OpenNMT/CTranslate2"),
-            ("FFmpeg", "LGPL v2.1+ / GPL v2+", "https://ffmpeg.org"),
+            ("CTranslate2", "MIT License", "https://github.com/OpenNMT/CTranslate2"),            
             ("CustomTkinter", "MIT License", "https://github.com/TomSchimansky/CustomTkinter"),
             ("tkinterdnd2", "MIT License", "https://github.com/pmgagne/tkinterdnd2")
         ]

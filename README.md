@@ -65,9 +65,6 @@
 
 1. **環境需求**
     - Python 3.9
-    - FFmpeg (選用安裝，部分格式可能需要)
-      * Windows (PowerShell): `winget install Gyan.FFmpeg`
-      * macOS: `brew install ffmpeg`
 
 2. **安裝相依套件**
    也可建立虛擬環境 (Virtual Environment):
@@ -102,4 +99,3 @@
 | [CTranslate2](https://github.com/OpenNMT/CTranslate2) | MIT | 高效能 Transformer 推論引擎 (Backend) |
 | [CustomTkinter](https://github.com/TomSchimansky/CustomTkinter) | MIT | 現代化 GUI 介面框架 |
 | [tkinterdnd2](https://github.com/pmgagne/tkinterdnd2) | MIT | GUI 檔案拖放支援 |
-| [FFmpeg](https://github.com/FFmpeg/FFmpeg) | LGPL/GPL | 多媒體處理 (由 python libraries 內部呼叫) |
