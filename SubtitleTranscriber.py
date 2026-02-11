@@ -1,12 +1,15 @@
+
 import os
-import datetime
 import threading
 import tkinter as tk
-from tkinter import filedialog, ttk, messagebox, scrolledtext
-from faster_whisper import WhisperModel
+from tkinter import filedialog, messagebox
+import customtkinter as ctk
 import webbrowser
-import json
 import platform
+import time
+
+# Import core logic from transcriber.py
+from transcriber import SubtitleTranscriber
 
 # --- 嘗試匯入拖曳功能庫 (tkinterdnd2) ---
 try:
@@ -16,526 +19,535 @@ except ImportError:
     DND_AVAILABLE = False
     print("提示: 若要啟用檔案拖曳功能，請執行 pip install tkinterdnd2")
 
-# --- 核心邏輯區 ---
+# --- 設定外觀 ---
+ctk.set_appearance_mode("System")  # Modes: "System" (standard), "Dark", "Light"
+ctk.set_default_color_theme("blue")  # Themes: "blue" (standard), "green", "dark-blue"
 
-class SubtitleTranscriber:
-    def __init__(self, model_size="small", device="cpu", compute_type="int8"):
-        self.model_size = model_size
-        self.device = device
-        self.compute_type = compute_type
-        self.model = None
+# 支援的檔案格式
+SUPPORTED_EXTENSIONS = {".mp4", ".mp3", ".mkv", ".wav", ".mov", ".avi", ".m4a", ".flac", ".ogg", ".webm"}
 
-    def load_model(self, log_callback):
-        """載入模型 (第一次執行會自動下載)"""
-        log_callback(f"正在載入模型: {self.model_size} (Device: {self.device})...")
-        log_callback("初次執行需下載模型檔案 (約 500MB - 2GB)，請稍候...")
-        try:
-            self.model = WhisperModel(self.model_size, device=self.device, compute_type=self.compute_type)
-            log_callback("模型載入完成！")
-        except Exception as e:
-            # 錯誤捕捉邏輯
-            error_str = str(e).lower()
-            if "cudnn" in error_str or "cublas" in error_str or "load symbol" in error_str or "dll" in error_str:
-                friendly_msg = (
-                    "啟動 GPU 模式失敗。\n"
-                    "原因: 找不到必要的 NVIDIA 驅動程式或 cuDNN 函式庫。\n"
-                    "解決方案: 請將「運算單元」切換為 'cpu' 模式。"
-                )
-                log_callback("錯誤: 缺少 GPU 函式庫，請切換至 CPU 模式。")
-                raise RuntimeError(friendly_msg)
-            
-            log_callback(f"模型載入失敗: {e}")
-            raise e
+# --- 圖形介面區 (CustomTkinter UI) ---
 
-    def format_timestamp(self, seconds, separator=","):
-        """
-        將秒數轉換為時間戳格式
-        SRT 使用逗號 (,) 分隔毫秒: HH:MM:SS,mmm
-        VTT 使用點號 (.) 分隔毫秒: HH:MM:SS.mmm
-        """
-        td = datetime.timedelta(seconds=seconds)
-        total_seconds = int(td.total_seconds())
-        hours = total_seconds // 3600
-        minutes = (total_seconds % 3600) // 60
-        secs = total_seconds % 60
-        millis = int(td.microseconds / 1000)
-        return f"{hours:02}:{minutes:02}:{secs:02}{separator}{millis:03}"
+# 如果環境支援 TkinterDnD，則繼承它，否則只繼承 ctk.CTk
+# 注意: ctk.CTk 已經繼承了 tk.Tk
+BaseClass = ctk.CTk
+if DND_AVAILABLE:
+    class CTkDnD(ctk.CTk, TkinterDnD.DnDWrapper):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.TkdndVersion = TkinterDnD._require(self)
+    BaseClass = CTkDnD
 
-    def run(self, file_path, log_callback, progress_callback, cancel_check_callback=None, output_format="srt", initial_prompt=None, task="transcribe"):
-        """
-        執行轉錄
-        output_format: "srt", "vtt", "txt", "tsv", "json"
-        initial_prompt: 用於引導模型輸出的提示詞 (例如強制繁體中文)
-        task: "transcribe" (轉錄) 或 "translate" (翻譯成英文)
-        """
-        if not self.model:
-            self.load_model(log_callback)
-
-        # --- 記錄開始時間 ---
-        start_time = datetime.datetime.now()
-        log_callback(f"--------------------------------------------------")
-        log_callback(f"任務開始時間: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        log_callback(f"處理檔案: {os.path.basename(file_path)}")
-        log_callback(f"任務模式: {'翻譯成英文' if task == 'translate' else '原語轉錄'}")
-        log_callback(f"輸出格式: {output_format.upper()}")
+class App(BaseClass):
+    def __init__(self):
+        super().__init__()
         
-        if initial_prompt and task == "transcribe":
-            log_callback(f"啟用提示詞優化: {initial_prompt}")
+        self.title("Video to Subtitle - 本地語音轉字幕工具")
+        self.geometry("780x720")
         
-        # 準備參數
-        transcribe_options = {
-            "beam_size": 5,
-            "task": task  # 新增 task 參數
-        }
-        if initial_prompt:
-            transcribe_options["initial_prompt"] = initial_prompt
-
-        # 執行轉錄
-        segments, info = self.model.transcribe(file_path, **transcribe_options)
-        
-        log_callback(f"偵測來源語言: {info.language.upper()} (信心度: {info.language_probability:.2f})")
-        
-        # 決定副檔名
-        ext = f".{output_format.lower()}"
-        # 如果是翻譯模式，在檔名後加上 .en 標示
-        suffix = ".en" if task == "translate" else ""
-        
-        # 初始輸出路徑
-        base_output_path = os.path.splitext(file_path)[0] + suffix + ext
-        output_path = base_output_path
-        
-        # 檢查檔案是否存在，若存在則自動編號 (避免覆蓋)
-        counter = 1
-        while os.path.exists(output_path):
-            path_no_ext = os.path.splitext(base_output_path)[0]
-            output_path = f"{path_no_ext}_{counter}{ext}"
-            counter += 1
-        
-        # 用於收集 JSON 資料
-        json_results = []
-        
-        try:
-            # 如果不是 JSON，先開啟檔案準備寫入
-            file_handle = None
-            if output_format.lower() != "json":
-                file_handle = open(output_path, "w", encoding="utf-8")
-                
-                # 寫入標頭
-                if output_format.lower() == "vtt":
-                    file_handle.write("WEBVTT\n\n")
-                elif output_format.lower() == "tsv":
-                    file_handle.write("start\tend\ttext\n")
-
-            for i, segment in enumerate(segments):
-                # 檢查是否取消
-                if cancel_check_callback and cancel_check_callback():
-                    log_callback(">>> 使用者取消了作業 <<<")
-                    if file_handle:
-                        file_handle.write("\n[Interrupted by User]\n")
-                    return None 
-
-                text = segment.text.strip()
-                start_sec = segment.start
-                end_sec = segment.end
-                
-                # 在介面上顯示進度
-                log_timestamp = self.format_timestamp(start_sec)
-                log_callback(f"[{log_timestamp}] {text}")
-
-                # 處理各格式輸出
-                if output_format.lower() == "json":
-                    json_results.append({
-                        "id": i,
-                        "start": start_sec,
-                        "end": end_sec,
-                        "text": text
-                    })
-                
-                elif file_handle:
-                    if output_format.lower() == "txt":
-                        file_handle.write(f"{text}\n")
-                    
-                    elif output_format.lower() == "tsv":
-                        # TSV 標準: start(ms) end(ms) text
-                        file_handle.write(f"{int(start_sec * 1000)}\t{int(end_sec * 1000)}\t{text}\n")
-                    
-                    else:
-                        # SRT / VTT
-                        separator = "." if output_format.lower() == "vtt" else ","
-                        start_time_str = self.format_timestamp(start_sec, separator)
-                        end_time_str = self.format_timestamp(end_sec, separator)
-                        
-                        if output_format.lower() == "srt":
-                            file_handle.write(f"{i + 1}\n")
-                            file_handle.write(f"{start_time_str} --> {end_time_str}\n")
-                            file_handle.write(f"{text}\n\n")
-                        elif output_format.lower() == "vtt":
-                            file_handle.write(f"{start_time_str} --> {end_time_str}\n")
-                            file_handle.write(f"{text}\n\n")
-
-            # 迴圈結束後，如果是 JSON 則寫入檔案
-            if output_format.lower() == "json":
-                with open(output_path, "w", encoding="utf-8") as f:
-                    json.dump(json_results, f, ensure_ascii=False, indent=2)
-
-        finally:
-            if file_handle:
-                file_handle.close()
-        
-        # --- 記錄結束時間與耗時 ---
-        end_time = datetime.datetime.now()
-        duration = end_time - start_time
-        
-        log_callback(f"--------------------------------------------------")
-        log_callback(f"任務結束時間: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        log_callback(f"總耗時: {duration}")
-        log_callback(f"檔案已儲存於: {output_path}")
-        
-        return output_path
-
-# --- 圖形介面區 (UI) ---
-
-class App:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Video to Subtitle - 本地語音轉字幕工具")
-        self.root.geometry("780x740") # 調整高度
-        
-        # 定義顏色與變數
-        self.colors = {
-            "bg_main": "#f4f6f9",
-            "bg_card": "#ffffff",
-            "primary": "#0078d7",
-            "primary_hover": "#005a9e",
-            "danger": "#d9534f",
-            "danger_hover": "#c9302c",
-            "text": "#333333",
-            "text_light": "#666666"
-        }
-
-        self.root.configure(bg=self.colors["bg_main"])
-        
-        # --- 樣式設定 ---
-        self.style = ttk.Style()
-        self.style.theme_use('clam') 
-        
-        default_font = ("Microsoft JhengHei UI", 10)
-        self.style.configure(".", font=default_font, background=self.colors["bg_main"], foreground=self.colors["text"])
-        self.style.configure("Card.TFrame", background=self.colors["bg_card"], relief="flat")
-        self.style.configure("Modern.TLabelframe", 
-                             background=self.colors["bg_card"], 
-                             relief="solid", borderwidth=1, bordercolor="#e0e0e0")
-        self.style.configure("Modern.TLabelframe.Label", 
-                             font=("Microsoft JhengHei UI", 11, "bold"), 
-                             foreground=self.colors["primary"], background=self.colors["bg_card"])
-        self.style.configure("Modern.TEntry", padding=5, relief="flat", borderwidth=1)
-        self.style.configure("TButton", padding=6, font=("Microsoft JhengHei UI", 10))
-        self.style.configure("Accent.TButton", 
-                             font=("Microsoft JhengHei UI", 11, "bold"), 
-                             background=self.colors["primary"], foreground="white", borderwidth=0, focuscolor="none")
-        self.style.map("Accent.TButton", 
-                       background=[("active", self.colors["primary_hover"]), ("disabled", "#cccccc")],
-                       foreground=[("disabled", "#ffffff")])
-        self.style.configure("Danger.TButton", 
-                             font=("Microsoft JhengHei UI", 11, "bold"), 
-                             background=self.colors["danger"], foreground="white", borderwidth=0, focuscolor="none")
-        self.style.map("Danger.TButton", 
-                       background=[("active", self.colors["danger_hover"]), ("disabled", "#cccccc")],
-                       foreground=[("disabled", "#ffffff")])
-        
-        self.style.configure("TCheckbutton", background=self.colors["bg_card"], font=("Microsoft JhengHei UI", 10))
-
         # 初始化變數
         self.transcriber = None
         self.is_running = False
         self.cancel_flag = False
-        self.path_var = tk.StringVar()
-        self.model_var = tk.StringVar(value="small")
-        self.device_var = tk.StringVar(value="cpu")
-        self.format_var = tk.StringVar(value="srt")
-        self.zh_tw_var = tk.BooleanVar(value=False) 
-        self.translate_en_var = tk.BooleanVar(value=False) # 翻譯成英文選項
+        self.file_list = [] # 儲存多個檔案路徑
+        self.model_var = ctk.StringVar(value="medium")
+        self.device_var = ctk.StringVar(value="cpu")
+        self.format_var = ctk.StringVar(value="srt")
+        self.zh_tw_var = ctk.BooleanVar(value=False) 
+        self.translate_en_var = ctk.BooleanVar(value=False) 
+
+        # Grid configuration
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1) # Main content expands
 
         # 建構 UI
-        self.create_menu()
         self.create_widgets()
         self.setup_dnd()
 
     def setup_dnd(self):
         if DND_AVAILABLE:
             try:
-                self.root.drop_target_register(DND_FILES)
-                self.root.dnd_bind('<<Drop>>', self.on_drop)
+                # 綁定拖曳功能到主視窗
+                self.drop_target_register(DND_FILES)
+                self.dnd_bind('<<Drop>>', self.on_drop)
             except Exception as e:
                 print(f"拖曳功能初始化失敗: {e}")
 
     def on_drop(self, event):
-        file_path = event.data
-        if file_path.startswith('{') and file_path.endswith('}'):
-            file_path = file_path[1:-1]
-        if '}' in file_path: 
-            file_path = file_path.split('}')[0]
-            if file_path.startswith('{'):
-                file_path = file_path[1:]
-        self.path_var.set(file_path)
-        self.status_var.set(f"已載入檔案: {os.path.basename(file_path)}")
-        self.btn_run.focus_set()
+        files_data = event.data
+        # 處理 tkinterdnd2 的路徑格式 (大括號包覆含空白的路徑)
+        new_files = self.parse_dnd_files(files_data)
+        
+        valid_files_added = 0
+        invalid_files = []
 
-    def create_menu(self):
-        menubar = tk.Menu(self.root)
-        file_menu = tk.Menu(menubar, tearoff=0)
-        file_menu.add_command(label="開啟影片 (Open)", command=self.browse_file)
-        file_menu.add_separator()
-        file_menu.add_command(label="離開 (Exit)", command=self.root.quit)
-        menubar.add_cascade(label="檔案 (File)", menu=file_menu)
-        help_menu = tk.Menu(menubar, tearoff=0)
-        help_menu.add_command(label="關於本程式 (About)", command=self.show_about)
-        menubar.add_cascade(label="說明 (Help)", menu=help_menu)
-        self.root.config(menu=menubar)
+        for f in new_files:
+            # 去除可能的引號與多餘空白
+            f = f.strip().strip('"').strip("'")
+            
+            if not os.path.exists(f): 
+                continue
+
+            # 驗證副檔名
+            _, ext = os.path.splitext(f)
+            if ext.lower() in SUPPORTED_EXTENSIONS:
+                if f not in self.file_list:
+                    self.file_list.append(f)
+                    valid_files_added += 1
+            else:
+                invalid_files.append(os.path.basename(f))
+        
+        self.update_file_list_ui()
+        
+        status_msg = f"已加入 {valid_files_added} 個檔案 (總計: {len(self.file_list)})"
+        if invalid_files:
+            # 顯示警告，但不要太打擾，用 status bar 提醒或彈窗
+            msg = f"已忽略不支援的檔案:\n{', '.join(invalid_files[:3])}"
+            if len(invalid_files) > 3: msg += "..."
+            self.log(f"⚠️ {msg}")
+            messagebox.showwarning("格式不支援", f"以下檔案非影片或音訊格式，已忽略：\n\n{msg}")
+        
+        if valid_files_added > 0:
+            self.status_label.configure(text=status_msg)
+            self.btn_run.focus_set()
+
+    def parse_dnd_files(self, data):
+        # 簡單且強健的 Windows 路徑解析
+        if not data: return []
+        
+        # 如果是單一檔案且被 {} 包圍 (tkinterdnd2 常見格式)
+        if data.startswith('{') and data.endswith('}') and data.count('{') == 1:
+            return [data[1:-1]]
+            
+        # 嘗試利用 tk 的 splitlist (處理多個檔案與帶空白路徑)
+        try:
+             # self.tk 是主視窗底層的 Tk 物件
+             return self.tk.splitlist(data)
+        except:
+             # Fallback: 簡單空白分割 (失敗率較高)
+             return data.split()
+
+    def update_file_list_ui(self):
+        self.textbox_files.configure(state="normal")
+        self.textbox_files.delete("0.0", "end")
+        for f in self.file_list:
+            self.textbox_files.insert("end", f"{f}\n")
+        self.textbox_files.configure(state="disabled")
 
     def create_widgets(self):
-        main_container = ttk.Frame(self.root, padding=20)
-        main_container.pack(fill="both", expand=True)
-
-        header_frame = ttk.Frame(main_container)
-        header_frame.pack(fill="x", pady=(0, 20))
-        title_label = ttk.Label(header_frame, text="AI 語音轉字幕工具", 
-                                font=("Microsoft JhengHei UI", 20, "bold"), foreground=self.colors["text"])
-        title_label.pack(anchor="w")
+        # --- 1. Header Frame (Top) ---
+        self.header_frame = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
+        self.header_frame.grid(row=0, column=0, sticky="ew", padx=20, pady=(15, 0))
         
-        os_name = platform.system()
-        subtitle_text = "使用 OpenAI Whisper 本地端模型"
-        if os_name == "Darwin":
-            subtitle_text += " (macOS M-Chip Optimized)"
-        subtitle_label = ttk.Label(header_frame, text=subtitle_text, 
-                                   font=("Microsoft JhengHei UI", 10), foreground=self.colors["text_light"])
-        subtitle_label.pack(anchor="w")
-
-        # --- 卡片 1: 檔案選擇 ---
-        frame_file = ttk.LabelFrame(main_container, text=" 1. 影片來源 ", padding=15, style="Modern.TLabelframe")
-        frame_file.pack(fill="x", pady=(0, 15))
-        file_inner = ttk.Frame(frame_file, style="Card.TFrame")
-        file_inner.pack(fill="x")
-        entry_path = ttk.Entry(file_inner, textvariable=self.path_var, font=("Consolas", 10))
-        entry_path.pack(side="left", fill="x", expand=True, padx=(0, 10), ipady=3)
-        btn_browse = ttk.Button(file_inner, text="瀏覽檔案...", command=self.browse_file)
-        btn_browse.pack(side="right")
-
-        # --- 卡片 2: 設定選項 ---
-        frame_settings = ttk.LabelFrame(main_container, text=" 2. 轉換設定 ", padding=15, style="Modern.TLabelframe")
-        frame_settings.pack(fill="x", pady=(0, 15))
+        self.logo_label = ctk.CTkLabel(self.header_frame, text="Video to Subtitle", font=ctk.CTkFont(size=24, weight="bold"))
+        self.logo_label.pack(side="left")
         
-        # Row 0: 選項
-        ttk.Label(frame_settings, text="準確度 (Model):", background=self.colors["bg_card"]).grid(row=0, column=0, padx=(0, 5), sticky="w")
-        combo_model = ttk.Combobox(frame_settings, textvariable=self.model_var, 
-                                   values=["tiny", "base", "small", "medium", "large-v3"], 
-                                   state="readonly", width=10)
-        combo_model.grid(row=0, column=1, sticky="w")
+        self.subtitle_label = ctk.CTkLabel(self.header_frame, text="本地語音轉字幕工具", font=ctk.CTkFont(size=14), text_color="gray")
+        self.subtitle_label.pack(side="left", padx=(10, 0), pady=(5, 0))
+
+        # --- 2. Main Content Area (Middle) ---
+        self.main_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.main_frame.grid(row=1, column=0, sticky="nsew", padx=20, pady=10)
+        self.main_frame.grid_columnconfigure(0, weight=1)
+        self.main_frame.grid_rowconfigure(4, weight=1) # Log area expands
+
+        # File Selection Frame (Batch Processing)
+        self.file_frame = ctk.CTkFrame(self.main_frame)
+        self.file_frame.grid(row=0, column=0, sticky="ew", pady=(0, 15))
+        self.file_frame.grid_columnconfigure(0, weight=1) # Textbox expands
         
-        ttk.Label(frame_settings, text="運算單元:", background=self.colors["bg_card"]).grid(row=0, column=2, padx=(15, 5), sticky="w")
+        self.label_file = ctk.CTkLabel(self.file_frame, text="1. 待處理清單 (支援拖曳多個檔案)", font=ctk.CTkFont(size=14, weight="bold"))
+        self.label_file.grid(row=0, column=0, columnspan=2, padx=15, pady=(10, 0), sticky="w")
+
+        # File List Textbox
+        self.textbox_files = ctk.CTkTextbox(self.file_frame, height=100)
+        self.textbox_files.grid(row=1, column=0, padx=15, pady=10, sticky="ew")
+        self.textbox_files.configure(state="disabled") # Read-only
         
-        if os_name == "Darwin":
-            device_values = ["cpu"]
-        else:
-            device_values = ["cpu", "cuda"]
-            
-        combo_device = ttk.Combobox(frame_settings, textvariable=self.device_var, 
-                                    values=device_values, 
-                                    state="readonly", width=8)
-        combo_device.grid(row=0, column=3, sticky="w")
-        if self.device_var.get() not in device_values:
-            self.device_var.set("cpu")
+        # Buttons Frame within File Frame (Right side)
+        self.btns_file_frame = ctk.CTkFrame(self.file_frame, fg_color="transparent")
+        self.btns_file_frame.grid(row=1, column=1, padx=15, pady=10, sticky="n")
+        
+        self.btn_add = ctk.CTkButton(self.btns_file_frame, text="加入檔案...", command=self.browse_file, width=120)
+        self.btn_add.pack(fill="x", pady=(0, 5))
+        
+        self.btn_clear = ctk.CTkButton(self.btns_file_frame, text="清除清單", command=self.clear_files, width=120, fg_color="gray")
+        self.btn_clear.pack(fill="x")
 
-        ttk.Label(frame_settings, text="輸出格式:", background=self.colors["bg_card"]).grid(row=0, column=4, padx=(15, 5), sticky="w")
-        combo_format = ttk.Combobox(frame_settings, textvariable=self.format_var, 
-                                   values=["srt", "vtt", "txt", "tsv", "json"], 
-                                   state="readonly", width=8)
-        combo_format.grid(row=0, column=5, sticky="w")
+        # Settings Frame
+        self.settings_frame = ctk.CTkFrame(self.main_frame)
+        self.settings_frame.grid(row=1, column=0, sticky="ew", pady=(0, 15))
+        self.settings_frame.grid_columnconfigure(1, weight=1)
+        self.settings_frame.grid_columnconfigure(3, weight=1)
+        
+        self.label_settings = ctk.CTkLabel(self.settings_frame, text="2. 轉換設定", font=ctk.CTkFont(size=14, weight="bold"))
+        self.label_settings.grid(row=0, column=0, columnspan=4, padx=15, pady=(10, 5), sticky="w")
 
-        # Row 1: 進階選項 (Checkbox)
-        # 用一個 frame 來裝兩個 checkbox 讓排列更整齊
-        checkbox_frame = ttk.Frame(frame_settings, style="Card.TFrame")
-        checkbox_frame.grid(row=1, column=0, columnspan=6, sticky="w", pady=(10, 0))
+        # Row 1: Comboboxes
+        self.label_model = ctk.CTkLabel(self.settings_frame, text="準確度 (Model):")
+        self.label_model.grid(row=1, column=0, padx=15, pady=5, sticky="e")
+        self.combo_model = ctk.CTkOptionMenu(self.settings_frame, variable=self.model_var, 
+                                             values=["tiny", "base", "small", "medium", "large-v3"])
+        self.combo_model.grid(row=1, column=1, padx=15, pady=5, sticky="ew")
+        
+        self.label_device = ctk.CTkLabel(self.settings_frame, text="運算單元:")
+        self.label_device.grid(row=1, column=2, padx=15, pady=5, sticky="e")
+        
+        device_values = ["cpu", "cuda"] if platform.system() != "Darwin" else ["cpu"]
+        self.combo_device = ctk.CTkOptionMenu(self.settings_frame, variable=self.device_var, values=device_values)
+        self.combo_device.grid(row=1, column=3, padx=15, pady=5, sticky="ew")
 
-        chk_zhtw = ttk.Checkbutton(checkbox_frame, text="強制繁體中文 (Traditional Chinese)", 
-                                   variable=self.zh_tw_var, style="TCheckbutton", command=self.on_check_zhtw)
-        chk_zhtw.pack(side="left", padx=(0, 20))
+        # Row 2: Format & Checkbox
+        self.label_fmt = ctk.CTkLabel(self.settings_frame, text="輸出格式:")
+        self.label_fmt.grid(row=2, column=0, padx=15, pady=5, sticky="e")
+        self.combo_fmt = ctk.CTkOptionMenu(self.settings_frame, variable=self.format_var, 
+                                           values=["srt", "vtt", "txt", "tsv", "json"])
+        self.combo_fmt.grid(row=2, column=1, padx=15, pady=5, sticky="ew")
+        
+        # Checkboxes 
+        self.chk_frame = ctk.CTkFrame(self.settings_frame, fg_color="transparent")
+        self.chk_frame.grid(row=2, column=2, columnspan=2, sticky="w")
+        
+        self.chk_zhtw = ctk.CTkCheckBox(self.chk_frame, text="強制繁體中文", variable=self.zh_tw_var, command=self.on_check_zhtw)
+        self.chk_zhtw.pack(side="left", padx=15, pady=5)
 
-        chk_trans = ttk.Checkbutton(checkbox_frame, text="翻譯成英文字幕 (Translate to English)", 
-                                   variable=self.translate_en_var, style="TCheckbutton", command=self.on_check_trans)
-        chk_trans.pack(side="left")
+        self.chk_trans = ctk.CTkCheckBox(self.chk_frame, text="翻譯成英文", variable=self.translate_en_var, command=self.on_check_trans)
+        self.chk_trans.pack(side="left", padx=15, pady=5)
 
-        # Row 2: 提示文字
-        self.hint_label = ttk.Label(frame_settings, text="提示: 勾選「強制繁體中文」可避免出現簡體字。", 
-                  font=("Microsoft JhengHei UI", 9), foreground=self.colors["text_light"], 
-                  background=self.colors["bg_card"])
-        self.hint_label.grid(row=2, column=0, columnspan=6, sticky="w", pady=(5, 0))
+        self.label_hint = ctk.CTkLabel(self.settings_frame, text="提示: 勾選「強制繁體中文」可避免出現簡體字。", text_color="gray")
+        self.label_hint.grid(row=3, column=0, columnspan=4, padx=15, pady=(5, 10), sticky="w")
 
-        # --- 按鈕區 ---
-        frame_action = ttk.Frame(main_container)
-        frame_action.pack(fill="x", pady=(0, 15))
-        self.btn_run = ttk.Button(frame_action, text="開始生成 (Start)", command=self.start_thread, style="Accent.TButton", cursor="hand2")
-        self.btn_run.pack(side="left", fill="x", expand=True, padx=(0, 10), ipady=8)
-        self.btn_cancel = ttk.Button(frame_action, text="取消 (Cancel)", command=self.cancel_task, style="Danger.TButton", state="disabled", cursor="hand2")
-        self.btn_cancel.pack(side="right", fill="x", expand=True, padx=(0, 0), ipady=8)
+        # Action Buttons
+        self.action_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        self.action_frame.grid(row=2, column=0, sticky="ew", pady=(0, 10))
 
-        # --- 紀錄區 ---
-        frame_log = ttk.LabelFrame(main_container, text=" 執行紀錄 ", padding=(10, 5), style="Modern.TLabelframe")
-        frame_log.pack(fill="both", expand=True)
-        self.txt_log = scrolledtext.ScrolledText(frame_log, height=10, state="disabled", 
-                                                 font=("Consolas", 10), bg="#fcfcfc", relief="flat", padx=5, pady=5)
-        self.txt_log.pack(fill="both", expand=True)
+        self.btn_run = ctk.CTkButton(self.action_frame, text="開始轉錄 (Start)", command=self.start_thread, 
+                                     font=ctk.CTkFont(size=15, weight="bold"), height=45)
+        self.btn_run.pack(side="left", fill="x", expand=True, padx=(0, 10))
 
-        # 狀態列
-        self.status_var = tk.StringVar(value="就緒 - 請選擇影片檔案 (支援拖曳載入)")
-        status_bar = ttk.Label(self.root, textvariable=self.status_var, background="#e9ecef", anchor="w", padding=(15, 5), font=("Microsoft JhengHei UI", 9))
-        status_bar.pack(side="bottom", fill="x")
+        self.btn_cancel = ctk.CTkButton(self.action_frame, text="取消 (Cancel)", command=self.cancel_task, 
+                                        fg_color="transparent", border_width=2, text_color=("gray10", "#DCE4EE"),
+                                        font=ctk.CTkFont(size=15, weight="bold"), height=45, state="disabled")
+        self.btn_cancel.pack(side="right", fill="x", expand=True, padx=(0, 0))
+
+        # Progress Bar
+        self.progressbar = ctk.CTkProgressBar(self.main_frame, orientation="horizontal", height=12)
+        self.progressbar.grid(row=3, column=0, sticky="ew", pady=(0, 10))
+        self.progressbar.set(0) # 0%
+
+        # Log Area
+        self.log_textbox = ctk.CTkTextbox(self.main_frame, font=ctk.CTkFont(family="Consolas", size=12))
+        self.log_textbox.grid(row=4, column=0, sticky="nsew", pady=(0, 5))
+        self.log_textbox.configure(state="disabled")
+
+        # --- 3. Footer Controls (Row 2) ---
+        self.controls_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.controls_frame.grid(row=2, column=0, sticky="ew", padx=20, pady=(0, 10))
+        self.controls_frame.grid_columnconfigure(0, weight=1) # Spacer spans
+
+        # Left: Appearance Mode
+        self.label_mode = ctk.CTkLabel(self.controls_frame, text="外觀 (Theme):", text_color="gray")
+        self.label_mode.pack(side="left", padx=(0, 5))
+        
+        self.appearance_mode_optionemenu = ctk.CTkOptionMenu(self.controls_frame, values=["System", "Light", "Dark"],
+                                                               command=self.change_appearance_mode_event, width=100)
+        self.appearance_mode_optionemenu.pack(side="left")
+
+        # Right: About Button
+        self.btn_about = ctk.CTkButton(self.controls_frame, text="關於本程式 (About)", command=self.show_about, 
+                                       width=120, fg_color="transparent", border_width=1, text_color=("gray10", "#DCE4EE"))
+        self.btn_about.pack(side="right")
+
+        # --- 4. Status Bar (Row 3 - Bottom) ---
+        self.status_frame = ctk.CTkFrame(self, height=24, corner_radius=0, fg_color=("gray95", "gray10"))
+        self.status_frame.grid(row=3, column=0, sticky="ew")
+        self.status_frame.grid_columnconfigure(0, weight=1) # Status label expands
+
+        # Left: Status
+        self.status_label = ctk.CTkLabel(self.status_frame, text="就緒 - 請加入檔案", anchor="w", font=ctk.CTkFont(size=12))
+        self.status_label.grid(row=0, column=0, sticky="ew", padx=10)
+
+        # Right: Credits
+        self.credit_label = ctk.CTkLabel(self.status_frame, text="Developed by Yu-Han Cheng 鄭郁翰", 
+                                         font=ctk.CTkFont(size=10), text_color="gray")
+        self.credit_label.grid(row=0, column=1, sticky="e", padx=10)
+        
+    def change_appearance_mode_event(self, new_appearance_mode: str):
+        ctk.set_appearance_mode(new_appearance_mode)
 
     def on_check_zhtw(self):
-        # 如果勾選了繁體中文，且英文翻譯也被勾選，則提示使用者 (因為翻譯成英文會忽略繁體設定)
         if self.zh_tw_var.get() and self.translate_en_var.get():
-            self.hint_label.config(text="注意: 若勾選「翻譯成英文」，則「強制繁體中文」將無效 (輸出為英文)。", foreground=self.colors["danger"])
+            self.label_hint.configure(text="注意: 若勾選「翻譯成英文」，則「強制繁體中文」將無效 (輸出為英文)。", text_color="orange")
         else:
-            self.update_hint()
+            self.label_hint.configure(text="提示: 勾選「強制繁體中文」可避免出現簡體字。", text_color="gray")
 
     def on_check_trans(self):
-        # 更新提示
         self.on_check_zhtw()
 
-    def update_hint(self):
-        os_name = platform.system()
-        base_hint = "提示: "
-        if self.zh_tw_var.get():
-            base_hint += "已啟用繁體中文優化。"
-        elif self.translate_en_var.get():
-            base_hint += "目前模式為將字幕翻譯成英文。"
-        else:
-            base_hint += "模型越大越準確，但速度越慢。"
-            
-        if os_name == "Darwin":
-            base_hint += " (Apple Silicon Mac 建議使用 CPU 模式)"
-            
-        self.hint_label.config(text=base_hint, foreground=self.colors["text_light"])
-
     def show_about(self):
-        about_text = (
-            "Video to Subtitle(本地語音轉字幕工具)\n"
-            "版本: 1.7.0 \n\n"
-            "【開發人員資訊】\n"
-            "開發人員: 鄭郁翰 (Cheng, Yu-Han)\n"
-            "E-mail: kaoshou@gmail.com\n\n"
-            "--------------------------------------------------\n"
-            "【開源專案與授權宣告 (Open Source)】\n"
-            "本軟體使用以下開源專案：\n\n"
-            "1. faster-whisper (MIT License)\n"
-            "   https://github.com/SYSTRAN/faster-whisper\n\n"
-            "2. CTranslate2 (MIT License)\n"
-            "   https://github.com/OpenNMT/CTranslate2\n\n"
-            "3. FFmpeg (LGPL v2.1+ / GPL v2+)\n"
-            "   https://ffmpeg.org\n\n"           
-            "4. tkinterdnd2 (MIT License)\n"
-            "   https://github.com/pmgagne/tkinterdnd2\n"
-        )
-        messagebox.showinfo("關於本程式", about_text)
+        # Create a new Toplevel window
+        about_window = ctk.CTkToplevel(self)
+        about_window.title("關於本程式")
+        about_window.geometry("500x600")
+        about_window.resizable(False, False)
+        
+        # Ensure it stays on top and grabs focus
+        about_window.transient(self)
+        about_window.grab_set()
+        
+        # Helper for clickable links
+        def create_link(parent, text, url):
+            link = ctk.CTkLabel(parent, text=text, text_color=("#0078d7", "#4da3ff"), cursor="hand2")
+            link.bind("<Button-1>", lambda e: webbrowser.open_new(url))
+            return link
+
+        # Main Scrollable Frame
+        scroll_frame = ctk.CTkScrollableFrame(about_window, fg_color="transparent")
+        scroll_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # Title
+        ctk.CTkLabel(scroll_frame, text="Video to Subtitle (本地語音轉字幕工具)", font=ctk.CTkFont(size=20, weight="bold")).pack(pady=(10, 5))
+        ctk.CTkLabel(scroll_frame, text="Version 2.0.0").pack(pady=(0, 20))
+
+        # --- Developer Info Section ---
+        dev_frame = ctk.CTkFrame(scroll_frame)
+        dev_frame.pack(fill="x", pady=10)
+        
+        ctk.CTkLabel(dev_frame, text="開發人員資訊 (Developer)", font=ctk.CTkFont(weight="bold")).pack(pady=5)
+        ctk.CTkLabel(dev_frame, text="鄭郁翰 (Yu-Han Cheng)").pack()
+        ctk.CTkLabel(dev_frame, text="E-mail: kaoshou@gmail.com").pack()
+        
+        # GitHub Link
+        create_link(dev_frame, "GitHub: https://github.com/kaoshou/Video-to-Subtitle/", "https://github.com/kaoshou/Video-to-Subtitle/").pack(pady=5)
+
+        # --- Open Source Section ---
+        os_frame = ctk.CTkFrame(scroll_frame)
+        os_frame.pack(fill="x", pady=10)
+        
+        ctk.CTkLabel(os_frame, text="開源專案宣告 (Open Source Acknowledgements)", font=ctk.CTkFont(weight="bold")).pack(pady=(10, 5))
+        ctk.CTkLabel(os_frame, text="本軟體使用以下開源專案：", font=ctk.CTkFont(size=12)).pack(pady=(0, 10))
+
+        # List of libraries
+        libs = [
+            ("faster-whisper", "MIT License", "https://github.com/SYSTRAN/faster-whisper"),
+            ("CTranslate2", "MIT License", "https://github.com/OpenNMT/CTranslate2"),
+            ("FFmpeg", "LGPL v2.1+ / GPL v2+", "https://ffmpeg.org"),
+            ("CustomTkinter", "MIT License", "https://github.com/TomSchimansky/CustomTkinter"),
+            ("tkinterdnd2", "MIT License", "https://github.com/pmgagne/tkinterdnd2")
+        ]
+
+        for name, license_, url in libs:
+            item_frame = ctk.CTkFrame(os_frame, fg_color="transparent")
+            item_frame.pack(fill="x", pady=2)
+            ctk.CTkLabel(item_frame, text=f"• {name} ({license_})", font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=20)
+            create_link(item_frame, url, url).pack(anchor="w", padx=40)
+
+        # Close Button
+        ctk.CTkButton(about_window, text="關閉 (Close)", command=about_window.destroy, width=100).pack(pady=10)
 
     def log(self, msg):
         def _update():
-            self.txt_log.config(state="normal")
-            self.txt_log.insert(tk.END, msg + "\n")
-            self.txt_log.see(tk.END)
-            self.txt_log.config(state="disabled")
-            self.status_var.set(msg) 
-        self.root.after(0, _update)
+            self.log_textbox.configure(state="normal")
+            self.log_textbox.insert("end", msg + "\n")
+            self.log_textbox.see("end")
+            self.log_textbox.configure(state="disabled")
+            self.status_label.configure(text=msg) # Status bar shows last log
+        self.after(0, _update)
+
+    def update_progress(self, value):
+        # Value is float between 0.0 and 1.0
+        self.after(0, lambda: self.progressbar.set(value))
 
     def browse_file(self):
-        filename = filedialog.askopenfilename(
+        filenames = filedialog.askopenfilenames(
             filetypes=[("Media Files", "*.mp4 *.mp3 *.mkv *.wav *.mov *.avi *.m4a"), ("All Files", "*.*")]
         )
-        if filename:
-            self.path_var.set(filename)
+        if filenames:
+            for f in filenames:
+                if f not in self.file_list:
+                    self.file_list.append(f)
+            self.update_file_list_ui()
+            self.status_label.configure(text=f"目前共有 {len(self.file_list)} 個檔案")
             self.btn_run.focus_set()
+
+    def clear_files(self):
+        self.file_list = []
+        self.update_file_list_ui()
+        self.status_label.configure(text="清單已清除")
 
     def cancel_task(self):
         if self.is_running:
             if messagebox.askyesno("取消確認", "確定要停止目前的轉錄任務嗎？"):
                 self.cancel_flag = True
-                self.btn_cancel.config(text="正在停止...", state="disabled")
+                self.btn_cancel.configure(text="正在停止...", state="disabled")
 
     def start_thread(self):
         if self.is_running: return
-        file_path = self.path_var.get()
-        if not file_path or not os.path.exists(file_path):
-            messagebox.showerror("錯誤", "請先選擇有效的影片檔案！")
+        if not self.file_list:
+            messagebox.showerror("錯誤", "請先加入至少一個影片檔案！")
             return
 
         self.is_running = True
         self.cancel_flag = False
-        self.btn_run.config(state="disabled")
-        self.btn_cancel.config(state="normal", text="取消 (Cancel)")
-        self.txt_log.config(state="normal")
-        self.txt_log.delete(1.0, tk.END)
-        self.txt_log.config(state="disabled")
+        self.btn_run.configure(state="disabled")
+        self.btn_add.configure(state="disabled") # 執行中不給加檔案
+        self.btn_clear.configure(state="disabled")
+        self.btn_cancel.configure(state="normal", text="取消 (Cancel)")
         
-        thread = threading.Thread(target=self.process_video, args=(file_path,))
+        self.log_textbox.configure(state="normal")
+        self.log_textbox.delete("0.0", "end")
+        self.log_textbox.configure(state="disabled")
+        
+        self.progressbar.set(0) # Reset progress
+
+        thread = threading.Thread(target=self.process_batch)
         thread.daemon = True
         thread.start()
 
-    def process_video(self, file_path):
+    def process_batch(self):
         try:
             model_size = self.model_var.get()
             device = self.device_var.get()
             output_fmt = self.format_var.get()
             compute_type = "int8" if device == "cpu" else "float16"
             
-            # 設定任務類型與提示詞
             use_zh_tw = self.zh_tw_var.get()
             translate_to_en = self.translate_en_var.get()
             
             task = "translate" if translate_to_en else "transcribe"
-            
-            # 提示詞僅在「轉錄」且勾選「繁體」時有效。
-            # 若選翻譯成英文，initial_prompt 效果有限且不需要中文提示。
             initial_prompt = "以下是使用台灣繁體中文撰寫的字幕。" if (use_zh_tw and not translate_to_en) else None
 
-            self.transcriber = SubtitleTranscriber(model_size, device, compute_type)
+            self.log(f"--- 批次任務開始: 共 {len(self.file_list)} 個檔案 ---")
+            
+            # --- 初始化轉錄核心與模型載入 (含錯誤處理) ---
+            # 先嘗試用預設路徑 (系統緩存)
+            # 若發生權限錯誤，詢問使用者是否改用本地 ./models 目錄
+            
+            current_download_root = None
+            
+            # 建立或更新實例 (先用預設路徑)
+            if not self.transcriber:
+                self.transcriber = SubtitleTranscriber(model_size, device, compute_type)
+            else:
+                 # 若參數變更，重新建立
+                if self.transcriber.model_size != model_size or self.transcriber.device != device:
+                     self.transcriber = SubtitleTranscriber(model_size, device, compute_type)
+
+            # 嘗試載入模型
+            try:
+                self.transcriber.load_model(self.log)
+            except Exception as e:
+                error_str = str(e).lower()
+                # 檢查是否為權限或存取相關錯誤
+                if "permission denied" in error_str or "access is denied" in error_str or "read-only file system" in error_str or "oserror" in error_str:
+                    self.log(f"⚠️ 預設路徑存取失敗: {e}")
+                    
+                    # 詢問使用者
+                    if messagebox.askyesno("權限錯誤 (Permission Error)", 
+                                           "系統無法寫入預設模型快取目錄 (通常發生在權限受限的環境，如 MacOS 或公司電腦)。\n\n"
+                                           "是否要改為下載模型到本程式下的 'models' 資料夾？\n(Download models to local './models' folder?)"):
+                        
+                        # 定義本地路徑
+                        local_models_dir = os.path.join(os.getcwd(), "models")
+                        try:
+                            os.makedirs(local_models_dir, exist_ok=True)
+                            self.log(f"正在切換模型儲存路徑至: {local_models_dir}")
+                            
+                            # 使用新的 download_root 重新初始化
+                            self.transcriber = SubtitleTranscriber(model_size, device, compute_type, download_root=local_models_dir)
+                            
+                            # 再次嘗試載入
+                            self.transcriber.load_model(self.log)
+                            
+                        except Exception as retry_e:
+                            self.log(f"❌ 切換至本地目錄仍失敗: {retry_e}")
+                            messagebox.showerror("錯誤", f"無法建立或寫入本地目錄:\n{retry_e}")
+                            return
+                    else:
+                        self.log("❌ 使用者拒絕切換目錄，任務中止。")
+                        return
+                else:
+                    # 其他錯誤直接拋出
+                    raise e
+
             check_cancel = lambda: self.cancel_flag
 
-            result = self.transcriber.run(
-                file_path, 
-                log_callback=self.log,
-                progress_callback=None,
-                cancel_check_callback=check_cancel,
-                output_format=output_fmt,
-                initial_prompt=initial_prompt,
-                task=task # 傳入任務類型
-            )
+            completed_count = 0
             
-            if result:
-                messagebox.showinfo("任務完成", f"成功！\n\n檔案已儲存至:\n{result}")
+            for idx, file_path in enumerate(self.file_list):
+                if self.cancel_flag:
+                    break
+                
+                self.log(f"\n>> 正在處理 ({idx+1}/{len(self.file_list)}): {os.path.basename(file_path)}")
+                self.update_progress(0) # Reset progress bar for next file
+                
+                try:
+                    result = self.transcriber.run(
+                        file_path, 
+                        log_callback=self.log,
+                        progress_callback=self.update_progress,
+                        cancel_check_callback=check_cancel,
+                        output_format=output_fmt,
+                        initial_prompt=initial_prompt,
+                        task=task 
+                    )
+                    
+                    if result:
+                        completed_count += 1
+                    else:
+                        self.log(f"檔案 {idx+1} 已中止。")
+                        
+                except Exception as e:
+                    self.log(f"檔案 {os.path.basename(file_path)} 發生錯誤: {e}")
+                    # Continue to next file? Yes, usually batch should continue.
+                    continue
+
+            if self.cancel_flag:
+                self.log("\n--- 批次任務已手動取消 ---")
+                messagebox.showwarning("已取消", "批次轉錄已中止。")
             else:
-                self.log("--- 使用者已中止任務 ---")
-                messagebox.showwarning("已取消", "字幕生成已手動中止。")
+                self.log(f"\n--- 批次任務完成: 成功 {completed_count} / {len(self.file_list)} ---")
+                messagebox.showinfo("任務完成", f"批次處理結束！\n共成功轉錄 {completed_count} 個檔案。")
             
         except Exception as e:
             error_msg = str(e)
-            self.log(f"錯誤中止: {error_msg}")
+            self.log(f"核心錯誤中止: {error_msg}")
             messagebox.showerror("發生錯誤", f"無法執行轉換:\n\n{error_msg}")
         
         finally:
             self.is_running = False
-            self.status_var.set("就緒 - 等待下一個任務")
-            self.root.after(0, lambda: self.btn_run.config(state="normal"))
-            self.root.after(0, lambda: self.btn_cancel.config(state="disabled", text="取消 (Cancel)"))
+            self.update_progress(0)
+            self.status_label.configure(text="就緒 - 等待下一個任務")
+            self.after(0, lambda: self.btn_run.configure(state="normal"))
+            self.after(0, lambda: self.btn_add.configure(state="normal"))
+            self.after(0, lambda: self.btn_clear.configure(state="normal"))
+            self.after(0, lambda: self.btn_cancel.configure(state="disabled", text="取消 (Cancel)"))
 
 if __name__ == "__main__":
-    if DND_AVAILABLE:
-        root = TkinterDnD.Tk()
-    else:
-        root = tk.Tk()
+    import multiprocessing
+    import sys
+    import traceback
+    
+    # Enable multiprocessing support for frozen executables
+    multiprocessing.freeze_support()
+    
+    # Global exception handler to show errors in GUI before crashing
+    def show_error(exc_type, exc_value, tb):
+        err_msg = "".join(traceback.format_exception(exc_type, exc_value, tb))
+        try:
+            messagebox.showerror("Unhandled Error (未預期的錯誤)", f"發生錯誤導致程式崩潰:\n\n{err_msg}")
+        except:
+            pass # Creating messagebox failed
+        sys.__excepthook__(exc_type, exc_value, tb)
+
+    sys.excepthook = show_error
+
+    # Windows DPI awareness fix
     try:
         from ctypes import windll
         windll.shcore.SetProcessDpiAwareness(1)
     except:
         pass
-    app = App(root)
-    root.mainloop()
+        
+    app = App()
+    app.mainloop()
