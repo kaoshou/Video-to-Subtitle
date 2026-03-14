@@ -307,7 +307,7 @@ class App(BaseClass):
 
         # Title
         ctk.CTkLabel(scroll_frame, text="Video to Subtitle (本地語音轉字幕工具)", font=ctk.CTkFont(size=20, weight="bold")).pack(pady=(10, 5))
-        ctk.CTkLabel(scroll_frame, text="Version 2.0.0").pack(pady=(0, 20))
+        ctk.CTkLabel(scroll_frame, text="Version 2.0.1").pack(pady=(0, 20))
 
         # --- Developer Info Section ---
         dev_frame = ctk.CTkFrame(scroll_frame)
