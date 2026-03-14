@@ -21,8 +21,8 @@ class SubtitleTranscriber:
         
         if log_callback:
             log_callback(f"正在載入模型: {self.model_size} (Device: {self.device})...")
-            if self.download_root:
-                log_callback(f"模型儲存路徑: {self.download_root}")
+            model_path = os.path.abspath(self.download_root) if self.download_root else os.path.abspath(os.path.expanduser("~/.cache/huggingface/hub"))
+            log_callback(f"模型儲存路徑: {model_path}")
             log_callback("初次執行需下載模型檔案 (約 500MB - 2GB)，請稍候...")
         try:
             print("DEBUG: Initializing WhisperModel...")
@@ -85,6 +85,9 @@ class SubtitleTranscriber:
             log_callback(f"--------------------------------------------------")
             log_callback(f"任務開始時間: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
             log_callback(f"處理檔案: {os.path.basename(file_path)}")
+            
+            model_path = os.path.abspath(self.download_root) if self.download_root else os.path.abspath(os.path.expanduser("~/.cache/huggingface/hub"))
+            log_callback(f"模型存放路徑: {model_path}")
             
             mode_text = "翻譯成英文 (Translate to English)" if task == "translate" else "原語轉錄 (Transcribe)"
             log_callback(f"任務模式: {mode_text}")
