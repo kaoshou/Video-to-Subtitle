@@ -1,0 +1,37 @@
+name: Build Python Executable
+
+on:
+  push:
+    branches: [ "main" ]  # 當 main 分支有更新時觸發
+  workflow_dispatch:      # 允許手動點擊按鈕觸發
+
+jobs:
+  build:
+    runs-on: windows-latest  # 使用 Windows 環境進行編譯
+
+    steps:
+    - name: 檢出程式碼
+      uses: actions/checkout@v4
+
+    - name: 設定 Python 環境
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.9' # 指定 Python 版本
+
+    - name: 安裝依賴套件
+      run: |
+        python -m pip install --upgrade pip
+        pip install customtkinter tkinterdnd2 faster-whisper pyinstaller
+        # 如果你有 requirements.txt，請取消下面這行的註解
+        # pip install -r requirements.txt
+
+    - name: 執行編譯 (PyInstaller)
+      run: |
+        # --onefile 打包成單一檔案，--noconsole 隱藏黑視窗(可選)
+        pyinstaller --noconsole --onefile --name "VideoToSubtitle" --collect-all customtkinter --collect-all tkinterdnd2 --collect-all faster_whisper SubtitleTranscriber.py
+
+    - name: 上傳成品 (Artifact)
+      uses: actions/upload-artifact@v4
+      with:
+        name: MyExecutable
+        path: dist/*.exe  # PyInstaller 預設產出在 dist 資料夾
