@@ -40,7 +40,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: VideoToSubtitle-Windows
-        path: dist/VideoToSubtitle/  # Windows 產出的資料夾
+        path: dist/VideoToSubtitle.exe  # Windows 產出的單一執行檔
 
     - name: 上傳 Mac 成品 (Artifact)
       if: matrix.os == 'macos-latest'
