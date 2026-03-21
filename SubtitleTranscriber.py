@@ -332,7 +332,8 @@ class App(BaseClass):
             ("faster-whisper", "MIT License", "https://github.com/SYSTRAN/faster-whisper"),
             ("CTranslate2", "MIT License", "https://github.com/OpenNMT/CTranslate2"),            
             ("CustomTkinter", "MIT License", "https://github.com/TomSchimansky/CustomTkinter"),
-            ("tkinterdnd2", "MIT License", "https://github.com/pmgagne/tkinterdnd2")
+            ("tkinterdnd2", "MIT License", "https://github.com/pmgagne/tkinterdnd2"),
+            ("OpenCC", "Apache-2.0 License", "https://github.com/BYVoid/OpenCC")
         ]
 
         for name, license_, url in libs:
@@ -488,7 +489,8 @@ class App(BaseClass):
                         cancel_check_callback=check_cancel,
                         output_format=output_fmt,
                         initial_prompt=initial_prompt,
-                        task=task 
+                        task=task,
+                        force_zh_tw=use_zh_tw
                     )
                     
                     if result:

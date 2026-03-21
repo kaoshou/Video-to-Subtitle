@@ -76,7 +76,7 @@
     ```
     安裝所需套件:
     ```bash
-    pip install customtkinter tkinterdnd2 faster-whisper pyinstaller
+    pip install customtkinter tkinterdnd2 faster-whisper opencc pyinstaller
     ```
 
 3. **執行程式**
@@ -86,7 +86,7 @@
 
 4. **使用 PyInstaller 打包為單一執行檔**
     ```bash
-    pyinstaller --noconsole --onefile --name "VideoToSubtitle" --collect-all customtkinter --collect-all tkinterdnd2 --collect-all faster_whisper SubtitleTranscriber.py
+    pyinstaller --noconsole --onefile --name "VideoToSubtitle" --collect-all customtkinter --collect-all tkinterdnd2 --collect-all faster_whisper --collect-all opencc SubtitleTranscriber.py
     ```
     打包完成後，執行檔將位於 `dist/VideoToSubtitle.exe`。
 
@@ -98,3 +98,4 @@
 | [CTranslate2](https://github.com/OpenNMT/CTranslate2) | MIT | 高效能 Transformer 推論引擎 (Backend) |
 | [CustomTkinter](https://github.com/TomSchimansky/CustomTkinter) | MIT | 現代化 GUI 介面框架 |
 | [tkinterdnd2](https://github.com/pmgagne/tkinterdnd2) | MIT | GUI 檔案拖放支援 |
+| [OpenCC](https://github.com/BYVoid/OpenCC) | Apache-2.0 | 精準的繁簡中文轉換庫 |

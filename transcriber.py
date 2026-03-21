@@ -2,6 +2,15 @@ import os
 import datetime
 from faster_whisper import WhisperModel
 import json
+import logging
+
+try:
+    import opencc
+    converter = opencc.OpenCC('s2twp.json') # 簡體到繁體 (台灣慣用語)
+except ImportError:
+    converter = None
+    logging.warning("尚未安裝 opencc，將無法支援強制轉換繁體功能，請執行 pip install opencc")
+
 
 class SubtitleTranscriber:
     def __init__(self, model_size="small", device="cpu", compute_type="int8", download_root=None):
@@ -67,12 +76,13 @@ class SubtitleTranscriber:
         millis = int(td.microseconds / 1000)
         return f"{hours:02}:{minutes:02}:{secs:02}{separator}{millis:03}"
 
-    def run(self, file_path, log_callback=None, progress_callback=None, cancel_check_callback=None, output_format="srt", initial_prompt=None, task="transcribe"):
+    def run(self, file_path, log_callback=None, progress_callback=None, cancel_check_callback=None, output_format="srt", initial_prompt=None, task="transcribe", force_zh_tw=False):
         """
         執行轉錄
         output_format: "srt", "vtt", "txt", "tsv", "json"
         initial_prompt: 用於引導模型輸出的提示詞 (例如強制繁體中文)
         task: "transcribe" (轉錄) 或 "translate" (翻譯成英文)
+        force_zh_tw: (bool) 是否透過 opencc 將所有文字強制轉為台灣繁體中文
         """
         print(f"DEBUG: run() called for file: {file_path}")
         if not self.model:
@@ -99,7 +109,10 @@ class SubtitleTranscriber:
         # 準備參數
         transcribe_options = {
             "beam_size": 5,
-            "task": task
+            "task": task,
+            "vad_filter": True, # 啟用 Voice Activity Detection (只在有人聲時才進行語音辨識)
+            "vad_parameters": dict(min_silence_duration_ms=500), # 靜音超過 0.5 秒就切斷
+            "condition_on_previous_text": False # 關閉上下文關聯，避免模型陷入長句幻覺的無限迴圈
         }
         if initial_prompt:
             transcribe_options["initial_prompt"] = initial_prompt
@@ -167,6 +180,13 @@ class SubtitleTranscriber:
                 start_sec = segment.start
                 end_sec = segment.end
                 
+                # --- 強制簡轉繁 ---
+                if force_zh_tw and task == "transcribe" and converter:
+                    original_text = text
+                    text = converter.convert(text)
+                    if original_text != text:
+                        print(f"DEBUG: Converted simplified to traditional: {original_text} -> {text}")
+
                 print(f"DEBUG: Segment {i}: {start_sec}-{end_sec} {text[:20]}...")
 
                 # 更新進度條
