@@ -1,4 +1,4 @@
-name: Build Python Executable
+name: Build Cross-Platform Executables
 
 on:
   push:
@@ -7,7 +7,10 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest  # 使用 Windows 環境進行編譯
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}  # 同時使用 Windows 與 Mac 環境進行編譯
 
     steps:
     - name: 檢出程式碼
@@ -18,20 +21,30 @@ jobs:
       with:
         python-version: '3.9' # 指定 Python 版本
 
-    - name: 安裝依賴套件
+    - name: 安裝核心依賴套件
       run: |
         python -m pip install --upgrade pip
-        pip install customtkinter tkinterdnd2 faster-whisper pyinstaller
-        # 如果你有 requirements.txt，請取消下面這行的註解
-        # pip install -r requirements.txt
+        pip install customtkinter tkinterdnd2 faster-whisper ctranslate2 opencc pyinstaller
 
-    - name: 執行編譯 (PyInstaller)
+    - name: 安裝 Mac 專屬依賴套件 (mlx-whisper)
+      if: matrix.os == 'macos-latest'
       run: |
-        # --onefile 打包成單一檔案，--noconsole 隱藏黑視窗(可選)
-        pyinstaller --noconsole --onefile --name "VideoToSubtitle" --collect-all customtkinter --collect-all tkinterdnd2 --collect-all faster_whisper SubtitleTranscriber.py
+        pip install mlx-whisper
 
-    - name: 上傳成品 (Artifact)
+    - name: 執行編譯 (使用 .spec 檔)
+      run: |
+        pyinstaller VideoToSubtitle.spec
+
+    - name: 上傳 Windows 成品 (Artifact)
+      if: matrix.os == 'windows-latest'
       uses: actions/upload-artifact@v4
       with:
-        name: MyExecutable
-        path: dist/*.exe  # PyInstaller 預設產出在 dist 資料夾
+        name: VideoToSubtitle-Windows
+        path: dist/VideoToSubtitle/  # Windows 產出的資料夾
+
+    - name: 上傳 Mac 成品 (Artifact)
+      if: matrix.os == 'macos-latest'
+      uses: actions/upload-artifact@v4
+      with:
+        name: VideoToSubtitle-Mac
+        path: dist/VideoToSubtitle.app  # Mac 產出的 App Bundle
