@@ -34,14 +34,33 @@ class SubtitleTranscriber:
             log_callback(f"模型儲存路徑: {model_path}")
             log_callback("初次執行需下載模型檔案 (約 500MB - 2GB)，請稍候...")
         try:
-            print("DEBUG: Initializing WhisperModel...")
-            self.model = WhisperModel(
-                self.model_size, 
-                device=self.device, 
-                compute_type=self.compute_type,
-                download_root=self.download_root
-            )
-            print("DEBUG: WhisperModel initialized successfully.")
+            if self.device in ["mps", "mlx"]:
+                print("DEBUG: Initializing MLX Whisper for Apple Silicon...")
+                try:
+                    import mlx_whisper
+                except ImportError:
+                    msg = "要啟用 Apple MLX 框架加速 (Mac GPU)，請先安裝 mlx-whisper 套件：\n請執行 `pip install mlx-whisper`"
+                    if log_callback:
+                        log_callback("錯誤: " + msg)
+                    raise RuntimeError(msg)
+                
+                self.model_type = "mlx-whisper"
+                # MLX-Whisper 模型前綴，例如 mlx-community/whisper-small
+                self.mlx_model_path = f"mlx-community/whisper-{self.model_size}"
+                if log_callback:
+                    log_callback(f"MLX 框架準備就緒，預計使用 HuggingFace 模型: {self.mlx_model_path}")
+                print("DEBUG: MLX whisper config ready.")
+            else:
+                print("DEBUG: Initializing WhisperModel...")
+                self.model = WhisperModel(
+                    self.model_size, 
+                    device=self.device, 
+                    compute_type=self.compute_type,
+                    download_root=self.download_root
+                )
+                self.model_type = "faster-whisper"
+                print("DEBUG: WhisperModel initialized successfully.")
+                
             if log_callback:
                 log_callback("模型載入完成！")
         except Exception as e:
@@ -117,11 +136,52 @@ class SubtitleTranscriber:
         if initial_prompt:
             transcribe_options["initial_prompt"] = initial_prompt
 
-        # 執行轉錄 (取得 generator)
-        print("DEBUG: calling self.model.transcribe...")
+        # 執行轉錄
         try:
-            segments, info = self.model.transcribe(file_path, **transcribe_options)
-            print("DEBUG: self.model.transcribe returned generator.")
+            if getattr(self, "model_type", "faster-whisper") == "mlx-whisper":
+                print("DEBUG: calling MLX whisper transcribe...")
+                if log_callback:
+                    log_callback("提示: 使用 Apple MLX 框架進行超高速轉錄...\n(註: 此套件轉換時將無法回報即時段落進度，請耐心等候)")
+                
+                native_options = {
+                    "task": task,
+                    "condition_on_previous_text": False
+                }
+                if initial_prompt:
+                    native_options["initial_prompt"] = initial_prompt
+                    
+                import mlx_whisper
+                result = mlx_whisper.transcribe(
+                    file_path, 
+                    path_or_hf_repo=self.mlx_model_path,
+                    **native_options
+                )
+                
+                class FakeInfo:
+                    def __init__(self, lang, dur):
+                        self.language = lang
+                        self.duration = dur
+                        self.language_probability = 1.0
+                        
+                class FakeSegment:
+                    def __init__(self, s, e, t):
+                        self.start = s
+                        self.end = e
+                        self.text = t
+                        
+                # 簡單抓取最後時間為總長度，因為 mlx-whisper 不提供整體 video info
+                audio_duration = result["segments"][-1]["end"] if result["segments"] else 0.0
+                    
+                info = FakeInfo(result.get("language", "unknown"), audio_duration)
+                segments = [FakeSegment(s["start"], s["end"], s["text"]) for s in result["segments"]]
+                
+                print("DEBUG: MLX whisper transcribe finished.")
+                
+            else:
+                print("DEBUG: calling faster-whisper transcribe...")
+                segments, info = self.model.transcribe(file_path, **transcribe_options)
+                print("DEBUG: faster-whisper transcribe returned generator.")
+
         except Exception as e:
             print(f"DEBUG: Error calling model.transcribe: {e}")
             raise e

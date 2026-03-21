@@ -14,7 +14,7 @@
 
 ## ✨ 主要功能
 其實主要功能就是利用 Whisper 產生字幕檔案...
-* **本地執行**：除下載模型外，完全離線執行，基於 faster-whisper，您的影片與音訊不會離開您的電腦。
+* **本地執行**：除下載模型外，完全離線執行，基於 faster-whisper (Windows) 或 mlx-whisper (Mac)，您的影片與音訊不會離開您的電腦。
 * **多模型支援**：整合 tiny 至 large-v3 模型，使用者只要選擇後，程式自動完成下載。
 * **支援多檔案批次處理**：可一次加入多個檔案進行排程轉換。
 * **簡化操作**：簡化 faster-whisper 的操作過程，使用者只要選擇上轉換的影片，選擇使用模型，即可一鍵完成字幕檔案產出。
@@ -29,8 +29,9 @@
       - **Small / Medium**：速度與準確度的平衡點 (一般用途推薦)。
       - **Large**：準確度最高，但轉換速度慢，需要較大記憶體。
   3. **選擇運算單元與格式**：
-      - **運算單元**：Windows (NVIDIA) 可選 cuda 加速；macOS 或無顯卡請選 cpu。
-          - 若要使用 CUDA 加速，需安裝對應版本的 [cuDNN](https://developer.nvidia.com/cudnn) 。詳情請參閱 [CTranslate2 文件](https://opennmt.net/CTranslate2/installation.html)。
+      - **運算單元**：Windows 可選 cpu / cuda；macOS 上可選 cpu / mps (Apple Silicon GPU，將自動啟用 MLX 框架加速)。
+          - 若要在 Windows 使用 CUDA 加速，需安裝對應版本的 [cuDNN](https://developer.nvidia.com/cudnn) 。詳情請參閱 [CTranslate2 文件](https://opennmt.net/CTranslate2/installation.html)。
+          - 若要在 Mac 使用 MPS 加速，請先執行 `pip install mlx-whisper` 安裝套件。
       - **輸出格式**：可選擇 SRT, VTT, TXT, TSV 或 JSON。
       - **進階功能**：可視需求勾選「強制繁體中文」(避免出現簡體中文)或「翻譯成英文」。
   5. **開始生成**：點選「開始」按鈕，程式將自動處理清單中的所有檔案。底部進度條會顯示當前檔案的處理進度。
@@ -74,9 +75,13 @@
     # macOS/Linux:
     source venv/bin/activate
     ```
-    安裝所需套件:
+    安裝所需套件 (Windows / 一般環境):
     ```bash
     pip install customtkinter tkinterdnd2 faster-whisper opencc pyinstaller
+    ```
+    (若為 Mac 開發者並需啟用 MPS 硬體加速，請額外安裝 `mlx-whisper`):
+    ```bash
+    pip install mlx-whisper
     ```
 
 3. **執行程式**
@@ -96,6 +101,7 @@
 |------|------|------|
 | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) | MIT | 核心語音辨識引擎 (基於 CTranslate2) |
 | [CTranslate2](https://github.com/OpenNMT/CTranslate2) | MIT | 高效能 Transformer 推論引擎 (Backend) |
+| [mlx-whisper](https://github.com/ml-explore/mlx-examples/tree/main/whisper) | MIT | Apple Silicon GPU (MPS) 專用高速語音辨識框架 |
 | [CustomTkinter](https://github.com/TomSchimansky/CustomTkinter) | MIT | 現代化 GUI 介面框架 |
 | [tkinterdnd2](https://github.com/pmgagne/tkinterdnd2) | MIT | GUI 檔案拖放支援 |
 | [OpenCC](https://github.com/BYVoid/OpenCC) | Apache-2.0 | 精準的繁簡中文轉換庫 |

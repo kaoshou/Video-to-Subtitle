@@ -193,7 +193,7 @@ class App(BaseClass):
         self.label_device = ctk.CTkLabel(self.settings_frame, text="運算單元:")
         self.label_device.grid(row=1, column=2, padx=15, pady=5, sticky="e")
         
-        device_values = ["cpu", "cuda"] if platform.system() != "Darwin" else ["cpu"]
+        device_values = ["cpu", "cuda", "mlx"] if platform.system() != "Darwin" else ["cpu", "mlx"]
         self.combo_device = ctk.CTkOptionMenu(self.settings_frame, variable=self.device_var, values=device_values)
         self.combo_device.grid(row=1, column=3, padx=15, pady=5, sticky="ew")
 
@@ -307,7 +307,7 @@ class App(BaseClass):
 
         # Title
         ctk.CTkLabel(scroll_frame, text="Video to Subtitle (本地語音轉字幕工具)", font=ctk.CTkFont(size=20, weight="bold")).pack(pady=(10, 5))
-        ctk.CTkLabel(scroll_frame, text="Version 2.1.0").pack(pady=(0, 20))
+        ctk.CTkLabel(scroll_frame, text="Version 2.2.0").pack(pady=(0, 20))
 
         # --- Developer Info Section ---
         dev_frame = ctk.CTkFrame(scroll_frame)
@@ -330,7 +330,8 @@ class App(BaseClass):
         # List of libraries
         libs = [
             ("faster-whisper", "MIT License", "https://github.com/SYSTRAN/faster-whisper"),
-            ("CTranslate2", "MIT License", "https://github.com/OpenNMT/CTranslate2"),            
+            ("CTranslate2", "MIT License", "https://github.com/OpenNMT/CTranslate2"),
+            ("mlx-whisper", "MIT License", "https://github.com/ml-explore/mlx-examples/tree/main/whisper"),
             ("CustomTkinter", "MIT License", "https://github.com/TomSchimansky/CustomTkinter"),
             ("tkinterdnd2", "MIT License", "https://github.com/pmgagne/tkinterdnd2"),
             ("OpenCC", "Apache-2.0 License", "https://github.com/BYVoid/OpenCC")
