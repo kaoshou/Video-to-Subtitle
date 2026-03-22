@@ -38,9 +38,19 @@ jobs:
     - name: 建立 Mac DMG 安裝檔
       if: matrix.os == 'macos-latest'
       run: |
-        npm install -g create-dmg
-        create-dmg dist/VideoToSubtitle.app dist/
-        mv dist/*.dmg dist/VideoToSubtitle.dmg
+        brew install create-dmg
+        mkdir -p dist/dmg
+        cp -r dist/VideoToSubtitle.app dist/dmg/
+        create-dmg \
+          --volname "VideoToSubtitle" \
+          --window-pos 200 120 \
+          --window-size 600 400 \
+          --icon-size 100 \
+          --icon "VideoToSubtitle.app" 150 190 \
+          --hide-extension "VideoToSubtitle.app" \
+          --app-drop-link 450 185 \
+          "dist/VideoToSubtitle.dmg" \
+          "dist/dmg/"
 
     - name: 上傳 Windows 成品 (Artifact)
       if: matrix.os == 'windows-latest'
