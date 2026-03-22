@@ -35,6 +35,13 @@ jobs:
       run: |
         pyinstaller VideoToSubtitle.spec
 
+    - name: 建立 Mac DMG 安裝檔
+      if: matrix.os == 'macos-latest'
+      run: |
+        npm install -g create-dmg
+        create-dmg dist/VideoToSubtitle.app dist/
+        mv dist/*.dmg dist/VideoToSubtitle.dmg
+
     - name: 上傳 Windows 成品 (Artifact)
       if: matrix.os == 'windows-latest'
       uses: actions/upload-artifact@v4
@@ -47,4 +54,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: VideoToSubtitle-Mac
-        path: dist/VideoToSubtitle.app  # Mac 產出的 App Bundle
+        path: dist/VideoToSubtitle.dmg  # Mac 產出的 DMG 安裝檔
