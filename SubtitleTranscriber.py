@@ -193,7 +193,7 @@ class App(BaseClass):
         self.label_device = ctk.CTkLabel(self.settings_frame, text="運算單元:")
         self.label_device.grid(row=1, column=2, padx=15, pady=5, sticky="e")
         
-        device_values = ["cpu", "cuda", "mlx"] if platform.system() != "Darwin" else ["cpu", "mlx"]
+        device_values = ["cpu", "mlx"] if platform.system() == "Darwin" else ["cpu", "cuda"]
         self.combo_device = ctk.CTkOptionMenu(self.settings_frame, variable=self.device_var, values=device_values)
         self.combo_device.grid(row=1, column=3, padx=15, pady=5, sticky="ew")
 
@@ -307,7 +307,7 @@ class App(BaseClass):
 
         # Title
         ctk.CTkLabel(scroll_frame, text="Video to Subtitle (本地語音轉字幕工具)", font=ctk.CTkFont(size=20, weight="bold")).pack(pady=(10, 5))
-        ctk.CTkLabel(scroll_frame, text="Version 2.2.0").pack(pady=(0, 20))
+        ctk.CTkLabel(scroll_frame, text="Version 2.2.1").pack(pady=(0, 20))
 
         # --- Developer Info Section ---
         dev_frame = ctk.CTkFrame(scroll_frame)
@@ -529,10 +529,22 @@ if __name__ == "__main__":
     import multiprocessing
     import sys
     import traceback
+    import os
     
     # Enable multiprocessing support for frozen executables
     multiprocessing.freeze_support()
     
+    # 避免在 PyInstaller 封裝沒有 console 模式下 (特別是 macOS) 因為 print 導致閃退
+    if getattr(sys, 'frozen', False):
+        if sys.stdout is None:
+            sys.stdout = open(os.devnull, 'w')
+        if sys.stderr is None:
+            sys.stderr = open(os.devnull, 'w')
+        if sys.platform == 'darwin':
+            # 在 macOS 的 App Bundle 中，任何 print 輸出都可能引發崩潰，因此一律丟棄
+            sys.stdout = open(os.devnull, 'w')
+            sys.stderr = open(os.devnull, 'w')
+
     # Global exception handler to show errors in GUI before crashing
     def show_error(exc_type, exc_value, tb):
         err_msg = "".join(traceback.format_exception(exc_type, exc_value, tb))
