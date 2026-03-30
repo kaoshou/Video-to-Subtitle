@@ -285,15 +285,28 @@ class App(BaseClass):
         self.on_check_zhtw()
 
     def show_about(self):
+        # 避免重複開啟關於視窗
+        if hasattr(self, "about_window") and self.about_window is not None and self.about_window.winfo_exists():
+            self.about_window.lift()
+            self.about_window.focus_force()
+            return
+
         # Create a new Toplevel window
-        about_window = ctk.CTkToplevel(self)
-        about_window.title("關於本程式")
-        about_window.geometry("500x600")
-        about_window.resizable(False, False)
+        self.about_window = ctk.CTkToplevel(self)
+        self.about_window.title("關於本程式")
+        self.about_window.geometry("500x600")
+        self.about_window.resizable(False, False)
         
-        # Ensure it stays on top and grabs focus
-        about_window.transient(self)
-        about_window.grab_set()
+        # Ensure it stays on top and grabs focus (針對 macOS 特殊處理避免崩潰)
+        if platform.system() == "Darwin":
+            # macOS 下直接呼叫 transient 或 grab_set 極易導致 Tcl/Tk 崩潰
+            self.about_window.after(200, self.about_window.lift)
+        else:
+            self.about_window.transient(self)
+            self.about_window.grab_set()
+            
+        # Bind local variable for compatibility with the rest of the layout logic
+        about_window = self.about_window
         
         # Helper for clickable links
         def create_link(parent, text, url):
@@ -530,6 +543,19 @@ if __name__ == "__main__":
     import sys
     import traceback
     import os
+    import io
+    
+    # 強制將標準輸出與標準錯誤輸出設為 UTF-8 (修正 Windows cp950 編碼錯誤)
+    if sys.stdout is not None and isinstance(sys.stdout, io.TextIOWrapper):
+        try:
+            sys.stdout.reconfigure(encoding='utf-8')
+        except Exception:
+            pass
+    if sys.stderr is not None and isinstance(sys.stderr, io.TextIOWrapper):
+        try:
+            sys.stderr.reconfigure(encoding='utf-8')
+        except Exception:
+            pass
     
     # Enable multiprocessing support for frozen executables
     multiprocessing.freeze_support()

@@ -245,9 +245,16 @@ class SubtitleTranscriber:
                     original_text = text
                     text = converter.convert(text)
                     if original_text != text:
-                        print(f"DEBUG: Converted simplified to traditional: {original_text} -> {text}")
+                        try:
+                            print(f"DEBUG: Converted simplified to traditional: {original_text} -> {text}")
+                        except UnicodeEncodeError:
+                            print(f"DEBUG: Converted simplified to traditional (character print omitted due to encoding)")
 
-                print(f"DEBUG: Segment {i}: {start_sec}-{end_sec} {text[:20]}...")
+                try:
+                    print(f"DEBUG: Segment {i}: {start_sec}-{end_sec} {text[:20]}...")
+                except UnicodeEncodeError:
+                    print(f"DEBUG: Segment {i}: {start_sec}-{end_sec} (character print omitted due to encoding)")
+
 
                 # 更新進度條
                 if progress_callback and total_duration > 0:
