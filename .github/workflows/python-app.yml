@@ -65,3 +65,35 @@ jobs:
       with:
         name: VideoToSubtitle-Mac
         path: dist/VideoToSubtitle.dmg  # Mac 產出的 DMG 安裝檔
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'  # 僅在推送到 main 時建立 Release
+    permissions:
+      contents: write  # 需要允許寫入以建立 Release
+    steps:
+      - name: 下載 Windows 成品
+        uses: actions/download-artifact@v4
+        with:
+          name: VideoToSubtitle-Windows
+          path: output-windows
+
+      - name: 下載 Mac 成品
+        uses: actions/download-artifact@v4
+        with:
+          name: VideoToSubtitle-Mac
+          path: output-mac
+
+      - name: 建立 Github Release 並上傳檔案
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v2.2.2
+          name: Release v2.2.2
+          draft: false
+          prerelease: false
+          files: |
+            output-windows/VideoToSubtitle.exe
+            output-mac/VideoToSubtitle.dmg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
