@@ -55,6 +55,8 @@ class App(BaseClass):
         self.format_var = ctk.StringVar(value="srt")
         self.zh_tw_var = ctk.BooleanVar(value=False) 
         self.translate_en_var = ctk.BooleanVar(value=False) 
+        self.max_chars_var = ctk.StringVar(value="15") 
+        self.hotwords_var = ctk.StringVar(value="") 
 
         # Grid configuration
         self.grid_columnconfigure(0, weight=1)
@@ -197,25 +199,53 @@ class App(BaseClass):
         self.combo_device = ctk.CTkOptionMenu(self.settings_frame, variable=self.device_var, values=device_values)
         self.combo_device.grid(row=1, column=3, padx=15, pady=5, sticky="ew")
 
-        # Row 2: Format & Checkbox
+        # Row 2: Format & Checkboxes
         self.label_fmt = ctk.CTkLabel(self.settings_frame, text="輸出格式:")
         self.label_fmt.grid(row=2, column=0, padx=15, pady=5, sticky="e")
         self.combo_fmt = ctk.CTkOptionMenu(self.settings_frame, variable=self.format_var, 
-                                           values=["srt", "vtt", "txt", "tsv", "json"])
-        self.combo_fmt.grid(row=2, column=1, padx=15, pady=5, sticky="ew")
+                                           values=["srt", "vtt", "txt", "tsv", "json"], width=100)
+        self.combo_fmt.grid(row=2, column=1, padx=15, pady=5, sticky="w")
         
         # Checkboxes 
         self.chk_frame = ctk.CTkFrame(self.settings_frame, fg_color="transparent")
         self.chk_frame.grid(row=2, column=2, columnspan=2, sticky="w")
         
         self.chk_zhtw = ctk.CTkCheckBox(self.chk_frame, text="強制繁體中文", variable=self.zh_tw_var, command=self.on_check_zhtw)
-        self.chk_zhtw.pack(side="left", padx=15, pady=5)
+        self.chk_zhtw.pack(side="left", padx=(15, 10), pady=5)
 
-        self.chk_trans = ctk.CTkCheckBox(self.chk_frame, text="翻譯成英文", variable=self.translate_en_var, command=self.on_check_trans)
-        self.chk_trans.pack(side="left", padx=15, pady=5)
+        self.chk_trans = ctk.CTkCheckBox(self.chk_frame, text="翻譯為英文", variable=self.translate_en_var, command=self.on_check_trans)
+        self.chk_trans.pack(side="left", padx=10, pady=5)
 
-        self.label_hint = ctk.CTkLabel(self.settings_frame, text="提示: 勾選「強制繁體中文」可避免出現簡體字。", text_color="gray")
-        self.label_hint.grid(row=3, column=0, columnspan=4, padx=15, pady=(5, 10), sticky="w")
+        # Row 3: Max Chars (Dedicated row for better alignment)
+        self.label_max_chars = ctk.CTkLabel(self.settings_frame, text="每行字數原則:")
+        self.label_max_chars.grid(row=3, column=0, padx=15, pady=(5, 10), sticky="e")
+        
+        self.chars_frame = ctk.CTkFrame(self.settings_frame, fg_color="transparent")
+        self.chars_frame.grid(row=3, column=1, columnspan=3, sticky="w")
+        
+        self.entry_max_chars = ctk.CTkEntry(self.chars_frame, textvariable=self.max_chars_var, width=60)
+        self.entry_max_chars.pack(side="left", padx=15, pady=(5, 10))
+        
+        self.label_chars_hint = ctk.CTkLabel(self.chars_frame, text="(建議設定於 15-25 字之間)", font=ctk.CTkFont(size=11), text_color="gray")
+        self.label_chars_hint.pack(side="left", pady=(5, 10))
+
+        # Row 4: Hotwords
+        self.label_hotwords = ctk.CTkLabel(self.settings_frame, text="熱詞補強 (Hotwords):")
+        self.label_hotwords.grid(row=4, column=0, padx=15, pady=(5, 15), sticky="e")
+        
+        self.hotwords_container = ctk.CTkFrame(self.settings_frame, fg_color="transparent")
+        self.hotwords_container.grid(row=4, column=1, columnspan=3, padx=15, pady=(5, 15), sticky="ew")
+        
+        self.entry_hotwords = ctk.CTkEntry(self.hotwords_container, textvariable=self.hotwords_var, 
+                                           placeholder_text="例如: Python, Unity, 鄭郁翰, 崑山科技大學, TensorFlow (以逗號分隔)")
+        self.entry_hotwords.pack(side="left", fill="x", expand=True)
+        
+        self.btn_help_hotwords = ctk.CTkButton(self.hotwords_container, text="?", width=25, height=25, 
+                                               fg_color="gray", hover_color="#555555", corner_radius=12,
+                                               command=self.show_hotwords_help)
+        self.btn_help_hotwords.pack(side="left", padx=(10, 0))
+        
+        self.entry_hotwords.bind("<FocusIn>", lambda e: self.show_temp_status("提示: 使用逗號分隔關鍵字，可大幅減少專有名詞的拼寫錯誤。"))
 
         # Action Buttons
         self.action_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
@@ -275,11 +305,27 @@ class App(BaseClass):
     def change_appearance_mode_event(self, new_appearance_mode: str):
         ctk.set_appearance_mode(new_appearance_mode)
 
+    def show_hotwords_help(self):
+        help_msg = (
+            "【熱詞補強 (Hotwords) 使用說明】\n\n"
+            "這個功能可以幫助模型更精準地辨識專用術語、人名或品牌名。\n\n"
+            "1. 如何輸入：在欄位中輸入詞彙，並使用「半型逗號 (,)」或「全型逗號 (，)」隔開。\n"
+            "   例如：Python, TensorFlow, 鄭郁翰\n\n"
+            "2. 適用場景：教學影片中的程式名、公司名稱、或是錄音品質較差時的關鍵字。\n\n"
+            "3. 注意事項：請勿輸入過長的整段句子，這會導致模型產生幻覺輸出。"
+        )
+        messagebox.showinfo("功能說明: 熱詞補強", help_msg)
+
     def on_check_zhtw(self):
         if self.zh_tw_var.get() and self.translate_en_var.get():
-            self.label_hint.configure(text="注意: 若勾選「翻譯成英文」，則「強制繁體中文」將無效 (輸出為英文)。", text_color="orange")
+            self.show_temp_status("注意: 若勾選「翻譯成英文」，則「強制繁體中文」將無效。")
         else:
-            self.label_hint.configure(text="提示: 勾選「強制繁體中文」可避免出現簡體字。", text_color="gray")
+            self.show_temp_status("提示: 勾選「強制繁體中文」可避免出現簡體字。")
+
+    def show_temp_status(self, msg, duration=3000):
+        current_status = self.status_label.cget("text")
+        self.status_label.configure(text=msg)
+        self.after(duration, lambda: self.status_label.configure(text=current_status))
 
     def on_check_trans(self):
         self.on_check_zhtw()
@@ -320,7 +366,7 @@ class App(BaseClass):
 
         # Title
         ctk.CTkLabel(scroll_frame, text="Video to Subtitle (本地語音轉字幕工具)", font=ctk.CTkFont(size=20, weight="bold")).pack(pady=(10, 5))
-        ctk.CTkLabel(scroll_frame, text="Version 2.2.2").pack(pady=(0, 20))
+        ctk.CTkLabel(scroll_frame, text="Version 2.3.0").pack(pady=(0, 20))
 
         # --- Developer Info Section ---
         dev_frame = ctk.CTkFrame(scroll_frame)
@@ -430,8 +476,16 @@ class App(BaseClass):
             
             task = "translate" if translate_to_en else "transcribe"
             initial_prompt = "以下是使用台灣繁體中文撰寫的字幕。" if (use_zh_tw and not translate_to_en) else None
+            
+            try:
+                user_max_chars = int(self.max_chars_var.get())
+                if user_max_chars <= 0: user_max_chars = 15
+            except:
+                user_max_chars = 15
+                
+            hotwords = self.hotwords_var.get().strip()
 
-            self.log(f"--- 批次任務開始: 共 {len(self.file_list)} 個檔案 ---")
+            self.log(f"--- 批次任務開始: 共 {len(self.file_list)} 個檔案 (每行建議字數: {user_max_chars}) ---")
             
             # --- 初始化轉錄核心與模型載入 (含錯誤處理) ---
             # 先嘗試用預設路徑 (系統緩存)
@@ -504,7 +558,9 @@ class App(BaseClass):
                         output_format=output_fmt,
                         initial_prompt=initial_prompt,
                         task=task,
-                        force_zh_tw=use_zh_tw
+                        force_zh_tw=use_zh_tw,
+                        max_chars=user_max_chars,
+                        hotwords=hotwords if hotwords else None
                     )
                     
                     if result:

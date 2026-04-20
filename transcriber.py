@@ -95,13 +95,15 @@ class SubtitleTranscriber:
         millis = int(td.microseconds / 1000)
         return f"{hours:02}:{minutes:02}:{secs:02}{separator}{millis:03}"
 
-    def run(self, file_path, log_callback=None, progress_callback=None, cancel_check_callback=None, output_format="srt", initial_prompt=None, task="transcribe", force_zh_tw=False):
+    def run(self, file_path, log_callback=None, progress_callback=None, cancel_check_callback=None, output_format="srt", initial_prompt=None, task="transcribe", force_zh_tw=False, max_chars=20, hotwords=None):
         """
         執行轉錄
         output_format: "srt", "vtt", "txt", "tsv", "json"
         initial_prompt: 用於引導模型輸出的提示詞 (例如強制繁體中文)
         task: "transcribe" (轉錄) 或 "translate" (翻譯成英文)
         force_zh_tw: (bool) 是否透過 opencc 將所有文字強制轉為台灣繁體中文
+        max_chars: (int) 每行建議最大字數
+        hotwords: (str) 專有名詞 / 熱詞補強關鍵字 (以逗號分隔)
         """
         print(f"DEBUG: run() called for file: {file_path}")
         if not self.model:
@@ -124,6 +126,9 @@ class SubtitleTranscriber:
         
             if initial_prompt and task == "transcribe":
                 log_callback(f"啟用提示詞優化: {initial_prompt}")
+            
+            if hotwords:
+                log_callback(f"啟用熱詞補強: {hotwords}")
         
         # 準備參數
         transcribe_options = {
@@ -135,6 +140,9 @@ class SubtitleTranscriber:
         }
         if initial_prompt:
             transcribe_options["initial_prompt"] = initial_prompt
+        
+        if hotwords:
+            transcribe_options["hotwords"] = hotwords
 
         # 執行轉錄
         try:
@@ -226,40 +234,129 @@ class SubtitleTranscriber:
                     file_handle.write("start\tend\ttext\n")
 
             print("DEBUG: Starting segment loop...")
-            for i, segment in enumerate(segments):
-                # 檢查是否取消
-                if cancel_check_callback and cancel_check_callback():
-                    print("DEBUG: Task cancelled by user.")
-                    if log_callback:
-                        log_callback(">>> 使用者取消了作業 <<<")
-                    if file_handle:
-                        file_handle.write("\n[Interrupted by User]\n")
-                    return None 
-                
-                text = segment.text.strip()
-                start_sec = segment.start
-                end_sec = segment.end
-                
+            import re
+            
+            # --- 建立長度優化用的分段器 (Streaming Segmenter) ---
+            class StreamingSegmenter:
+                def __init__(self, max_chars=20, gap_threshold=0.8):
+                    # 如果使用者沒排定，則根據模式給予預設值
+                    if max_chars is None or max_chars <= 0:
+                        self.max_chars = 22 if task != "translate" else 80
+                    else:
+                        self.max_chars = max_chars
+                    self.gap_threshold = gap_threshold
+                    self.current_piece = None
+                    self.strong_punctuations = ["。", "！", "？", ".", "?", "!", "\n"]
+                    self.all_punctuations = ["，", "。", "！", "？", "；", "、", ",", ".", "?", ";", "!", "\n"]
+
+                def process(self, raw_text, start, end):
+                    results = []
+                    pieces = []
+                    
+                    # 將空白也納入標點分割範圍 (為了讓中文字幕有空格可斷句)
+                    chunks = re.split(r'([，。！？；、,.?;!\n\s])', raw_text)
+                    merged_chunks = []
+                    
+                    for k in range(0, len(chunks) - 1, 2):
+                        chunk_text = chunks[k].strip()
+                        delimiter = chunks[k+1]
+                        if chunk_text:
+                            # 正常的文字 + 標點/空格
+                            merged_chunks.append(chunk_text + delimiter)
+                        elif merged_chunks:
+                            # 處理連續標點或多格空白
+                            merged_chunks[-1] += delimiter
+                        elif delimiter.strip() or delimiter == " ":
+                            merged_chunks.append(delimiter)
+                    
+                    if len(chunks) % 2 == 1 and chunks[-1].strip():
+                        merged_chunks.append(chunks[-1].strip())
+                    
+                    total_chars = sum(len(c) for c in merged_chunks)
+                    if total_chars == 0:
+                        return []
+                    
+                    curr_start = start
+                    seg_duration = end - start
+                    for c in merged_chunks:
+                        ratio = len(c) / total_chars
+                        duration = seg_duration * ratio
+                        pieces.append({
+                            'start': curr_start,
+                            'end': curr_start + duration,
+                            'text': c
+                        })
+                        curr_start += duration
+                            
+                    for p in pieces:
+                        p_text = p['text'].strip()
+                        if not p_text:
+                            continue
+                            
+                        if not self.current_piece:
+                            self.current_piece = {'start': p['start'], 'end': p['end'], 'text': p['text']}
+                            continue
+                            
+                        gap = p['start'] - self.current_piece['end']
+                        
+                        # 決定是否補空格：如果前一段結尾沒有標點且沒格空，且目前這段開頭也沒空，則補一個空格
+                        needs_extra_space = False
+                        if not any(self.current_piece['text'].endswith(punc) for punc in self.all_punctuations + [" "]):
+                             if not p['text'].startswith(" "):
+                                 needs_extra_space = True
+                        
+                        space = " " if needs_extra_space else ""
+                        combined_text = self.current_piece['text'] + space + p['text']
+                        
+                        has_strong_punc = any(self.current_piece['text'].endswith(punc) for punc in self.strong_punctuations)
+                        has_any_punc = any(self.current_piece['text'].endswith(punc) for punc in self.all_punctuations + [" "])
+                        
+                        should_break = False
+                        
+                        # 邏輯判斷是否該斷句
+                        if len(combined_text) > self.max_chars and has_any_punc:
+                            should_break = True
+                        elif len(combined_text) > self.max_chars + 12: # 強制切斷點
+                            should_break = True
+                        elif gap > self.gap_threshold:
+                            should_break = True
+                        elif has_strong_punc and len(self.current_piece['text']) > 12:
+                            should_break = True
+                            
+                        if should_break:
+                            results.append(self.current_piece)
+                            self.current_piece = {'start': p['start'], 'end': p['end'], 'text': p['text']}
+                        else:
+                            self.current_piece['end'] = p['end']
+                            self.current_piece['text'] = combined_text
+                            
+                    return results
+
+                def flush(self):
+                    if self.current_piece:
+                        res = [self.current_piece]
+                        self.current_piece = None
+                        return res
+                    return []
+
+            segmenter = StreamingSegmenter(max_chars=max_chars)
+            output_i = 0
+            
+            def handle_segment_output(start_sec, end_sec, text, output_index):
                 # --- 強制簡轉繁 ---
                 if force_zh_tw and task == "transcribe" and converter:
                     original_text = text
                     text = converter.convert(text)
                     if original_text != text:
                         try:
-                            print(f"DEBUG: Converted simplified to traditional: {original_text} -> {text}")
+                            pass # print(f"DEBUG: Converted simplified to traditional: {original_text} -> {text}")
                         except UnicodeEncodeError:
-                            print(f"DEBUG: Converted simplified to traditional (character print omitted due to encoding)")
+                            pass
 
                 try:
-                    print(f"DEBUG: Segment {i}: {start_sec}-{end_sec} {text[:20]}...")
+                    print(f"DEBUG: Segment {output_index}: {start_sec:.2f}-{end_sec:.2f} {text[:20]}...")
                 except UnicodeEncodeError:
-                    print(f"DEBUG: Segment {i}: {start_sec}-{end_sec} (character print omitted due to encoding)")
-
-
-                # 更新進度條
-                if progress_callback and total_duration > 0:
-                    progress = min(end_sec / total_duration, 1.0)
-                    progress_callback(progress)
+                    print(f"DEBUG: Segment {output_index}: {start_sec:.2f}-{end_sec:.2f} (character print omitted due to encoding)")
 
                 # 在介面上顯示進度
                 if log_callback:
@@ -269,7 +366,7 @@ class SubtitleTranscriber:
                 # 處理各格式輸出
                 if output_format.lower() == "json":
                     json_results.append({
-                        "id": i,
+                        "id": output_index,
                         "start": start_sec,
                         "end": end_sec,
                         "text": text
@@ -290,13 +387,49 @@ class SubtitleTranscriber:
                         end_time_str = self.format_timestamp(end_sec, separator)
                         
                         if output_format.lower() == "srt":
-                            file_handle.write(f"{i + 1}\n")
+                            file_handle.write(f"{output_index + 1}\n")
                             file_handle.write(f"{start_time_str} --> {end_time_str}\n")
                             file_handle.write(f"{text}\n\n")
                         elif output_format.lower() == "vtt":
                             file_handle.write(f"{start_time_str} --> {end_time_str}\n")
                             file_handle.write(f"{text}\n\n")
 
+            for _, segment in enumerate(segments):
+                # 檢查是否取消
+                if cancel_check_callback and cancel_check_callback():
+                    print("DEBUG: Task cancelled by user.")
+                    if log_callback:
+                        log_callback(">>> 使用者取消了作業 <<<")
+                    if file_handle:
+                        file_handle.write("\n[Interrupted by User]\n")
+                    return None 
+                
+                try:
+                    raw_text = segment.text.strip() if hasattr(segment, 'text') else segment['text'].strip()
+                    seg_start = segment.start if hasattr(segment, 'start') else segment['start']
+                    seg_end = segment.end if hasattr(segment, 'end') else segment['end']
+                except Exception as e:
+                    print(f"DEBUG: Error extracting segment properties: {e}")
+                    continue
+                
+                # 取得重新切割後的小段落
+                refined_segments = segmenter.process(raw_text, seg_start, seg_end)
+                
+                for r_seg in refined_segments:
+                    handle_segment_output(r_seg['start'], r_seg['end'], r_seg['text'], output_i)
+                    output_i += 1
+
+                # 更新總體進度條 (因為進度條使用 end_sec，我們直接用原本 segment 的 end_sec 即可)
+                if progress_callback and total_duration > 0:
+                    progress = min(seg_end / total_duration, 1.0)
+                    progress_callback(progress)
+
+            # 處理最後殘留的段落
+            leftovers = segmenter.flush()
+            for r_seg in leftovers:
+                handle_segment_output(r_seg['start'], r_seg['end'], r_seg['text'], output_i)
+                output_i += 1
+                
             print("DEBUG: Segment loop finished.")
             # 迴圈結束後，如果是 JSON 則寫入檔案
             if output_format.lower() == "json":
