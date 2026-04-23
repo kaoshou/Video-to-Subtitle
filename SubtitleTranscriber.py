@@ -19,6 +19,29 @@ except ImportError:
     DND_AVAILABLE = False
     print("提示: 若要啟用檔案拖曳功能，請執行 pip install tkinterdnd2")
 
+# --- 版本資訊讀取 ---
+def get_version():
+    """從 pyproject.toml 讀取版本號"""
+    try:
+        # 優先嘗試 Python 3.11+ 內建的 tomllib
+        try:
+            import tomllib
+        except ImportError:
+            import tomli as tomllib
+        
+        # 獲取 pyproject.toml 的絕對路徑 (考慮打包後的環境)
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        toml_path = os.path.join(script_dir, "pyproject.toml")
+        
+        if os.path.exists(toml_path):
+            with open(toml_path, "rb") as f:
+                data = tomllib.load(f)
+                return data.get("project", {}).get("version", "Unknown")
+    except Exception as e:
+        print(f"DEBUG: Failed to load version from pyproject.toml: {e}")
+    
+    return "2.3.0" # Fallback
+
 # --- 設定外觀 ---
 ctk.set_appearance_mode("System")  # Modes: "System" (standard), "Dark", "Light"
 ctk.set_default_color_theme("blue")  # Themes: "blue" (standard), "green", "dark-blue"
@@ -65,6 +88,9 @@ class App(BaseClass):
         # 建構 UI
         self.create_widgets()
         self.setup_dnd()
+        
+        # 啟動後檢查更新 (非同步)
+        threading.Thread(target=self.check_for_updates, daemon=True).start()
 
     def setup_dnd(self):
         if DND_AVAILABLE:
@@ -237,13 +263,19 @@ class App(BaseClass):
         self.hotwords_container.grid(row=4, column=1, columnspan=3, padx=15, pady=(5, 15), sticky="ew")
         
         self.entry_hotwords = ctk.CTkEntry(self.hotwords_container, textvariable=self.hotwords_var, 
-                                           placeholder_text="例如: Python, Unity, 鄭郁翰, 崑山科技大學, TensorFlow (以逗號分隔)")
+                                           placeholder_text="例如: Python, Unity, 鄭郁翰, 崑山科技大學 (以逗號分隔)")
         self.entry_hotwords.pack(side="left", fill="x", expand=True)
         
-        self.btn_help_hotwords = ctk.CTkButton(self.hotwords_container, text="?", width=25, height=25, 
-                                               fg_color="gray", hover_color="#555555", corner_radius=12,
+        # New: Import Button for Hotwords
+        self.btn_import_hotwords = ctk.CTkButton(self.hotwords_container, text="📂", width=30, height=28,
+                                                fg_color="gray", hover_color="#555555",
+                                                command=self.load_hotwords_from_file)
+        self.btn_import_hotwords.pack(side="left", padx=(5, 0))
+        
+        self.btn_help_hotwords = ctk.CTkButton(self.hotwords_container, text="?", width=28, height=28, 
+                                               fg_color="gray", hover_color="#555555", corner_radius=14,
                                                command=self.show_hotwords_help)
-        self.btn_help_hotwords.pack(side="left", padx=(10, 0))
+        self.btn_help_hotwords.pack(side="left", padx=(5, 0))
         
         self.entry_hotwords.bind("<FocusIn>", lambda e: self.show_temp_status("提示: 使用逗號分隔關鍵字，可大幅減少專有名詞的拼寫錯誤。"))
 
@@ -314,7 +346,113 @@ class App(BaseClass):
             "2. 適用場景：教學影片中的程式名、公司名稱、或是錄音品質較差時的關鍵字。\n\n"
             "3. 注意事項：請勿輸入過長的整段句子，這會導致模型產生幻覺輸出。"
         )
-        messagebox.showinfo("功能說明: 熱詞補強", help_msg)
+        # 修正：優先使用關於視窗做為父視窗，若無則使用主視窗
+        parent = self.about_window if (hasattr(self, 'about_window') and self.about_window is not None and self.about_window.winfo_exists()) else self
+        self.after(100, lambda: messagebox.showinfo("功能說明: 熱詞補強", help_msg, parent=parent))
+
+    def load_hotwords_from_file(self):
+        """從文字檔匯入熱詞"""
+        file_path = filedialog.askopenfilename(
+            filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")],
+            title="選擇熱詞清單檔 (每行一個詞或以逗號分隔)"
+        )
+        if not file_path:
+            return
+            
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = f.read()
+                
+            # 分割邏輯：支援換行或逗號
+            import re
+            words = [w.strip() for w in re.split(r'[,\n，]', content) if w.strip()]
+            
+            if not words:
+                messagebox.showwarning("匯入提示", "選取的檔案中沒有偵測到有效的詞彙。")
+                return
+                
+            # 與現有的熱詞合併
+            existing_words = [w.strip() for w in re.split(r'[,\n，]', self.hotwords_var.get()) if w.strip()]
+            
+            # 使用 set 去重但保持基本順序的邏輯
+            new_list = existing_words.copy()
+            for w in words:
+                if w not in new_list:
+                    new_list.append(w)
+            
+            result_str = ", ".join(new_list)
+            self.hotwords_var.set(result_str)
+            self.log(f"成功從檔案匯入 {len(words)} 個熱詞。")
+            self.show_temp_status(f"已匯入 {len(words)} 個熱詞")
+            
+        except Exception as e:
+            messagebox.showerror("匯入失敗", f"讀取熱詞檔案時發生錯誤：\n{e}")
+
+    def check_for_updates(self, manual=False):
+        """檢查 GitHub 上是否有新版本
+        manual: 若為 True，則在無更新時也會提示「已是最新版本」
+        """
+        if manual and hasattr(self, 'btn_manual_update'):
+            self.btn_manual_update.configure(state="disabled", text="檢查中...")
+
+        current_version = get_version()
+        repo = "kaoshou/Video-to-Subtitle"
+        url = f"https://api.github.com/repos/{repo}/releases/latest"
+        
+        try:
+            import urllib.request
+            import json
+            import re
+            
+            # 建立請求，增加 User-Agent 避免被 GitHub 拒絕
+            req = urllib.request.Request(url, headers={'User-Agent': 'SubtitleTranscriber-Updater'})
+            with urllib.request.urlopen(req, timeout=5) as response:
+                data = json.loads(response.read().decode())
+                
+                latest_version = data.get("tag_name", "").replace("v", "")
+                if not latest_version:
+                    latest_version = data.get("name", "").replace("v", "")
+                
+                if not latest_version:
+                    if manual: messagebox.showinfo("檢查結果", "暫時無法取得版本資訊，請稍後再試。", parent=getattr(self, 'about_window', self))
+                    return
+
+                # 版本比較
+                def version_to_tuple(v):
+                    try:
+                        return tuple(map(int, (re.sub(r'[^0-9.]', '', v).split('.'))))
+                    except:
+                        return (0, 0, 0)
+
+                if version_to_tuple(latest_version) > version_to_tuple(current_version):
+                    release_url = data.get("html_url", f"https://github.com/{repo}/releases")
+                    body = data.get("body", "無更新說明")
+                    
+                    # 彈出提示
+                    target_parent = getattr(self, 'about_window', self)
+                    self.after(500 if manual else 2000, lambda: self.show_update_dialog(latest_version, release_url, body, parent=target_parent))
+                elif manual:
+                    messagebox.showinfo("檢查結果", f"目前已是最新版本 (v{current_version})", parent=getattr(self, 'about_window', self))
+                    
+        except Exception as e:
+            msg = f"更新檢查失敗: {e}"
+            if "404" in str(e):
+                msg = "尚未在 GitHub 建立 Release (404)"
+            
+            if manual:
+                messagebox.showerror("檢查失敗", f"無法連線至 GitHub 檢查更新：\n{msg}", parent=getattr(self, 'about_window', self))
+            else:
+                self.after(3000, lambda: self.status_label.configure(text=msg))
+        finally:
+            if manual and hasattr(self, 'btn_manual_update'):
+                self.btn_manual_update.configure(state="normal", text="檢查更新")
+
+    def show_update_dialog(self, latest_version, url, body, parent=None):
+        """顯示更新提示視窗"""
+        parent = parent if parent else self
+        msg = f"發現新版本：v{latest_version}\n目前版本：v{get_version()}\n\n是否要前往下載新版本？\n\n更新說明：\n{body[:200]}{'...' if len(body) > 200 else ''}"
+        if messagebox.askyesno("軟體更新提示", msg, parent=parent):
+            webbrowser.open_new(url)
 
     def on_check_zhtw(self):
         if self.zh_tw_var.get() and self.translate_en_var.get():
@@ -366,7 +504,16 @@ class App(BaseClass):
 
         # Title
         ctk.CTkLabel(scroll_frame, text="Video to Subtitle (本地語音轉字幕工具)", font=ctk.CTkFont(size=20, weight="bold")).pack(pady=(10, 5))
-        ctk.CTkLabel(scroll_frame, text="Version 2.3.0").pack(pady=(0, 20))
+        
+        version_frame = ctk.CTkFrame(scroll_frame, fg_color="transparent")
+        version_frame.pack(pady=(0, 20))
+        
+        ctk.CTkLabel(version_frame, text=f"Version {get_version()}").pack(side="left", padx=5)
+        
+        self.btn_manual_update = ctk.CTkButton(version_frame, text="檢查更新", width=80, height=24, 
+                                              font=ctk.CTkFont(size=11),
+                                              command=lambda: self.check_for_updates(manual=True))
+        self.btn_manual_update.pack(side="left", padx=5)
 
         # --- Developer Info Section ---
         dev_frame = ctk.CTkFrame(scroll_frame)

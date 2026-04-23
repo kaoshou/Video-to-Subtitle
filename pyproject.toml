@@ -1,0 +1,16 @@
+[tool.poetry]
+name = "video-to-subtitle"
+version = "2.4.0"
+description = "A local video-to-subtitle transcription tool based on faster-whisper"
+authors = ["Yu-Han Cheng <kaoshou@gmail.com>"]
+
+[project]
+name = "video-to-subtitle"
+version = "2.4.0"
+dependencies = [
+    "customtkinter",
+    "tkinterdnd2",
+    "faster-whisper",
+    "opencc",
+    "tomli; python_version < '3.11'"
+]

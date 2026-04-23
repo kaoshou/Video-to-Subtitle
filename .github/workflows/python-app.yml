@@ -24,7 +24,7 @@ jobs:
     - name: 安裝核心依賴套件
       run: |
         python -m pip install --upgrade pip
-        pip install customtkinter tkinterdnd2 faster-whisper ctranslate2 opencc pyinstaller
+        pip install customtkinter tkinterdnd2 faster-whisper ctranslate2 opencc pyinstaller tomli
 
     - name: 安裝 Mac 專屬依賴套件 (mlx-whisper)
       if: matrix.os == 'macos-latest'
@@ -85,11 +85,18 @@ jobs:
           name: VideoToSubtitle-Mac
           path: output-mac
 
+      - name: 取得版本號
+        id: get_version
+        run: |
+          VERSION=$(python -c "import tomli; f = open('pyproject.toml', 'rb'); data = tomli.load(f); print(data['project']['version'])")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+        shell: bash
+
       - name: 建立 Github Release 並上傳檔案
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.2.2
-          name: Release v2.2.2
+          tag_name: v${{ steps.get_version.outputs.version }}
+          name: Release v${{ steps.get_version.outputs.version }}
           draft: false
           prerelease: false
           files: |
