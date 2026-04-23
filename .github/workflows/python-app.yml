@@ -1,5 +1,8 @@
 name: Build Cross-Platform Executables
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 on:
   push:
     branches: [ "main" ]  # 當 main 分支有更新時觸發
@@ -73,6 +76,9 @@ jobs:
     permissions:
       contents: write  # 需要允許寫入以建立 Release
     steps:
+      - name: 檢出程式碼
+        uses: actions/checkout@v4
+
       - name: 下載 Windows 成品
         uses: actions/download-artifact@v4
         with:
@@ -88,7 +94,7 @@ jobs:
       - name: 取得版本號
         id: get_version
         run: |
-          VERSION=$(python -c "import tomli; f = open('pyproject.toml', 'rb'); data = tomli.load(f); print(data['project']['version'])")
+          VERSION=$(grep 'version =' pyproject.toml | head -n 1 | cut -d '"' -f 2)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
         shell: bash
 
