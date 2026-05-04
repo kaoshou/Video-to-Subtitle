@@ -238,7 +238,7 @@ class SubtitleTranscriber:
             
             # --- 建立長度優化用的分段器 (Streaming Segmenter) ---
             class StreamingSegmenter:
-                def __init__(self, max_chars=20, gap_threshold=0.8):
+                def __init__(self, max_chars=20, gap_threshold=0.8, hotwords_str=None):
                     # 如果使用者沒排定，則根據模式給予預設值
                     if max_chars is None or max_chars <= 0:
                         self.max_chars = 22 if task != "translate" else 80
@@ -248,13 +248,32 @@ class SubtitleTranscriber:
                     self.current_piece = None
                     self.strong_punctuations = ["。", "！", "？", ".", "?", "!", "\n"]
                     self.all_punctuations = ["，", "。", "！", "？", "；", "、", ",", ".", "?", ";", "!", "\n"]
+                    
+                    self.multi_word_hotwords = []
+                    if hotwords_str:
+                        hw_list = [h.strip() for h in hotwords_str.split(',') if h.strip()]
+                        self.multi_word_hotwords = sorted([h for h in hw_list if " " in h], key=len, reverse=True)
 
                 def process(self, raw_text, start, end):
                     results = []
                     pieces = []
                     
+                    # 保護熱詞中的空白，暫時替換為 \uE000 (Private Use Area 字元)
+                    protected_text = raw_text
+                    if getattr(self, 'multi_word_hotwords', None):
+                        for hw in self.multi_word_hotwords:
+                            pattern = re.compile(re.escape(hw), re.IGNORECASE)
+                            protected_text = pattern.sub(lambda m: m.group(0).replace(" ", "\uE000"), protected_text)
+                    
+                    # 保護一般英數字之間的空白，避免英文單字（如 Main Camera, Demo Project）被切斷
+                    protected_text = re.sub(r'(?<=[a-zA-Z0-9#+\-.])\s+(?=[a-zA-Z0-9])', '\uE000', protected_text)
+                    
+                    # 保護英數字之間的標點 (如 config.txt, 1,000)，避免被 re.split 切斷
+                    protected_text = re.sub(r'(?<=[a-zA-Z0-9])\.(?=[a-zA-Z0-9])', '\uE001', protected_text)
+                    protected_text = re.sub(r'(?<=[0-9]),(?=[0-9])', '\uE002', protected_text)
+                    
                     # 將空白也納入標點分割範圍 (為了讓中文字幕有空格可斷句)
-                    chunks = re.split(r'([，。！？；、,.?;!\n\s])', raw_text)
+                    chunks = re.split(r'([，。！？；、,.?;!\n\s])', protected_text)
                     merged_chunks = []
                     
                     for k in range(0, len(chunks) - 1, 2):
@@ -281,10 +300,13 @@ class SubtitleTranscriber:
                     for c in merged_chunks:
                         ratio = len(c) / total_chars
                         duration = seg_duration * ratio
+                        # 還原熱詞與特殊標點中的字元
+                        restored_text = c.replace("\uE000", " ").replace("\uE001", ".").replace("\uE002", ",")
+                        
                         pieces.append({
                             'start': curr_start,
                             'end': curr_start + duration,
-                            'text': c
+                            'text': restored_text
                         })
                         curr_start += duration
                             
@@ -309,7 +331,23 @@ class SubtitleTranscriber:
                         combined_text = self.current_piece['text'] + space + p['text']
                         
                         has_strong_punc = any(self.current_piece['text'].endswith(punc) for punc in self.strong_punctuations)
-                        has_any_punc = any(self.current_piece['text'].endswith(punc) for punc in self.all_punctuations + [" "])
+                        
+                        # 檢查是否為英數字之間的空白 (不應視為斷句用的標點)
+                        is_english_space = False
+                        if self.current_piece['text'].endswith(" ") or space == " ":
+                            prev_char = self.current_piece['text'].strip()[-1:] if self.current_piece['text'].strip() else ""
+                            next_char = p['text'].strip()[0:1] if p['text'].strip() else ""
+                            if prev_char and next_char:
+                                if re.match(r'[a-zA-Z0-9#+\-.]', prev_char) and re.match(r'[a-zA-Z0-9]', next_char):
+                                    is_english_space = True
+                        
+                        has_any_punc = False
+                        for punc in self.all_punctuations + [" "]:
+                            if self.current_piece['text'].endswith(punc):
+                                if punc == " " and is_english_space:
+                                    continue
+                                has_any_punc = True
+                                break
                         
                         should_break = False
                         
@@ -339,7 +377,7 @@ class SubtitleTranscriber:
                         return res
                     return []
 
-            segmenter = StreamingSegmenter(max_chars=max_chars)
+            segmenter = StreamingSegmenter(max_chars=max_chars, hotwords_str=hotwords)
             output_i = 0
             
             def handle_segment_output(start_sec, end_sec, text, output_index):
