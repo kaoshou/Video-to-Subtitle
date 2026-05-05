@@ -40,7 +40,7 @@ def get_version():
     except Exception as e:
         print(f"DEBUG: Failed to load version from pyproject.toml: {e}")
     
-    return "2.4.1" # Fallback
+    return "2.4.2" # Fallback
 
 # --- 設定外觀 ---
 ctk.set_appearance_mode("System")  # Modes: "System" (standard), "Dark", "Light"
@@ -409,9 +409,9 @@ class App(BaseClass):
             with urllib.request.urlopen(req, timeout=5) as response:
                 data = json.loads(response.read().decode())
                 
-                latest_version = data.get("tag_name", "").replace("v", "")
+                latest_version = (data.get("tag_name") or "").replace("v", "")
                 if not latest_version:
-                    latest_version = data.get("name", "").replace("v", "")
+                    latest_version = (data.get("name") or "").replace("v", "")
                 
                 if not latest_version:
                     if manual: messagebox.showinfo("檢查結果", "暫時無法取得版本資訊，請稍後再試。", parent=getattr(self, 'about_window', self))
@@ -425,8 +425,8 @@ class App(BaseClass):
                         return (0, 0, 0)
 
                 if version_to_tuple(latest_version) > version_to_tuple(current_version):
-                    release_url = data.get("html_url", f"https://github.com/{repo}/releases")
-                    body = data.get("body", "無更新說明")
+                    release_url = data.get("html_url") or f"https://github.com/{repo}/releases"
+                    body = data.get("body") or "無更新說明"
                     
                     # 彈出提示
                     target_parent = getattr(self, 'about_window', self)
@@ -450,7 +450,9 @@ class App(BaseClass):
     def show_update_dialog(self, latest_version, url, body, parent=None):
         """顯示更新提示視窗"""
         parent = parent if parent else self
-        msg = f"發現新版本：v{latest_version}\n目前版本：v{get_version()}\n\n是否要前往下載新版本？\n\n更新說明：\n{body[:200]}{'...' if len(body) > 200 else ''}"
+        # 確保 body 為字串，避免 NoneType 錯誤 (例如 GitHub Release 無內文時)
+        safe_body = body if body else "無更新說明"
+        msg = f"發現新版本：v{latest_version}\n目前版本：v{get_version()}\n\n是否要前往下載新版本？\n\n更新說明：\n{safe_body[:200]}{'...' if len(safe_body) > 200 else ''}"
         if messagebox.askyesno("軟體更新提示", msg, parent=parent):
             webbrowser.open_new(url)
 
