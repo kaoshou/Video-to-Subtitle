@@ -7,6 +7,7 @@ import customtkinter as ctk
 import webbrowser
 import platform
 import time
+import json
 
 # Import core logic from transcriber.py
 from transcriber import SubtitleTranscriber
@@ -80,6 +81,11 @@ class App(BaseClass):
         self.translate_en_var = ctk.BooleanVar(value=False) 
         self.max_chars_var = ctk.StringVar(value="15") 
         self.hotwords_var = ctk.StringVar(value="") 
+        self.model_path_var = ctk.StringVar(value="") 
+
+        # 讀取設定檔 (持久化)
+        self.config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+        self.load_settings()
 
         # Grid configuration
         self.grid_columnconfigure(0, weight=1)
@@ -315,10 +321,14 @@ class App(BaseClass):
                                                                command=self.change_appearance_mode_event, width=100)
         self.appearance_mode_optionemenu.pack(side="left")
 
-        # Right: About Button
+        # Right: Storage & About Buttons
         self.btn_about = ctk.CTkButton(self.controls_frame, text="關於本程式 (About)", command=self.show_about, 
                                        width=120, fg_color="transparent", border_width=1, text_color=("gray10", "#DCE4EE"))
         self.btn_about.pack(side="right")
+
+        self.btn_storage = ctk.CTkButton(self.controls_frame, text="模型儲存管理", command=self.show_storage_settings,
+                                        width=120, fg_color="transparent", border_width=1, text_color=("gray10", "#DCE4EE"))
+        self.btn_storage.pack(side="right", padx=(0, 10))
 
         # --- 4. Status Bar (Row 3 - Bottom) ---
         self.status_frame = ctk.CTkFrame(self, height=24, corner_radius=0, fg_color=("gray95", "gray10"))
@@ -336,6 +346,142 @@ class App(BaseClass):
         
     def change_appearance_mode_event(self, new_appearance_mode: str):
         ctk.set_appearance_mode(new_appearance_mode)
+        self.save_settings()
+
+    def show_storage_settings(self):
+        """顯示模型儲存路徑管理視窗"""
+        # 避免重複開啟
+        if hasattr(self, "storage_window") and self.storage_window is not None and self.storage_window.winfo_exists():
+            self.storage_window.lift()
+            self.storage_window.focus_force()
+            return
+
+        self.storage_window = ctk.CTkToplevel(self)
+        self.storage_window.title("模型儲存管理")
+        self.storage_window.geometry("500x380")
+        self.storage_window.resizable(False, False)
+        
+        if platform.system() != "Darwin":
+            self.storage_window.transient(self)
+            self.storage_window.grab_set()
+        
+        # 標題與說明
+        ctk.CTkLabel(self.storage_window, text="模型快取與儲存管理", font=ctk.CTkFont(size=18, weight="bold")).pack(pady=(20, 10))
+        
+        desc_text = (
+            "Whisper 模型檔案通常較大 (約 500MB 至 2GB)，預設會儲存在系統磁碟中。\n\n"
+            "若您的系統槽 (通常是 C 槽) 空間不足，建議將路徑更改至其他磁碟。\n"
+            "更改後，程式會自動從新路徑讀取，若新路徑無檔案則會重新下載。"
+        )
+        ctk.CTkLabel(self.storage_window, text=desc_text, justify="left", wraplength=440).pack(padx=20, pady=10)
+
+        # 路徑顯示區
+        path_frame = ctk.CTkFrame(self.storage_window)
+        path_frame.pack(fill="x", padx=30, pady=15)
+        
+        ctk.CTkLabel(path_frame, text="目前儲存路徑:", font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=15, pady=(10, 0))
+        
+        # 使用 Textbox 顯示長路徑以便複製或查看
+        path_display = ctk.CTkTextbox(path_frame, height=60, font=ctk.CTkFont(size=11))
+        path_display.pack(fill="x", padx=15, pady=10)
+        
+        def update_display():
+            current_path = self.model_path_var.get().strip()
+            if not current_path:
+                current_path = os.path.expanduser("~/.cache/huggingface/hub (系統預設)")
+            path_display.configure(state="normal")
+            path_display.delete("0.0", "end")
+            path_display.insert("end", current_path)
+            path_display.configure(state="disabled")
+
+        update_display()
+
+        # 按鈕區
+        btn_frame = ctk.CTkFrame(self.storage_window, fg_color="transparent")
+        btn_frame.pack(pady=10)
+        
+        def on_change():
+            self.browse_model_path()
+            update_display()
+
+        ctk.CTkButton(btn_frame, text="更改路徑...", command=on_change, width=120).pack(side="left", padx=10)
+        ctk.CTkButton(btn_frame, text="開啟資料夾", command=self.open_model_path, width=120, fg_color="gray").pack(side="left", padx=10)
+
+        # 底部關閉按鈕
+        ctk.CTkButton(self.storage_window, text="完成 (Close)", command=self.storage_window.destroy, width=100).pack(pady=(10, 20))
+
+    def browse_model_path(self):
+        directory = filedialog.askdirectory(title="選擇模型儲存路徑")
+        if directory:
+            self.model_path_var.set(directory)
+            self.save_settings()
+
+    def open_model_path(self):
+        path = self.model_path_var.get().strip()
+        if not path:
+            # 預設路徑 (faster-whisper 預設)
+            path = os.path.expanduser("~/.cache/huggingface/hub")
+            
+        if not os.path.exists(path):
+            try:
+                os.makedirs(path, exist_ok=True)
+            except:
+                messagebox.showerror("錯誤", f"路徑不存在且無法建立:\n{path}")
+                return
+        
+        # 根據平台開啟資料夾
+        if platform.system() == "Windows":
+            os.startfile(path)
+        elif platform.system() == "Darwin":
+            import subprocess
+            subprocess.Popen(["open", path])
+        else:
+            import subprocess
+            subprocess.Popen(["xdg-open", path])
+
+    def load_settings(self):
+        """從 config.json 載入設定"""
+        if not os.path.exists(self.config_file):
+            return
+            
+        try:
+            with open(self.config_file, "r", encoding="utf-8") as f:
+                config = json.load(f)
+                
+            if "model" in config: self.model_var.set(config["model"])
+            if "device" in config: self.device_var.set(config["device"])
+            if "format" in config: self.format_var.set(config["format"])
+            if "zh_tw" in config: self.zh_tw_var.set(config["zh_tw"])
+            if "translate_en" in config: self.translate_en_var.set(config["translate_en"])
+            if "max_chars" in config: self.max_chars_var.set(config["max_chars"])
+            if "hotwords" in config: self.hotwords_var.set(config["hotwords"])
+            if "model_path" in config: self.model_path_var.set(config["model_path"])
+            if "appearance_mode" in config: 
+                ctk.set_appearance_mode(config["appearance_mode"])
+                # 更新下拉選單顯示 (如果有)
+                if hasattr(self, 'appearance_mode_optionemenu'):
+                    self.appearance_mode_optionemenu.set(config["appearance_mode"])
+        except Exception as e:
+            print(f"DEBUG: Failed to load config: {e}")
+
+    def save_settings(self):
+        """將目前設定儲存至 config.json"""
+        config = {
+            "model": self.model_var.get(),
+            "device": self.device_var.get(),
+            "format": self.format_var.get(),
+            "zh_tw": self.zh_tw_var.get(),
+            "translate_en": self.translate_en_var.get(),
+            "max_chars": self.max_chars_var.get(),
+            "hotwords": self.hotwords_var.get(),
+            "model_path": self.model_path_var.get(),
+            "appearance_mode": ctk.get_appearance_mode()
+        }
+        try:
+            with open(self.config_file, "w", encoding="utf-8") as f:
+                json.dump(config, f, indent=4, ensure_ascii=False)
+        except Exception as e:
+            print(f"DEBUG: Failed to save config: {e}")
 
     def show_hotwords_help(self):
         help_msg = (
@@ -603,6 +749,8 @@ class App(BaseClass):
         self.btn_clear.configure(state="disabled")
         self.btn_cancel.configure(state="normal", text="取消 (Cancel)")
         
+        self.save_settings() # 開始轉錄前先儲存設定
+        
         self.log_textbox.configure(state="normal")
         self.log_textbox.delete("0.0", "end")
         self.log_textbox.configure(state="disabled")
@@ -640,15 +788,18 @@ class App(BaseClass):
             # 先嘗試用預設路徑 (系統緩存)
             # 若發生權限錯誤，詢問使用者是否改用本地 ./models 目錄
             
-            current_download_root = None
+            current_download_root = self.model_path_var.get().strip()
+            if not current_download_root: current_download_root = None
             
-            # 建立或更新實例 (先用預設路徑)
+            # 建立或更新實例
             if not self.transcriber:
-                self.transcriber = SubtitleTranscriber(model_size, device, compute_type)
+                self.transcriber = SubtitleTranscriber(model_size, device, compute_type, download_root=current_download_root)
             else:
                  # 若參數變更，重新建立
-                if self.transcriber.model_size != model_size or self.transcriber.device != device:
-                     self.transcriber = SubtitleTranscriber(model_size, device, compute_type)
+                if (self.transcriber.model_size != model_size or 
+                    self.transcriber.device != device or 
+                    getattr(self.transcriber, 'download_root', None) != current_download_root):
+                     self.transcriber = SubtitleTranscriber(model_size, device, compute_type, download_root=current_download_root)
 
             # 嘗試載入模型
             try:
