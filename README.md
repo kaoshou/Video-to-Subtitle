@@ -12,6 +12,15 @@
 
 ![](screenshot.png)
 
+## 🚀 v2.5.0 重大更新說明
+本版本針對教學影片字幕與講義製作進行了里程碑級的重大升級：
+* **軟體整合式「字幕快速校對面板」**：主畫面新增「編輯現有字幕檔」按鈕，轉錄完成後亦可直接在列表一鍵開啟編輯。支援 `.srt`/`.vtt` 的時間軸 Entry 列表編輯，以及 `.txt` 講義文章的大幅面文字框潤飾，無須記事本即可一鍵無損儲存。
+* **智慧中文語意斷句與合併**：優化中文黏性助詞/量詞/副詞與英數百分比邊界處理。支援跨 Segment 連續單字流智慧合併，徹底消滅單字成行、標點撕裂等傳統 Whisper 痛點。
+* **多任務檔案管理彈窗**：全新設計的轉錄完成彈窗，以滾動列表完整列出所有產出檔案，並為每一行檔案對齊提供獨立的「開啟」、「校對」、「資料夾」操作，且點擊不關閉彈窗。
+* **Silero VAD 靜音過濾**：與進階面板綁定，僅在偵測到人聲時才進行識別，徹底消除長靜音或背景雜音造成的重覆幻覺。
+* **平台顯示一致性 (去 Emoji)**：UI 與彈窗中的按鈕與標記全面移除了 Emoji 圖示，解決不同平台（Windows/Mac）因為系統字型缺字產生的鋸齒、黑白豆腐塊問題。
+
+
 ## ✨ 主要功能
 其實主要功能就是利用 Whisper 產生字幕檔案...
 * **熱詞補強 (Hotwords)**：[NEW] 針對專有名詞、程式碼方法名稱、術語或人名提供引導辨識，大幅提升教學影片術語的精準度。
@@ -107,3 +116,5 @@
 | [CustomTkinter](https://github.com/TomSchimansky/CustomTkinter) | MIT | 現代化 GUI 介面框架 |
 | [tkinterdnd2](https://github.com/pmgagne/tkinterdnd2) | MIT | GUI 檔案拖放支援 |
 | [OpenCC](https://github.com/BYVoid/OpenCC) | Apache-2.0 | 精準的繁簡中文轉換庫 |
+| [tomli](https://github.com/hukkin/tomli) | MIT | 支援 Python 舊版本讀取 pyproject.toml 設定檔 |
+| [huggingface-hub](https://github.com/huggingface/huggingface_hub) | Apache-2.0 | 語音辨識模型下載與快取儲存通道 |

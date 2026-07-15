@@ -41,7 +41,7 @@ def get_version():
     except Exception as e:
         print(f"DEBUG: Failed to load version from pyproject.toml: {e}")
     
-    return "2.4.2" # Fallback
+    return "2.5.0" # Fallback
 
 # --- 設定外觀 ---
 ctk.set_appearance_mode("System")  # Modes: "System" (standard), "Dark", "Light"
@@ -62,12 +62,212 @@ if DND_AVAILABLE:
             self.TkdndVersion = TkinterDnD._require(self)
     BaseClass = CTkDnD
 
+class SubtitleEditorWindow(ctk.CTkToplevel):
+    def __init__(self, parent, file_path):
+        super().__init__(parent)
+        self.title(f"快速校對編輯 - {os.path.basename(file_path)}")
+        self.geometry("780x600")
+        
+        if platform.system() != "Darwin":
+            self.transient(parent)
+            self.grab_set()
+            
+        # 套用 APP 圖標
+        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_icon.ico")
+        if os.path.exists(icon_path):
+            try:
+                self.after(200, lambda: self.iconbitmap(icon_path))
+            except Exception as e:
+                print(f"Failed to set editor window icon: {e}")
+        
+        self.file_path = file_path
+        self.is_txt = file_path.lower().endswith(".txt")
+        
+        if self.is_txt:
+            self.items = []
+            self.txt_content = self.load_txt_file(file_path)
+        else:
+            self.items = self.parse_subtitle(file_path)
+            
+        self.entries = []
+        
+        # 頂部提示與標題
+        self.header_frame = ctk.CTkFrame(self)
+        self.header_frame.pack(fill="x", padx=15, pady=(15, 10))
+        
+        self.title_label = ctk.CTkLabel(self.header_frame, text=f"正在編輯: {os.path.basename(file_path)}", 
+                                        font=ctk.CTkFont(size=14, weight="bold"))
+        self.title_label.pack(anchor="w", padx=10, pady=(10, 2))
+        
+        self.tip_label = ctk.CTkLabel(self.header_frame, text="提示：直接在下方編輯文字，完成後點選「儲存並關閉」即可自動更新檔案。", 
+                                      font=ctk.CTkFont(size=12), text_color="gray")
+        self.tip_label.pack(anchor="w", padx=10, pady=(2, 10))
+        
+        # 中間區域：根據格式決定
+        if self.is_txt:
+            self.txt_editor = ctk.CTkTextbox(self, font=ctk.CTkFont(size=13))
+            self.txt_editor.pack(fill="both", expand=True, padx=15, pady=5)
+            self.txt_editor.insert("0.0", self.txt_content)
+        else:
+            self.scroll_frame = ctk.CTkScrollableFrame(self)
+            self.scroll_frame.pack(fill="both", expand=True, padx=15, pady=5)
+            self.render_items()
+        
+        # 底部操作列
+        self.footer_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.footer_frame.pack(fill="x", padx=15, pady=15)
+        
+        self.btn_save = ctk.CTkButton(self.footer_frame, text="儲存並關閉 (Save & Close)", 
+                                       fg_color="#1f538d", hover_color="#14375e",
+                                       command=self.save_and_close)
+        self.btn_save.pack(side="right", padx=(10, 0))
+        
+        self.btn_cancel = ctk.CTkButton(self.footer_frame, text="取消 (Cancel)", 
+                                         fg_color="gray", hover_color="#555555",
+                                         command=self.destroy)
+        self.btn_cancel.pack(side="right")
+        
+    def load_txt_file(self, file_path):
+        if not os.path.exists(file_path):
+            return ""
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                return f.read()
+        except Exception as e:
+            print(f"Error reading txt file: {e}")
+            return ""
+
+    def parse_subtitle(self, file_path):
+        items = []
+        if not os.path.exists(file_path):
+            return items
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+        except Exception as e:
+            print(f"Error reading file: {e}")
+            return items
+            
+        i = 0
+        n = len(lines)
+        while i < n:
+            line = lines[i].strip()
+            if "-->" in line:
+                time_str = line
+                index = ""
+                if i > 0 and lines[i-1].strip().isdigit():
+                    index = lines[i-1].strip()
+                
+                text_lines = []
+                i += 1
+                while i < n:
+                    next_line = lines[i].rstrip('\n')
+                    if next_line.strip() == "":
+                        break
+                    if "-->" in next_line:
+                        i -= 1
+                        break
+                    text_lines.append(next_line)
+                    i += 1
+                    
+                text = "\n".join(text_lines).strip()
+                items.append({
+                    "index": index,
+                    "time": time_str,
+                    "text": text
+                })
+            i += 1
+        return items
+
+    def save_subtitle(self, file_path, items):
+        is_vtt = file_path.lower().endswith(".vtt")
+        with open(file_path, "w", encoding="utf-8") as f:
+            if is_vtt:
+                f.write("WEBVTT\n\n")
+            for idx, item in enumerate(items):
+                if is_vtt:
+                    f.write(f"{item['time']}\n")
+                    f.write(f"{item['text']}\n\n")
+                else:
+                    srt_idx = item['index'] if item['index'] else str(idx + 1)
+                    f.write(f"{srt_idx}\n")
+                    f.write(f"{item['time']}\n")
+                    f.write(f"{item['text']}\n\n")
+
+    def render_items(self):
+        if not self.file_path.lower().endswith((".srt", ".vtt")):
+            lbl = ctk.CTkLabel(self.scroll_frame, text="目前格式只支援校對 .srt 和 .vtt 字幕檔案。")
+            lbl.pack(pady=20)
+            return
+            
+        for i, item in enumerate(self.items):
+            row_frame = ctk.CTkFrame(self.scroll_frame, fg_color="transparent")
+            row_frame.pack(fill="x", pady=2, padx=5)
+            
+            idx_str = f"[{i+1:02d}]"
+            lbl_idx = ctk.CTkLabel(row_frame, text=idx_str, width=35, font=ctk.CTkFont(family="Consolas", size=11))
+            lbl_idx.pack(side="left", padx=(0, 5))
+            
+            time_clean = item['time'].replace(" --> ", " -> ")
+            lbl_time = ctk.CTkLabel(row_frame, text=time_clean, width=170, 
+                                    font=ctk.CTkFont(family="Consolas", size=10), text_color="gray")
+            lbl_time.pack(side="left", padx=5)
+            
+            entry = ctk.CTkEntry(row_frame, font=ctk.CTkFont(size=12))
+            entry.insert(0, item['text'])
+            entry.pack(side="left", fill="x", expand=True, padx=(5, 0))
+            
+            self.entries.append(entry)
+            
+    def save_and_close(self):
+        if self.is_txt:
+            new_text = self.txt_editor.get("0.0", "end")
+            try:
+                with open(self.file_path, "w", encoding="utf-8") as f:
+                    f.write(new_text.strip() + "\n")
+                messagebox.showinfo("成功", f"文字講義已成功儲存！\n檔名: {os.path.basename(self.file_path)}", parent=self)
+                self.destroy()
+            except Exception as e:
+                messagebox.showerror("錯誤", f"儲存檔案時發生錯誤:\n{e}", parent=self)
+            return
+
+        if not self.file_path.lower().endswith((".srt", ".vtt")):
+            self.destroy()
+            return
+            
+        for i, entry in enumerate(self.entries):
+            self.items[i]['text'] = entry.get().strip()
+            
+        try:
+            self.save_subtitle(self.file_path, self.items)
+            messagebox.showinfo("成功", f"修改已儲存！\n檔名: {os.path.basename(self.file_path)}", parent=self)
+            self.destroy()
+        except Exception as e:
+            messagebox.showerror("錯誤", f"儲存檔案時發生錯誤:\n{e}", parent=self)
+
 class App(BaseClass):
     def __init__(self):
         super().__init__()
         
         self.title("Video to Subtitle - 本地語音轉字幕工具")
         self.geometry("780x720")
+        
+        # Windows 工作列圖示與進程組 ID 宣告，防止 Windows 使用 Python 預設火箭圖示
+        if platform.system() == "Windows":
+            try:
+                import ctypes
+                myappid = 'kaoshou.subtitletranscriber.v2'
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+            except Exception as e:
+                print(f"Failed to set AppUserModelID: {e}")
+                
+        # 設定主視窗圖示
+        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_icon.ico")
+        if os.path.exists(icon_path):
+            try:
+                self.iconbitmap(icon_path)
+            except Exception as e:
+                print(f"Failed to set main window icon: {e}")
         
         # 初始化變數
         self.transcriber = None
@@ -82,6 +282,21 @@ class App(BaseClass):
         self.max_chars_var = ctk.StringVar(value="15") 
         self.hotwords_var = ctk.StringVar(value="") 
         self.model_path_var = ctk.StringVar(value="") 
+        
+        # 進階設定變數
+        self.clean_punc_var = ctk.StringVar(value="標點轉空格 (space)")
+        self.word_timestamps_var = ctk.BooleanVar(value=True)
+        self.spacing_var = ctk.BooleanVar(value=True)
+        self.case_correction_var = ctk.BooleanVar(value=True)
+        self.cpu_threads_var = ctk.StringVar(value="4")
+        self.vad_filter_var = ctk.BooleanVar(value=True)
+        
+        self.clean_punc_mapping = {
+            "none": "保留標點 (none)",
+            "remove": "移除標點 (remove)",
+            "space": "標點轉空格 (space)"
+        }
+        self.clean_punc_mapping_rev = {v: k for k, v in self.clean_punc_mapping.items()}
 
         # 讀取設定檔 (持久化)
         self.config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
@@ -207,6 +422,10 @@ class App(BaseClass):
         
         self.btn_clear = ctk.CTkButton(self.btns_file_frame, text="清除清單", command=self.clear_files, width=120, fg_color="gray")
         self.btn_clear.pack(fill="x")
+        
+        self.btn_edit_manual = ctk.CTkButton(self.btns_file_frame, text="編輯現有字幕檔", command=self.open_manual_edit, width=120,
+                                             fg_color="transparent", border_width=1, text_color=("gray10", "#DCE4EE"))
+        self.btn_edit_manual.pack(fill="x", pady=(5, 0))
 
         # Settings Frame
         self.settings_frame = ctk.CTkFrame(self.main_frame)
@@ -273,17 +492,58 @@ class App(BaseClass):
         self.entry_hotwords.pack(side="left", fill="x", expand=True)
         
         # New: Import Button for Hotwords
-        self.btn_import_hotwords = ctk.CTkButton(self.hotwords_container, text="📂", width=30, height=28,
+        self.btn_import_hotwords = ctk.CTkButton(self.hotwords_container, text="載入", width=45, height=28,
                                                 fg_color="gray", hover_color="#555555",
                                                 command=self.load_hotwords_from_file)
         self.btn_import_hotwords.pack(side="left", padx=(5, 0))
         
         self.btn_help_hotwords = ctk.CTkButton(self.hotwords_container, text="?", width=28, height=28, 
-                                               fg_color="gray", hover_color="#555555", corner_radius=14,
-                                               command=self.show_hotwords_help)
+                                                fg_color="gray", hover_color="#555555", corner_radius=14,
+                                                command=self.show_hotwords_help)
         self.btn_help_hotwords.pack(side="left", padx=(5, 0))
         
         self.entry_hotwords.bind("<FocusIn>", lambda e: self.show_temp_status("提示: 使用逗號分隔關鍵字，可大幅減少專有名詞的拼寫錯誤。"))
+
+        # 進階設定折疊按鈕 (移除 Emoji)
+        self.btn_toggle_adv = ctk.CTkButton(self.settings_frame, text="顯示進階設定", 
+                                           fg_color="transparent", border_width=1, text_color=("gray10", "#DCE4EE"),
+                                           command=self.toggle_advanced_settings, height=28)
+        self.btn_toggle_adv.grid(row=5, column=0, columnspan=4, sticky="w", padx=15, pady=(5, 10))
+
+        # 進階設定面板 (Nested inside settings_frame)
+        self.adv_settings_frame = ctk.CTkFrame(self.settings_frame, fg_color=("gray92", "gray18"), corner_radius=6)
+        self.adv_settings_frame.grid_remove() # 預設隱藏
+        self.adv_settings_frame.grid_columnconfigure((1, 3), weight=1)
+        
+        # Row 0: Word Timestamps & Spacing Checkbox
+        self.chk_word_ts = ctk.CTkCheckBox(self.adv_settings_frame, text="精準時間軸 (Word Timestamps)", variable=self.word_timestamps_var)
+        self.chk_word_ts.grid(row=0, column=0, columnspan=2, padx=15, pady=10, sticky="w")
+        
+        self.chk_spacing = ctk.CTkCheckBox(self.adv_settings_frame, text="中英文自動加空格", variable=self.spacing_var)
+        self.chk_spacing.grid(row=0, column=2, columnspan=2, padx=15, pady=10, sticky="w")
+        
+        # Row 1: Case Checkbox & VAD Filter Checkbox
+        self.chk_case_corr = ctk.CTkCheckBox(self.adv_settings_frame, text="熱詞大小寫自動校正", variable=self.case_correction_var)
+        self.chk_case_corr.grid(row=1, column=0, columnspan=2, padx=15, pady=(5, 10), sticky="w")
+        
+        self.chk_vad = ctk.CTkCheckBox(self.adv_settings_frame, text="VAD 靜音過濾 (消除靜音幻覺)", variable=self.vad_filter_var)
+        self.chk_vad.grid(row=1, column=2, columnspan=2, padx=15, pady=(5, 10), sticky="w")
+        
+        # Row 2: CPU Threads & Punctuation Clean
+        self.label_threads = ctk.CTkLabel(self.adv_settings_frame, text="CPU 執行緒數:")
+        self.label_threads.grid(row=2, column=0, padx=15, pady=(5, 15), sticky="e")
+        
+        self.combo_threads = ctk.CTkOptionMenu(self.adv_settings_frame, variable=self.cpu_threads_var,
+                                               values=["1", "2", "4", "8", "16"], width=80)
+        self.combo_threads.grid(row=2, column=1, padx=15, pady=(5, 15), sticky="w")
+
+        self.label_clean_punc = ctk.CTkLabel(self.adv_settings_frame, text="標點符號處理:")
+        self.label_clean_punc.grid(row=2, column=2, padx=15, pady=(5, 15), sticky="e")
+        
+        clean_punc_values = list(self.clean_punc_mapping.values())
+        self.combo_clean_punc = ctk.CTkOptionMenu(self.adv_settings_frame, variable=self.clean_punc_var,
+                                                  values=clean_punc_values)
+        self.combo_clean_punc.grid(row=2, column=3, padx=15, pady=(5, 15), sticky="w")
 
         # Action Buttons
         self.action_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
@@ -360,6 +620,14 @@ class App(BaseClass):
         self.storage_window.title("模型儲存管理")
         self.storage_window.geometry("500x380")
         self.storage_window.resizable(False, False)
+        
+        # 套用 APP 圖標
+        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_icon.ico")
+        if os.path.exists(icon_path):
+            try:
+                self.storage_window.after(200, lambda: self.storage_window.iconbitmap(icon_path))
+            except Exception as e:
+                print(f"Failed to set storage window icon: {e}")
         
         if platform.system() != "Darwin":
             self.storage_window.transient(self)
@@ -629,6 +897,14 @@ class App(BaseClass):
         self.about_window.geometry("500x600")
         self.about_window.resizable(False, False)
         
+        # 套用 APP 圖標
+        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_icon.ico")
+        if os.path.exists(icon_path):
+            try:
+                self.about_window.after(200, lambda: self.about_window.iconbitmap(icon_path))
+            except Exception as e:
+                print(f"Failed to set about window icon: {e}")
+        
         # Ensure it stays on top and grabs focus (針對 macOS 特殊處理避免崩潰)
         if platform.system() == "Darwin":
             # macOS 下直接呼叫 transient 或 grab_set 極易導致 Tcl/Tk 崩潰
@@ -688,7 +964,9 @@ class App(BaseClass):
             ("mlx-whisper", "MIT License", "https://github.com/ml-explore/mlx-examples/tree/main/whisper"),
             ("CustomTkinter", "MIT License", "https://github.com/TomSchimansky/CustomTkinter"),
             ("tkinterdnd2", "MIT License", "https://github.com/pmgagne/tkinterdnd2"),
-            ("OpenCC", "Apache-2.0 License", "https://github.com/BYVoid/OpenCC")
+            ("OpenCC", "Apache-2.0 License", "https://github.com/BYVoid/OpenCC"),
+            ("tomli", "MIT License", "https://github.com/hukkin/tomli"),
+            ("huggingface-hub", "Apache-2.0 License", "https://github.com/huggingface/huggingface_hub")
         ]
 
         for name, license_, url in libs:
@@ -841,7 +1119,18 @@ class App(BaseClass):
             check_cancel = lambda: self.cancel_flag
 
             completed_count = 0
+            produced_files = []
             
+            # 取得執行緒數
+            try:
+                threads_count = int(self.cpu_threads_var.get())
+            except:
+                threads_count = 4
+
+            # 傳入 cpu_threads 以便在需要時重新初始化核心
+            if self.transcriber:
+                self.transcriber.cpu_threads = threads_count
+
             for idx, file_path in enumerate(self.file_list):
                 if self.cancel_flag:
                     break
@@ -850,6 +1139,12 @@ class App(BaseClass):
                 self.update_progress(0) # Reset progress bar for next file
                 
                 try:
+                    clean_punc = self.clean_punc_mapping_rev.get(self.clean_punc_var.get(), "space")
+                    word_ts = self.word_timestamps_var.get()
+                    spacing = self.spacing_var.get()
+                    case_corr = self.case_correction_var.get()
+                    vad_filter = self.vad_filter_var.get()
+                    
                     result = self.transcriber.run(
                         file_path, 
                         log_callback=self.log,
@@ -860,11 +1155,17 @@ class App(BaseClass):
                         task=task,
                         force_zh_tw=use_zh_tw,
                         max_chars=user_max_chars,
-                        hotwords=hotwords if hotwords else None
+                        hotwords=hotwords if hotwords else None,
+                        clean_punctuation=clean_punc,
+                        word_timestamps=word_ts,
+                        spacing=spacing,
+                        case_correction=case_corr,
+                        vad_filter=vad_filter
                     )
                     
                     if result:
                         completed_count += 1
+                        produced_files.append(result)
                     else:
                         self.log(f"檔案 {idx+1} 已中止。")
                         
@@ -878,7 +1179,7 @@ class App(BaseClass):
                 messagebox.showwarning("已取消", "批次轉錄已中止。")
             else:
                 self.log(f"\n--- 批次任務完成: 成功 {completed_count} / {len(self.file_list)} ---")
-                messagebox.showinfo("任務完成", f"批次處理結束！\n共成功轉錄 {completed_count} 個檔案。")
+                self.after(0, lambda: self.show_completion_dialog(completed_count, produced_files))
             
         except Exception as e:
             error_msg = str(e)
@@ -893,6 +1194,125 @@ class App(BaseClass):
             self.after(0, lambda: self.btn_add.configure(state="normal"))
             self.after(0, lambda: self.btn_clear.configure(state="normal"))
             self.after(0, lambda: self.btn_cancel.configure(state="disabled", text="取消 (Cancel)"))
+
+    def toggle_advanced_settings(self):
+        if self.adv_settings_frame.winfo_viewable():
+            self.adv_settings_frame.grid_remove()
+            self.btn_toggle_adv.configure(text="顯示進階設定")
+        else:
+            self.adv_settings_frame.grid(row=6, column=0, columnspan=4, sticky="ew", pady=(0, 15), padx=15)
+            self.btn_toggle_adv.configure(text="隱藏進階設定")
+
+    def open_manual_edit(self):
+        file_types = [("字幕與文字檔案", "*.srt *.vtt *.txt"), ("SRT 字幕檔", "*.srt"), ("VTT 字幕檔", "*.vtt"), ("TXT 純文字檔", "*.txt"), ("所有檔案", "*.*")]
+        selected_file = filedialog.askopenfilename(
+            title="選擇要校對編輯的檔案",
+            filetypes=file_types
+        )
+        if selected_file:
+            SubtitleEditorWindow(self, selected_file)
+
+    def show_completion_dialog(self, count, files):
+        if not files:
+            messagebox.showinfo("任務完成", f"批次處理結束！\n共成功轉錄 0 個檔案。")
+            return
+            
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("轉錄任務完成")
+        dialog.geometry("680x420")
+        
+        if platform.system() != "Darwin":
+            dialog.transient(self)
+            dialog.grab_set()
+            
+        # 套用 APP 圖標
+        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_icon.ico")
+        if os.path.exists(icon_path):
+            try:
+                dialog.after(200, lambda: dialog.iconbitmap(icon_path))
+            except Exception as e:
+                print(f"Failed to set dialog icon: {e}")
+            
+        label_title = ctk.CTkLabel(dialog, text="轉錄任務已完成", font=ctk.CTkFont(size=18, weight="bold"), text_color=("#1f538d", "#DCE4EE"))
+        label_title.pack(pady=(15, 5))
+        
+        msg = f"已成功轉錄 {count} 個影音檔案。您可以直接在下方對個別檔案進行操作："
+        label_msg = ctk.CTkLabel(dialog, text=msg, font=ctk.CTkFont(size=13))
+        label_msg.pack(pady=(0, 10))
+        
+        # 轉換檔案列表滾動區域
+        scroll = ctk.CTkScrollableFrame(dialog, height=220)
+        scroll.pack(fill="both", expand=True, padx=20, pady=5)
+        
+        def open_file(f_path):
+            if os.path.exists(f_path):
+                if platform.system() == "Windows":
+                    os.startfile(f_path)
+                elif platform.system() == "Darwin":
+                    import subprocess
+                    subprocess.Popen(["open", f_path])
+                else:
+                    import subprocess
+                    subprocess.Popen(["xdg-open", f_path])
+                    
+        def open_folder(f_path):
+            output_dir = os.path.dirname(f_path)
+            if os.path.exists(output_dir):
+                if platform.system() == "Windows":
+                    os.startfile(output_dir)
+                elif platform.system() == "Darwin":
+                    import subprocess
+                    subprocess.Popen(["open", output_dir])
+                else:
+                    import subprocess
+                    subprocess.Popen(["xdg-open", output_dir])
+                    
+        def edit_file(f_path):
+            SubtitleEditorWindow(self, f_path)
+            
+        # 逐一填入檔案
+        for i, f_path in enumerate(files):
+            row_frame = ctk.CTkFrame(scroll, fg_color="transparent")
+            row_frame.pack(fill="x", pady=4, padx=5)
+            
+            idx_str = f"[{i+1:02d}] "
+            short_name = os.path.basename(f_path)
+            
+            # 限制長度
+            if len(short_name) > 35:
+                display_name = short_name[:17] + "..." + short_name[-15:]
+            else:
+                display_name = short_name
+                
+            lbl_name = ctk.CTkLabel(row_frame, text=idx_str + display_name, anchor="w", font=ctk.CTkFont(size=12))
+            lbl_name.pack(side="left", fill="x", expand=True, padx=(5, 10))
+            
+            can_edit = f_path.lower().endswith((".srt", ".vtt", ".txt"))
+            
+            # 按鈕 1：開啟
+            btn_open = ctk.CTkButton(row_frame, text="開啟", width=65, height=26, font=ctk.CTkFont(size=11),
+                                     command=lambda p=f_path: open_file(p))
+            btn_open.pack(side="left", padx=3)
+            
+            # 按鈕 2：校對
+            if can_edit:
+                btn_edit = ctk.CTkButton(row_frame, text="校對", width=65, height=26, font=ctk.CTkFont(size=11),
+                                         fg_color="#1f538d", hover_color="#14375e", text_color="white",
+                                         command=lambda p=f_path: edit_file(p))
+            else:
+                btn_edit = ctk.CTkButton(row_frame, text="校對", width=65, height=26, font=ctk.CTkFont(size=11),
+                                         state="disabled", fg_color="gray", text_color="lightgray")
+            btn_edit.pack(side="left", padx=3)
+            
+            # 按鈕 3：資料夾
+            btn_dir = ctk.CTkButton(row_frame, text="資料夾", width=75, height=26, font=ctk.CTkFont(size=11),
+                                    fg_color="transparent", border_width=1, text_color=("gray10", "#DCE4EE"),
+                                    command=lambda p=f_path: open_folder(p))
+            btn_dir.pack(side="left", padx=3)
+            
+        # 確定按鈕
+        btn_close = ctk.CTkButton(dialog, text="確定", command=dialog.destroy, width=120)
+        btn_close.pack(pady=15)
 
 if __name__ == "__main__":
     import multiprocessing
