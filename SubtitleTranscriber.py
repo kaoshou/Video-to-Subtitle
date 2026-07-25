@@ -41,7 +41,7 @@ def get_version():
     except Exception as e:
         print(f"DEBUG: Failed to load version from pyproject.toml: {e}")
     
-    return "2.5.0" # Fallback
+    return "2.5.1" # Fallback
 
 # --- 設定外觀 ---
 ctk.set_appearance_mode("System")  # Modes: "System" (standard), "Dark", "Light"
@@ -279,7 +279,7 @@ class App(BaseClass):
         self.format_var = ctk.StringVar(value="srt")
         self.zh_tw_var = ctk.BooleanVar(value=False) 
         self.translate_en_var = ctk.BooleanVar(value=False) 
-        self.max_chars_var = ctk.StringVar(value="15") 
+        self.max_chars_var = ctk.StringVar(value="35") 
         self.hotwords_var = ctk.StringVar(value="") 
         self.model_path_var = ctk.StringVar(value="") 
         
@@ -467,18 +467,24 @@ class App(BaseClass):
         self.chk_trans = ctk.CTkCheckBox(self.chk_frame, text="翻譯為英文", variable=self.translate_en_var, command=self.on_check_trans)
         self.chk_trans.pack(side="left", padx=10, pady=5)
 
-        # Row 3: Max Chars (Dedicated row for better alignment)
-        self.label_max_chars = ctk.CTkLabel(self.settings_frame, text="每行字數原則:")
+        # Row 3: Subtitle Segmentation Strategy (Natural speech & pause driven)
+        self.label_max_chars = ctk.CTkLabel(self.settings_frame, text="字幕斷句策略:")
         self.label_max_chars.grid(row=3, column=0, padx=15, pady=(5, 10), sticky="e")
         
         self.chars_frame = ctk.CTkFrame(self.settings_frame, fg_color="transparent")
         self.chars_frame.grid(row=3, column=1, columnspan=3, sticky="w")
         
-        self.entry_max_chars = ctk.CTkEntry(self.chars_frame, textvariable=self.max_chars_var, width=60)
-        self.entry_max_chars.pack(side="left", padx=15, pady=(5, 10))
+        self.label_strategy_desc = ctk.CTkLabel(self.chars_frame, text="自然語意與停頓 (預設)", font=ctk.CTkFont(weight="bold"))
+        self.label_strategy_desc.pack(side="left", padx=(15, 5), pady=(5, 10))
         
-        self.label_chars_hint = ctk.CTkLabel(self.chars_frame, text="(建議設定於 15-25 字之間)", font=ctk.CTkFont(size=11), text_color="gray")
-        self.label_chars_hint.pack(side="left", pady=(5, 10))
+        self.label_limit = ctk.CTkLabel(self.chars_frame, text="防溢出上限:")
+        self.label_limit.pack(side="left", padx=(15, 5), pady=(5, 10))
+        
+        self.entry_max_chars = ctk.CTkEntry(self.chars_frame, textvariable=self.max_chars_var, width=50)
+        self.entry_max_chars.pack(side="left", padx=5, pady=(5, 10))
+        
+        self.label_chars_hint = ctk.CTkLabel(self.chars_frame, text="字 (避免破碎斷句，依語意與聲音停頓自然斷句)", font=ctk.CTkFont(size=11), text_color="gray")
+        self.label_chars_hint.pack(side="left", padx=5, pady=(5, 10))
 
         # Row 4: Hotwords
         self.label_hotwords = ctk.CTkLabel(self.settings_frame, text="熱詞補強 (Hotwords):")
@@ -721,7 +727,13 @@ class App(BaseClass):
             if "format" in config: self.format_var.set(config["format"])
             if "zh_tw" in config: self.zh_tw_var.set(config["zh_tw"])
             if "translate_en" in config: self.translate_en_var.set(config["translate_en"])
-            if "max_chars" in config: self.max_chars_var.set(config["max_chars"])
+            if "max_chars" in config:
+                val = str(config["max_chars"])
+                try:
+                    if int(val) < 25: val = "35"
+                except:
+                    val = "35"
+                self.max_chars_var.set(val)
             if "hotwords" in config: self.hotwords_var.set(config["hotwords"])
             if "model_path" in config: self.model_path_var.set(config["model_path"])
             if "appearance_mode" in config: 
@@ -1054,13 +1066,13 @@ class App(BaseClass):
             
             try:
                 user_max_chars = int(self.max_chars_var.get())
-                if user_max_chars <= 0: user_max_chars = 15
+                if user_max_chars < 25: user_max_chars = 35
             except:
-                user_max_chars = 15
+                user_max_chars = 35
                 
             hotwords = self.hotwords_var.get().strip()
 
-            self.log(f"--- 批次任務開始: 共 {len(self.file_list)} 個檔案 (每行建議字數: {user_max_chars}) ---")
+            self.log(f"--- 批次任務開始: 共 {len(self.file_list)} 個檔案 (斷句策略: 自然語意與停頓, 防溢出上限: {user_max_chars} 字) ---")
             
             # --- 初始化轉錄核心與模型載入 (含錯誤處理) ---
             # 先嘗試用預設路徑 (系統緩存)

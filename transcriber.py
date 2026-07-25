@@ -97,19 +97,21 @@ class SubtitleTranscriber:
         millis = int(td.microseconds / 1000)
         return f"{hours:02}:{minutes:02}:{secs:02}{separator}{millis:03}"
 
-    def run(self, file_path, log_callback=None, progress_callback=None, cancel_check_callback=None, output_format="srt", initial_prompt=None, task="transcribe", force_zh_tw=False, max_chars=20, hotwords=None, clean_punctuation="space", word_timestamps=True, spacing=True, case_correction=True, vad_filter=True):
+    def run(self, file_path, log_callback=None, progress_callback=None, cancel_check_callback=None, output_format="srt", initial_prompt=None, task="transcribe", force_zh_tw=False, max_chars=35, hotwords=None, clean_punctuation="space", word_timestamps=True, spacing=True, case_correction=True, vad_filter=True):
         """
         執行轉錄
         output_format: "srt", "vtt", "txt", "tsv", "json"
         initial_prompt: 用於引導模型輸出的提示詞 (例如強制繁體中文)
         task: "transcribe" (轉錄) 或 "translate" (翻譯成英文)
         force_zh_tw: (bool) 是否透過 opencc 將所有文字強制轉為台灣繁體中文
-        max_chars: (int) 每行建議最大字數
+        max_chars: (int) 單行防溢出最大字數上限 (預設 35 字，採用自然語意與停頓切分)
         hotwords: (str) 專有名詞 / 熱詞補強關鍵字 (以逗號分隔)
         clean_punctuation: (str) "none", "remove", "space"
         word_timestamps: (bool) 是否啟用單字級時間戳
         """
         print(f"DEBUG: run() called for file: {file_path}")
+        if max_chars is None or max_chars < 25:
+            max_chars = 35 if task != "translate" else 80
         if not self.model:
             print("DEBUG: Model not loaded in run(), calling load_model()...")
             self.load_model(log_callback)
@@ -240,9 +242,9 @@ class SubtitleTranscriber:
             
             # --- 建立長度優化用的分段器 (Streaming Segmenter) ---
             class StreamingSegmenter:
-                def __init__(self, max_chars=20, gap_threshold=0.8, hotwords_str=None):
-                    if max_chars is None or max_chars <= 0:
-                        self.max_chars = 22 if task != "translate" else 80
+                def __init__(self, max_chars=35, gap_threshold=0.45, hotwords_str=None):
+                    if max_chars is None or max_chars < 25:
+                        self.max_chars = 35 if task != "translate" else 80
                     else:
                         self.max_chars = max_chars
                     self.gap_threshold = gap_threshold
@@ -321,31 +323,16 @@ class SubtitleTranscriber:
                         space = " " if needs_extra_space else ""
                         combined_text = self.current_piece['text'] + space + p['text']
                         has_strong_punc = any(self.current_piece['text'].endswith(punc) for punc in self.strong_punctuations)
-                        
-                        is_english_space = False
-                        if self.current_piece['text'].endswith(" ") or space == " ":
-                            prev_char = self.current_piece['text'].strip()[-1:] if self.current_piece['text'].strip() else ""
-                            next_char = p['text'].strip()[0:1] if p['text'].strip() else ""
-                            if prev_char and next_char:
-                                if re.match(r'[a-zA-Z0-9#+\-.]', prev_char) and re.match(r'[a-zA-Z0-9]', next_char):
-                                    is_english_space = True
-                        
-                        has_any_punc = False
-                        for punc in self.all_punctuations + [" "]:
-                            if self.current_piece['text'].endswith(punc):
-                                if punc == " " and is_english_space:
-                                    continue
-                                has_any_punc = True
-                                break
+                        has_weak_punc = any(self.current_piece['text'].endswith(punc) for punc in ["，", "；", "、", ",", ";"])
                         
                         should_break = False
-                        if len(combined_text) > self.max_chars and has_any_punc:
+                        if has_strong_punc:
                             should_break = True
-                        elif len(combined_text) > self.max_chars + 12: 
+                        elif gap >= self.gap_threshold: # 自然停頓超過 0.45s
                             should_break = True
-                        elif gap > self.gap_threshold:
+                        elif has_weak_punc and gap > 0.18: # 逗號+停頓
                             should_break = True
-                        elif has_strong_punc and len(self.current_piece['text']) > 12:
+                        elif len(combined_text) >= self.max_chars: # 達到單行防溢出安全上限 (預設 35 字)
                             should_break = True
                             
                         if should_break:
@@ -364,11 +351,11 @@ class SubtitleTranscriber:
                         return res
                     return []
 
-            # --- 建立基於單字級時間戳的精準分段器 (WordBasedSegmenter) ---
+            # --- 建立基於單字級時間戳的精準自然分段器 (WordBasedSegmenter) ---
             class WordBasedSegmenter:
-                def __init__(self, max_chars=20, gap_threshold=0.8):
-                    if max_chars is None or max_chars <= 0:
-                        self.max_chars = 22 if task != "translate" else 80
+                def __init__(self, max_chars=35, gap_threshold=0.45):
+                    if max_chars is None or max_chars < 25:
+                        self.max_chars = 35 if task != "translate" else 80
                     else:
                         self.max_chars = max_chars
                     self.gap_threshold = gap_threshold
@@ -385,15 +372,15 @@ class SubtitleTranscriber:
                     if n <= 1:
                         return n
 
-                    # 【防禦保護】如果整段長度本來就很短，根本不需要切分，直接全部輸出
                     total_clean_len = self.get_clean_len(self.current_words)
-                    if total_clean_len <= self.max_chars + 3:
+                    # 長度未達到防溢出上限，不強行切分
+                    if total_clean_len < self.max_chars:
                         return n
 
                     best_idx = n
-                    # 將「不切分」做為基準 penalty
-                    min_penalty = abs(total_clean_len - self.max_chars) * 1.5
+                    min_penalty = 999999.0
 
+                    # 尋找最適防溢出切分點
                     for i in range(1, n):
                         words_before = self.current_words[:i]
                         words_after = self.current_words[i:]
@@ -401,15 +388,13 @@ class SubtitleTranscriber:
                         len_before = self.get_clean_len(words_before)
                         len_after = self.get_clean_len(words_after)
                         
-                        # 基礎字數偏離懲罰
-                        penalty = abs(len_before - self.max_chars) * 1.5
+                        # 偏向在中央區域防溢出切分
+                        penalty = abs(len_before - (total_clean_len / 2)) * 0.8
                         
-                        # 【防少字成行】
-                        # 下一行或上一行如果太短，加重懲罰
-                        total_len = len_before + len_after
-                        if len_after < 4 and total_len > self.max_chars:
-                            penalty += 45.0
-                        if len_before < 4 and i > 1: # 除非是開頭，不然前面太短也避免切分
+                        # 極短行保護
+                        if len_before < 4:
+                            penalty += 40.0
+                        if len_after < 4:
                             penalty += 40.0
                         
                         w_prev = self.current_words[i-1]
@@ -426,47 +411,44 @@ class SubtitleTranscriber:
                         
                         gap = w_next_start - w_prev_end
                         
-                        # 【下一行開頭保護】黏性助詞、介詞、量詞、連詞、語氣助詞防開頭
+                        # 下一行開頭保護 (黏性字防拆)
                         if w_next_clean in ["的", "了", "得", "著", "地", "之"]:
-                            penalty += 35.0
+                            penalty += 45.0
                         if w_next_clean in ["與", "或", "和", "於", "在", "以", "對", "為", "跟", "同"]:
-                            penalty += 20.0
+                            penalty += 25.0
                         if w_next_clean in ["%", "個", "張", "本", "秒", "分", "元", "次", "度", "台", "輛", "間", "名", "位", "件"]:
-                            penalty += 35.0
+                            penalty += 40.0
                         if w_next_clean in ["嗎", "呢", "吧", "啊", "呀", "喔", "哈"]:
-                            penalty += 45.0
+                            penalty += 50.0
 
-                        # 【上一行結尾保護】前綴詞、介詞、程度副詞防起尾 (它們與後方字緊密黏合)
-                        if w_prev_clean in ["第"]: # 數字前綴，如「第二章」的「第」
+                        # 上一行結尾保護 (前綴/介詞防拆)
+                        if w_prev_clean in ["第"]:
                             penalty += 45.0
-                        if w_prev_clean in ["小", "大", "老", "副", "總", "超", "單", "雙", "多", "少", "無", "有"]: # 常見前綴字
-                            penalty += 30.0
-                        if w_prev_clean in ["被", "把", "讓", "令", "使", "代"]: # 介詞/被動/動作前綴，如「被捕」、「代簽」
+                        if w_prev_clean in ["小", "大", "老", "副", "總", "超", "單", "雙", "多", "少", "無", "有"]:
                             penalty += 35.0
-                        if w_prev_clean in ["最", "太", "很", "更", "極", "越"]: # 程度副詞
-                            penalty += 30.0
+                        if w_prev_clean in ["被", "把", "讓", "令", "使", "代"]:
+                            penalty += 40.0
+                        if w_prev_clean in ["最", "太", "很", "更", "極", "越"]:
+                            penalty += 35.0
 
-                        # 【英數邊界防攔腰】
+                        # 英數與符號邊界防拆
                         if re.match(r'[a-zA-Z0-9]', w_prev_clean[-1:]) and re.match(r'[a-zA-Z0-9]', w_next_clean[0:1]):
-                            penalty += 50.0
-                        # 數字與 % 邊界防斷
+                            penalty += 60.0
                         if re.match(r'[0-9]', w_prev_clean[-1:]) and w_next_clean == "%":
-                            penalty += 50.0
+                            penalty += 60.0
                         
-                        # 【標點自然切分折扣】
+                        # 標點優選獎勵
                         if any(w_prev_text.endswith(punc) for punc in self.all_punctuations):
                             if any(w_prev_text.endswith(punc) for punc in self.strong_punctuations):
-                                penalty -= 30.0
+                                penalty -= 50.0
                             else:
-                                penalty -= 20.0
+                                penalty -= 35.0
                                 
-                        # 【聲學連貫性/停頓保護】
-                        # 如果停頓極小 (<= 0.02s)，表示這是連貫發音 (同一個詞彙內部)，不宜切斷
-                        if gap <= 0.02:
-                            penalty += 20.0
-                        # 如果有明顯的停頓 (> 0.1s)，說明是個自然的詞組/句子停頓點，減少懲罰
-                        elif gap > 0.1:
-                            penalty -= min(gap, 0.8) * 25.0
+                        # 聲音發音連貫保護 (同單詞/語音流動)
+                        if gap <= 0.03:
+                            penalty += 30.0
+                        elif gap > 0.15:
+                            penalty -= min(gap, 0.8) * 35.0
                             
                         if penalty < min_penalty:
                             min_penalty = penalty
@@ -487,21 +469,25 @@ class SubtitleTranscriber:
                         should_split = False
                         
                         if self.current_words:
-                            prev_end = self.current_words[-1].end if hasattr(self.current_words[-1], 'end') else self.current_words[-1].get('end', 0.0)
+                            prev_word = self.current_words[-1]
+                            prev_end = prev_word.end if hasattr(prev_word, 'end') else prev_word.get('end', 0.0)
+                            prev_text = prev_word.word if hasattr(prev_word, 'word') else prev_word.get('word', '')
                             gap = w_start - prev_end
                             
-                            if gap > self.gap_threshold:
+                            # 1. 停頓超過閾值 (0.45s) -> 自然語意停頓切分
+                            if gap >= self.gap_threshold:
                                 should_split = True
+                            # 2. 強標點 (句號/問號/驚嘆號) 結束 -> 必定切分
+                            elif any(prev_text.endswith(punc) for punc in self.strong_punctuations):
+                                should_split = True
+                            # 3. 弱標點 (逗號/分號) + 自然停頓 (0.18s) -> 子句切分
+                            elif any(prev_text.endswith(punc) for punc in ["，", "；", "、", ",", ";"]) and gap >= 0.18:
+                                should_split = True
+                            # 4. 單行防溢出保護：只有在字數達標 (>= max_chars, 預設 35 字) 時才考慮切分
                             else:
                                 clean_len = self.get_clean_len(self.current_words)
-                                if clean_len >= self.max_chars + 6:
+                                if clean_len >= self.max_chars:
                                     should_split = True
-                                elif clean_len >= self.max_chars - 3:
-                                    prev_text = self.current_words[-1].word if hasattr(self.current_words[-1], 'word') else self.current_words[-1].get('word', '')
-                                    if any(prev_text.endswith(punc) for punc in self.strong_punctuations):
-                                        should_split = True
-                                    elif gap > 0.35:
-                                        should_split = True
                                         
                         if should_split and self.current_words:
                             split_idx = self.find_best_split_index()
@@ -526,7 +512,7 @@ class SubtitleTranscriber:
                     results = []
                     while self.current_words:
                         clean_len = self.get_clean_len(self.current_words)
-                        if clean_len > self.max_chars + 4:
+                        if clean_len >= self.max_chars:
                             split_idx = self.find_best_split_index()
                             words_to_output = self.current_words[:split_idx]
                             self.current_words = self.current_words[split_idx:]
@@ -623,10 +609,6 @@ class SubtitleTranscriber:
                             file_handle.write(f"{start_time_str} --> {end_time_str}\n")
                             file_handle.write(f"{text}\n\n")
 
-            all_segment_words = []
-            prev_seg_end = None
-            use_word_segmenter = False
-
             for _, segment in enumerate(segments):
                 if cancel_check_callback and cancel_check_callback():
                     print("DEBUG: Task cancelled by user.")
@@ -641,6 +623,9 @@ class SubtitleTranscriber:
                     seg_start = segment.start if hasattr(segment, 'start') else segment['start']
                     seg_end = segment.end if hasattr(segment, 'end') else segment['end']
                     
+                    if not raw_text:
+                        continue
+
                     words = None
                     if hasattr(segment, 'words') and segment.words is not None:
                         words = segment.words
@@ -650,64 +635,40 @@ class SubtitleTranscriber:
                     print(f"DEBUG: Error extracting segment properties: {e}")
                     continue
                 
-                if word_timestamps and words:
-                    # 跨 segment 合併邏輯
-                    if all_segment_words:
-                        first_word_start = words[0].start if hasattr(words[0], 'start') else words[0].get('start', 0.0)
-                        gap = first_word_start - prev_seg_end
-                        
-                        # 取得前一個累積的最後一個字
-                        prev_word_obj = all_segment_words[-1]
-                        prev_word_text = prev_word_obj.word if hasattr(prev_word_obj, 'word') else prev_word_obj.get('word', '')
-                        
-                        needs_break = False
-                        if gap > 0.45: # 停頓超過 0.45 秒
-                            needs_break = True
-                        elif any(prev_word_text.endswith(punc) for punc in ["。", "！", "？", ".", "!", "?", "\n"]):
-                            needs_break = True
-                            
-                        if needs_break:
-                            refined_segments = word_segmenter.process_words(all_segment_words)
-                            for r_seg in refined_segments:
-                                handle_segment_output(r_seg['start'], r_seg['end'], r_seg['text'], output_i)
-                                output_i += 1
-                            all_segment_words = []
+                clean_text = re.sub(r'[，。！？；、,.?;!\s]', '', raw_text)
+                clean_len = len(clean_text)
+
+                # 若啟用的 word_timestamps 且有單字列表
+                if word_timestamps and words and len(words) > 0:
+                    w_start = words[0].start if hasattr(words[0], 'start') else words[0].get('start', seg_start)
+                    w_end = words[-1].end if hasattr(words[-1], 'end') else words[-1].get('end', seg_end)
                     
-                    all_segment_words.extend(words)
-                    prev_seg_end = words[-1].end if hasattr(words[-1], 'end') else words[-1].get('end', 0.0)
-                    use_word_segmenter = True
-                else:
-                    # 若當前 segment 不支援單字時間戳，先輸出之前累積的 words
-                    if all_segment_words:
-                        refined_segments = word_segmenter.process_words(all_segment_words)
-                        for r_seg in refined_segments:
+                    # 1. 常規自然段落 (<= max_chars)：直接保留 Whisper 原生自然 Segment，精準毫秒對齊
+                    if clean_len <= max_chars:
+                        handle_segment_output(w_start, w_end, raw_text, output_i)
+                        output_i += 1
+                    else:
+                        # 2. 超長 Segment：僅在該 Segment 內部依據標點/空格或停頓安全拆分
+                        sub_segs = word_segmenter.process_words(words)
+                        sub_segs.extend(word_segmenter.flush())
+                        for r_seg in sub_segs:
                             handle_segment_output(r_seg['start'], r_seg['end'], r_seg['text'], output_i)
                             output_i += 1
-                        all_segment_words = []
-                        
-                    refined_segments = segmenter.process(raw_text, seg_start, seg_end)
-                    for r_seg in refined_segments:
-                        handle_segment_output(r_seg['start'], r_seg['end'], r_seg['text'], output_i)
+                else:
+                    # 無單字級時間戳
+                    if clean_len <= max_chars:
+                        handle_segment_output(seg_start, seg_end, raw_text, output_i)
                         output_i += 1
+                    else:
+                        sub_segs = segmenter.process(raw_text, seg_start, seg_end)
+                        sub_segs.extend(segmenter.flush())
+                        for r_seg in sub_segs:
+                            handle_segment_output(r_seg['start'], r_seg['end'], r_seg['text'], output_i)
+                            output_i += 1
 
                 if progress_callback and total_duration > 0:
                     progress = min(seg_end / total_duration, 1.0)
                     progress_callback(progress)
-
-            # 處理最後殘留的 word 串流
-            if use_word_segmenter:
-                if all_segment_words:
-                    refined_segments = word_segmenter.process_words(all_segment_words)
-                    for r_seg in refined_segments:
-                        handle_segment_output(r_seg['start'], r_seg['end'], r_seg['text'], output_i)
-                        output_i += 1
-                leftovers = word_segmenter.flush()
-            else:
-                leftovers = segmenter.flush()
-                
-            for r_seg in leftovers:
-                handle_segment_output(r_seg['start'], r_seg['end'], r_seg['text'], output_i)
-                output_i += 1
                 
             print("DEBUG: Segment loop finished.")
             if output_format.lower() == "json":
