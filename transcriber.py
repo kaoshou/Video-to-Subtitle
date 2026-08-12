@@ -155,6 +155,9 @@ class SubtitleTranscriber:
         if hotwords:
             transcribe_options["hotwords"] = hotwords
 
+        if log_callback:
+            log_callback(">> 🚀 正在進行語音辨識與轉錄中，請耐心等候... (依硬體效能可能需要數十秒至數分鐘)")
+
         # 執行轉錄
         try:
             if getattr(self, "model_type", "faster-whisper") == "mlx-whisper":

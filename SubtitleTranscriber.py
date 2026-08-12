@@ -90,6 +90,8 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             self.items = self.parse_subtitle(file_path)
             
         self.entries = []
+        self.items_per_page = 100
+        self.current_page = 0
         
         # 頂部提示與標題
         self.header_frame = ctk.CTkFrame(self)
@@ -117,6 +119,21 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         self.footer_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.footer_frame.pack(fill="x", padx=15, pady=15)
         
+        if not self.is_txt and len(self.items) > self.items_per_page:
+            self.pagination_frame = ctk.CTkFrame(self.footer_frame, fg_color="transparent")
+            self.pagination_frame.pack(side="left")
+            
+            self.btn_prev = ctk.CTkButton(self.pagination_frame, text="< 上一頁", width=70, command=self.prev_page, state="disabled")
+            self.btn_prev.pack(side="left", padx=(0, 5))
+            
+            self.lbl_page = ctk.CTkLabel(self.pagination_frame, text="第 1 頁 / 共 1 頁")
+            self.lbl_page.pack(side="left", padx=5)
+            
+            self.btn_next = ctk.CTkButton(self.pagination_frame, text="下一頁 >", width=70, command=self.next_page)
+            self.btn_next.pack(side="left", padx=(5, 0))
+            
+            self.update_pagination_ui()
+            
         self.btn_save = ctk.CTkButton(self.footer_frame, text="儲存並關閉 (Save & Close)", 
                                        fg_color="#1f538d", hover_color="#14375e",
                                        command=self.save_and_close)
@@ -195,17 +212,26 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
                     f.write(f"{item['text']}\n\n")
 
     def render_items(self):
+        # 先清除舊的 widgets
+        for widget in self.scroll_frame.winfo_children():
+            widget.destroy()
+        self.entries = []
+
         if not self.file_path.lower().endswith((".srt", ".vtt")):
             lbl = ctk.CTkLabel(self.scroll_frame, text="目前格式只支援校對 .srt 和 .vtt 字幕檔案。")
             lbl.pack(pady=20)
             return
             
-        for i, item in enumerate(self.items):
+        start_idx = self.current_page * self.items_per_page
+        end_idx = min(start_idx + self.items_per_page, len(self.items))
+            
+        for i in range(start_idx, end_idx):
+            item = self.items[i]
             row_frame = ctk.CTkFrame(self.scroll_frame, fg_color="transparent")
             row_frame.pack(fill="x", pady=2, padx=5)
             
-            idx_str = f"[{i+1:02d}]"
-            lbl_idx = ctk.CTkLabel(row_frame, text=idx_str, width=35, font=ctk.CTkFont(family="Consolas", size=11))
+            idx_str = f"[{i+1:03d}]"
+            lbl_idx = ctk.CTkLabel(row_frame, text=idx_str, width=40, font=ctk.CTkFont(family="Consolas", size=11))
             lbl_idx.pack(side="left", padx=(0, 5))
             
             time_clean = item['time'].replace(" --> ", " -> ")
@@ -218,6 +244,35 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             entry.pack(side="left", fill="x", expand=True, padx=(5, 0))
             
             self.entries.append(entry)
+
+    def save_current_page(self):
+        if not self.is_txt and hasattr(self, 'entries'):
+            start_idx = self.current_page * self.items_per_page
+            for i, entry in enumerate(self.entries):
+                if start_idx + i < len(self.items):
+                    self.items[start_idx + i]['text'] = entry.get().strip()
+
+    def update_pagination_ui(self):
+        max_page = max(0, (len(self.items) - 1) // self.items_per_page)
+        if hasattr(self, 'lbl_page'):
+            self.lbl_page.configure(text=f"第 {self.current_page + 1} 頁 / 共 {max_page + 1} 頁")
+            self.btn_prev.configure(state="normal" if self.current_page > 0 else "disabled")
+            self.btn_next.configure(state="normal" if self.current_page < max_page else "disabled")
+
+    def prev_page(self):
+        if self.current_page > 0:
+            self.save_current_page()
+            self.current_page -= 1
+            self.render_items()
+            self.update_pagination_ui()
+
+    def next_page(self):
+        max_page = (len(self.items) - 1) // self.items_per_page
+        if self.current_page < max_page:
+            self.save_current_page()
+            self.current_page += 1
+            self.render_items()
+            self.update_pagination_ui()
             
     def save_and_close(self):
         if self.is_txt:
@@ -235,8 +290,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             self.destroy()
             return
             
-        for i, entry in enumerate(self.entries):
-            self.items[i]['text'] = entry.get().strip()
+        self.save_current_page()
             
         try:
             self.save_subtitle(self.file_path, self.items)
@@ -1001,7 +1055,14 @@ class App(BaseClass):
 
     def update_progress(self, value):
         # Value is float between 0.0 and 1.0
-        self.after(0, lambda: self.progressbar.set(value))
+        def _update():
+            if value > 0 and self.progressbar.cget("mode") == "indeterminate":
+                self.progressbar.stop()
+                self.progressbar.configure(mode="determinate")
+            
+            if self.progressbar.cget("mode") == "determinate":
+                self.progressbar.set(value)
+        self.after(0, _update)
 
     def browse_file(self):
         filenames = filedialog.askopenfilenames(
@@ -1045,7 +1106,8 @@ class App(BaseClass):
         self.log_textbox.delete("0.0", "end")
         self.log_textbox.configure(state="disabled")
         
-        self.progressbar.set(0) # Reset progress
+        self.progressbar.configure(mode="indeterminate")
+        self.progressbar.start()
 
         thread = threading.Thread(target=self.process_batch)
         thread.daemon = True
@@ -1148,7 +1210,7 @@ class App(BaseClass):
                     break
                 
                 self.log(f"\n>> 正在處理 ({idx+1}/{len(self.file_list)}): {os.path.basename(file_path)}")
-                self.update_progress(0) # Reset progress bar for next file
+                self.after(0, lambda: (self.progressbar.configure(mode="indeterminate"), self.progressbar.start()))
                 
                 try:
                     clean_punc = self.clean_punc_mapping_rev.get(self.clean_punc_var.get(), "space")
@@ -1200,7 +1262,7 @@ class App(BaseClass):
         
         finally:
             self.is_running = False
-            self.update_progress(0)
+            self.after(0, lambda: (self.progressbar.stop(), self.progressbar.configure(mode="determinate"), self.progressbar.set(0)))
             self.status_label.configure(text="就緒 - 等待下一個任務")
             self.after(0, lambda: self.btn_run.configure(state="normal"))
             self.after(0, lambda: self.btn_add.configure(state="normal"))
