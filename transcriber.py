@@ -12,9 +12,36 @@ except ImportError:
     logging.warning("尚未安裝 opencc，將無法支援強制轉換繁體功能，請執行 pip install opencc")
 
 
+def check_model_downloaded(model_size, download_root=None, device="cpu"):
+    """
+    快速檢測指定模型是否已下載至本地（不發送網路請求）
+    返回 True 表示已下載/離線可用，False 表示未下載
+    """
+    clean_size = model_size.split()[0].strip()
+    if device in ["mps", "mlx"]:
+        try:
+            import huggingface_hub
+            repo_id = f"mlx-community/whisper-{clean_size}"
+            huggingface_hub.snapshot_download(repo_id, local_files_only=True, cache_dir=download_root)
+            return True
+        except Exception:
+            return False
+    else:
+        try:
+            import faster_whisper
+            if download_root and os.path.isdir(download_root):
+                direct_files = ["model.bin", "config.json"]
+                if all(os.path.exists(os.path.join(download_root, f)) for f in direct_files):
+                    return True
+            faster_whisper.download_model(clean_size, cache_dir=download_root, local_files_only=True)
+            return True
+        except Exception:
+            return False
+
+
 class SubtitleTranscriber:
     def __init__(self, model_size="small", device="cpu", compute_type="int8", download_root=None, cpu_threads=4):
-        self.model_size = model_size
+        self.model_size = model_size.split()[0].strip()
         self.device = device
         self.compute_type = compute_type
         self.download_root = download_root
@@ -67,8 +94,9 @@ class SubtitleTranscriber:
                 log_callback("模型載入完成！")
         except Exception as e:
             print(f"DEBUG: Error in load_model: {e}")
-            # 錯誤捕捉邏輯
             error_str = str(e).lower()
+            
+            # 1. 檢查 GPU 驅動/cuDNN 相關錯誤
             if "cudnn" in error_str or "cublas" in error_str or "load symbol" in error_str or "dll" in error_str:
                 friendly_msg = (
                     "啟動 GPU 模式失敗。\n"
@@ -77,6 +105,28 @@ class SubtitleTranscriber:
                 )
                 if log_callback:
                     log_callback("錯誤: 缺少 GPU 函式庫，請切換至 CPU 模式。")
+                raise RuntimeError(friendly_msg)
+            
+            # 2. 檢查網路連線 / 下載失敗 (無網路、無法連線至 Hugging Face)
+            net_keywords = [
+                "connection", "getaddrinfo", "max retries", "timeout", "timed out",
+                "huggingface", "offline", "unreachable", "localentrynotfound",
+                "couldn't connect", "could not resolve", "failed to establish",
+                "connection refused", "ssl", "proxy", "network is down",
+                "cannot reach", "cant reach", "entry not found", "cannot find the requested files"
+            ]
+            if any(k in error_str for k in net_keywords):
+                friendly_msg = (
+                    f"模型下載/載入失敗 (模型: {self.model_size})\n\n"
+                    "【原因】\n"
+                    "首次執行或切換新模型時，系統需要連線至網路下載模型檔案。\n"
+                    "目前偵測到無網路連線、連線逾時或無法存取 Hugging Face 伺服器。\n\n"
+                    "【解決方法】\n"
+                    "1. 請確認電腦已連上網際網路後，再次點擊「開始轉錄」。\n"
+                    "2. 若處於完全離線環境，請在有網路的電腦預先下載模型，並將模型檔案複製至本機模型目錄中。"
+                )
+                if log_callback:
+                    log_callback(f"❌ 網路連線失敗，無法下載模型 '{self.model_size}'。請確認網路已連線。")
                 raise RuntimeError(friendly_msg)
             
             if log_callback:
@@ -203,6 +253,26 @@ class SubtitleTranscriber:
 
         except Exception as e:
             print(f"DEBUG: Error calling model.transcribe: {e}")
+            error_str = str(e).lower()
+            net_keywords = [
+                "connection", "getaddrinfo", "max retries", "timeout", "timed out",
+                "huggingface", "offline", "unreachable", "localentrynotfound",
+                "couldn't connect", "could not resolve", "failed to establish",
+                "connection refused", "ssl", "proxy", "network is down",
+                "cannot reach", "cant reach", "entry not found", "cannot find the requested files"
+            ]
+            if any(k in error_str for k in net_keywords):
+                friendly_msg = (
+                    f"模型下載/載入失敗\n\n"
+                    "【原因】\n"
+                    "轉錄需要從網路下載語音模型，但目前無網路連線或連線逾時。\n\n"
+                    "【解決方法】\n"
+                    "1. 請確認網路連線正常後再次執行。\n"
+                    "2. 若為離線環境，請預先下載模型至指定快取目錄。"
+                )
+                if log_callback:
+                    log_callback(f"❌ 網路連線失敗，無法下載模型。請確認網路已連線。")
+                raise RuntimeError(friendly_msg)
             raise e
         
         total_duration = info.duration

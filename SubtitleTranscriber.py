@@ -10,7 +10,7 @@ import time
 import json
 
 # Import core logic from transcriber.py
-from transcriber import SubtitleTranscriber
+from transcriber import SubtitleTranscriber, check_model_downloaded
 
 # --- 嘗試匯入拖曳功能庫 (tkinterdnd2) ---
 try:
@@ -299,6 +299,42 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         except Exception as e:
             messagebox.showerror("錯誤", f"儲存檔案時發生錯誤:\n{e}", parent=self)
 
+class DynamicProgressBar(ctk.CTkFrame):
+    def __init__(self, master, **kwargs):
+        super().__init__(master, height=12, fg_color="transparent", **kwargs)
+        
+        self.filled = ctk.CTkProgressBar(self, mode="determinate", height=12)
+        self.filled.set(1.0)
+        self.filled.place(relx=0, rely=0, relwidth=0.0, relheight=1.0)
+        
+        self.unfilled = ctk.CTkProgressBar(self, mode="indeterminate", height=12)
+        self.unfilled.place(relx=0.0, rely=0, relwidth=1.0, relheight=1.0)
+        
+    def start(self):
+        self.unfilled.start()
+        
+    def stop(self):
+        self.unfilled.stop()
+        
+    def configure(self, **kwargs):
+        if "mode" in kwargs:
+            kwargs.pop("mode") # Ignore mode changes, we handle it natively
+        super().configure(**kwargs)
+        
+    def set(self, value):
+        if value < 0: value = 0.0
+        if value > 1: value = 1.0
+        
+        if value == 0:
+            self.filled.place_forget()
+            self.unfilled.place(relx=0.0, rely=0, relwidth=1.0, relheight=1.0)
+        elif value >= 1.0:
+            self.unfilled.place_forget()
+            self.filled.place(relx=0, rely=0, relwidth=1.0, relheight=1.0)
+        else:
+            self.filled.place(relx=0, rely=0, relwidth=value, relheight=1.0)
+            self.unfilled.place(relx=value, rely=0, relwidth=1.0-value, relheight=1.0)
+
 class App(BaseClass):
     def __init__(self):
         super().__init__()
@@ -328,6 +364,7 @@ class App(BaseClass):
         self.is_running = False
         self.cancel_flag = False
         self.file_list = [] # 儲存多個檔案路徑
+        self.available_models = ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"]
         self.model_var = ctk.StringVar(value="medium")
         self.device_var = ctk.StringVar(value="cpu")
         self.format_var = ctk.StringVar(value="srt")
@@ -494,14 +531,15 @@ class App(BaseClass):
         self.label_model = ctk.CTkLabel(self.settings_frame, text="準確度 (Model):")
         self.label_model.grid(row=1, column=0, padx=15, pady=5, sticky="e")
         self.combo_model = ctk.CTkOptionMenu(self.settings_frame, variable=self.model_var, 
-                                             values=["tiny", "base", "small", "medium", "large-v3"])
+                                             values=self.available_models)
         self.combo_model.grid(row=1, column=1, padx=15, pady=5, sticky="ew")
         
         self.label_device = ctk.CTkLabel(self.settings_frame, text="運算單元:")
         self.label_device.grid(row=1, column=2, padx=15, pady=5, sticky="e")
         
         device_values = ["cpu", "mlx"] if platform.system() == "Darwin" else ["cpu", "cuda"]
-        self.combo_device = ctk.CTkOptionMenu(self.settings_frame, variable=self.device_var, values=device_values)
+        self.combo_device = ctk.CTkOptionMenu(self.settings_frame, variable=self.device_var, values=device_values,
+                                             command=lambda _: self.refresh_model_menu())
         self.combo_device.grid(row=1, column=3, padx=15, pady=5, sticky="ew")
 
         # Row 2: Format & Checkboxes
@@ -618,10 +656,22 @@ class App(BaseClass):
                                         font=ctk.CTkFont(size=15, weight="bold"), height=45, state="disabled")
         self.btn_cancel.pack(side="right", fill="x", expand=True, padx=(0, 0))
 
-        # Progress Bar
-        self.progressbar = ctk.CTkProgressBar(self.main_frame, orientation="horizontal", height=12)
-        self.progressbar.grid(row=3, column=0, sticky="ew", pady=(0, 10))
+        # Progress Bar Frame (兼顧特效與進度顯示)
+        self.progress_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        self.progress_frame.grid(row=3, column=0, sticky="ew", pady=(0, 10))
+        self.progress_frame.grid_columnconfigure(0, weight=1)
+
+        self.progressbar = DynamicProgressBar(self.progress_frame)
+        self.progressbar.grid(row=0, column=0, sticky="ew", padx=(0, 10))
         self.progressbar.set(0) # 0%
+        
+        self.progress_label = ctk.CTkLabel(self.progress_frame, text="0.0%", width=45, font=ctk.CTkFont(size=12, weight="bold"))
+        self.progress_label.grid(row=0, column=1, sticky="e")
+        
+        # 動畫狀態變數
+        self._target_progress = 0.0
+        self._current_progress = 0.0
+        self._progress_animating = False
 
         # Log Area
         self.log_textbox = ctk.CTkTextbox(self.main_frame, font=ctk.CTkFont(family="Consolas", size=12))
@@ -663,7 +713,48 @@ class App(BaseClass):
         self.credit_label = ctk.CTkLabel(self.status_frame, text="Developed by Yu-Han Cheng 鄭郁翰", 
                                          font=ctk.CTkFont(size=10), text_color="gray")
         self.credit_label.grid(row=0, column=1, sticky="e", padx=10)
+
+        # 初始化模型下拉選單標籤
+        self.refresh_model_menu()
+
+    def get_clean_model_name(self, raw_val=None):
+        """從選單文字中取得乾淨的模型名稱 (例如從 'large-v3-turbo [已下載]' 取出 'large-v3-turbo')"""
+        val = raw_val if raw_val is not None else self.model_var.get()
+        if not val:
+            return "medium"
+        return val.split()[0].strip()
+
+    def refresh_model_menu(self, preferred_model=None):
+        """根據本地快取狀態，刷新模型下拉選單標籤 (已下載 / 未下載)"""
+        if preferred_model is None:
+            current_clean = self.get_clean_model_name()
+        else:
+            current_clean = preferred_model.split()[0].strip()
         
+        current_download_root = self.model_path_var.get().strip()
+        if not current_download_root:
+            current_download_root = None
+        
+        device = self.device_var.get().strip()
+        
+        new_values = []
+        matched_item = None
+        
+        for m in self.available_models:
+            is_downloaded = check_model_downloaded(m, download_root=current_download_root, device=device)
+            tag = " [已下載]" if is_downloaded else " [未下載]"
+            item_label = f"{m}{tag}"
+            new_values.append(item_label)
+            if m == current_clean:
+                matched_item = item_label
+                
+        if hasattr(self, 'combo_model'):
+            self.combo_model.configure(values=new_values)
+            if matched_item:
+                self.model_var.set(matched_item)
+            elif new_values:
+                self.model_var.set(new_values[0])
+
     def change_appearance_mode_event(self, new_appearance_mode: str):
         ctk.set_appearance_mode(new_appearance_mode)
         self.save_settings()
@@ -743,6 +834,7 @@ class App(BaseClass):
         if directory:
             self.model_path_var.set(directory)
             self.save_settings()
+            self.refresh_model_menu()
 
     def open_model_path(self):
         path = self.model_path_var.get().strip()
@@ -776,7 +868,9 @@ class App(BaseClass):
             with open(self.config_file, "r", encoding="utf-8") as f:
                 config = json.load(f)
                 
-            if "model" in config: self.model_var.set(config["model"])
+            if "model" in config:
+                clean_m = config["model"].split()[0].strip()
+                self.model_var.set(clean_m)
             if "device" in config: self.device_var.set(config["device"])
             if "format" in config: self.format_var.set(config["format"])
             if "zh_tw" in config: self.zh_tw_var.set(config["zh_tw"])
@@ -801,7 +895,7 @@ class App(BaseClass):
     def save_settings(self):
         """將目前設定儲存至 config.json"""
         config = {
-            "model": self.model_var.get(),
+            "model": self.get_clean_model_name(),
             "device": self.device_var.get(),
             "format": self.format_var.get(),
             "zh_tw": self.zh_tw_var.get(),
@@ -1056,13 +1150,35 @@ class App(BaseClass):
     def update_progress(self, value):
         # Value is float between 0.0 and 1.0
         def _update():
-            if value > 0 and self.progressbar.cget("mode") == "indeterminate":
-                self.progressbar.stop()
-                self.progressbar.configure(mode="determinate")
-            
-            if self.progressbar.cget("mode") == "determinate":
-                self.progressbar.set(value)
+            self._target_progress = value
+            if not getattr(self, '_progress_animating', False):
+                self._animate_progress_loop()
         self.after(0, _update)
+
+    def _animate_progress_loop(self):
+        self._progress_animating = True
+        diff = self._target_progress - self._current_progress
+        
+        if abs(diff) < 0.001:
+            self._current_progress = self._target_progress
+            self.progressbar.set(self._current_progress)
+            self.progress_label.configure(text=f"{self._current_progress * 100:.1f}%")
+            self._progress_animating = False
+            return
+            
+        # 每次移動剩餘差距的 15%，實現平滑過渡特效
+        step = diff * 0.15
+        if abs(step) < 0.001:
+            step = 0.001 if diff > 0 else -0.001
+            
+        if abs(step) > abs(diff):
+            step = diff
+            
+        self._current_progress += step
+        self.progressbar.set(self._current_progress)
+        self.progress_label.configure(text=f"{self._current_progress * 100:.1f}%")
+        
+        self.after(20, self._animate_progress_loop)
 
     def browse_file(self):
         filenames = filedialog.askopenfilenames(
@@ -1106,7 +1222,10 @@ class App(BaseClass):
         self.log_textbox.delete("0.0", "end")
         self.log_textbox.configure(state="disabled")
         
-        self.progressbar.configure(mode="indeterminate")
+        self._target_progress = 0.0
+        self._current_progress = 0.0
+        if hasattr(self, 'progress_label'):
+            self.progress_label.configure(text="0.0%")
         self.progressbar.start()
 
         thread = threading.Thread(target=self.process_batch)
@@ -1115,7 +1234,7 @@ class App(BaseClass):
 
     def process_batch(self):
         try:
-            model_size = self.model_var.get()
+            model_size = self.get_clean_model_name()
             device = self.device_var.get()
             output_fmt = self.format_var.get()
             compute_type = "int8" if device == "cpu" else "float16"
@@ -1156,10 +1275,15 @@ class App(BaseClass):
             # 嘗試載入模型
             try:
                 self.transcriber.load_model(self.log)
+                self.after(0, self.refresh_model_menu)
             except Exception as e:
                 error_str = str(e).lower()
-                # 檢查是否為權限或存取相關錯誤
-                if "permission denied" in error_str or "access is denied" in error_str or "read-only file system" in error_str or "oserror" in error_str:
+                # 檢查是否為權限或存取相關錯誤 (排除網路/模型下載失敗的相關錯誤)
+                is_permission = (
+                    ("permission denied" in error_str or "access is denied" in error_str or "read-only file system" in error_str)
+                    and not ("模型下載" in str(e) or "網路" in str(e) or "connection" in error_str or "huggingface" in error_str)
+                )
+                if is_permission:
                     self.log(f"⚠️ 預設路徑存取失敗: {e}")
                     
                     # 詢問使用者
@@ -1187,7 +1311,7 @@ class App(BaseClass):
                         self.log("❌ 使用者拒絕切換目錄，任務中止。")
                         return
                 else:
-                    # 其他錯誤直接拋出
+                    # 其他錯誤（包含網路連線、GPU 等）直接拋出交由外層統一安全處理
                     raise e
 
             check_cancel = lambda: self.cancel_flag
@@ -1210,7 +1334,13 @@ class App(BaseClass):
                     break
                 
                 self.log(f"\n>> 正在處理 ({idx+1}/{len(self.file_list)}): {os.path.basename(file_path)}")
-                self.after(0, lambda: (self.progressbar.configure(mode="indeterminate"), self.progressbar.start()))
+                def _start_progress():
+                    self._target_progress = 0.0
+                    self._current_progress = 0.0
+                    if hasattr(self, 'progress_label'):
+                        self.progress_label.configure(text="0.0%")
+                    self.progressbar.start()
+                self.after(0, _start_progress)
                 
                 try:
                     clean_punc = self.clean_punc_mapping_rev.get(self.clean_punc_var.get(), "space")
@@ -1244,8 +1374,11 @@ class App(BaseClass):
                         self.log(f"檔案 {idx+1} 已中止。")
                         
                 except Exception as e:
+                    error_str = str(e)
+                    # 若為模型下載失敗、網路連線中斷或重大核心問題，應直接中止後續檔案，避免無效重複報錯
+                    if "模型下載" in error_str or "網路連線失敗" in error_str or "無法取得模型" in error_str or "缺少 GPU 函式庫" in error_str:
+                        raise e
                     self.log(f"檔案 {os.path.basename(file_path)} 發生錯誤: {e}")
-                    # Continue to next file? Yes, usually batch should continue.
                     continue
 
             if self.cancel_flag:
@@ -1257,12 +1390,20 @@ class App(BaseClass):
             
         except Exception as e:
             error_msg = str(e)
-            self.log(f"核心錯誤中止: {error_msg}")
-            messagebox.showerror("發生錯誤", f"無法執行轉換:\n\n{error_msg}")
+            self.log(f"\n❌ 任務中止: {error_msg}")
+            title = "網路連線錯誤" if ("網路" in error_msg or "下載" in error_msg) else "發生錯誤"
+            messagebox.showerror(title, f"{error_msg}")
         
         finally:
             self.is_running = False
-            self.after(0, lambda: (self.progressbar.stop(), self.progressbar.configure(mode="determinate"), self.progressbar.set(0)))
+            def _reset_progress():
+                self.progressbar.stop()
+                self.progressbar.set(0)
+                self._target_progress = 0.0
+                self._current_progress = 0.0
+                if hasattr(self, 'progress_label'):
+                    self.progress_label.configure(text="0.0%")
+            self.after(0, _reset_progress)
             self.status_label.configure(text="就緒 - 等待下一個任務")
             self.after(0, lambda: self.btn_run.configure(state="normal"))
             self.after(0, lambda: self.btn_add.configure(state="normal"))
