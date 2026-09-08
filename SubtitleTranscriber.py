@@ -27,20 +27,23 @@ import numpy as np
 try:
     from PIL import Image, ImageTk
     PIL_AVAILABLE = True
-except ImportError:
+except Exception as e:
     PIL_AVAILABLE = False
+    print(f"提示: 未偵測到 Pillow (PIL)，影音播放預覽將停用: {e}")
 
 try:
     import av
     AV_AVAILABLE = True
-except ImportError:
+except Exception as e:
     AV_AVAILABLE = False
+    print(f"提示: 未偵測到 PyAV (av)，影音播放預覽將停用: {e}")
 
 try:
     import sounddevice as sd
     SD_AVAILABLE = True
-except ImportError:
+except Exception as e:
     SD_AVAILABLE = False
+    print(f"提示: 未偵測到 sounddevice，影片播放將無聲音: {e}")
 
 # --- 版本資訊讀取 ---
 def get_version():
@@ -373,7 +376,15 @@ class VideoPlayerWidget(ctk.CTkFrame):
         if not path or not os.path.exists(path):
             return False
         if not AV_AVAILABLE or not PIL_AVAILABLE:
-            messagebox.showwarning("缺少套件", "系統未偵測到 PyAV 或 Pillow，無法啟用影音播放。")
+            missing_pkgs = []
+            if not AV_AVAILABLE: missing_pkgs.append("PyAV (av)")
+            if not PIL_AVAILABLE: missing_pkgs.append("Pillow")
+            msg = f"系統未偵測到 {' 與 '.join(missing_pkgs)}，無法啟用影音播放。\n\n"
+            msg += "【可能原因與解決方式】\n"
+            msg += "1. 若以 Python 原始碼執行：請確認當前執行的 Python 環境已安裝套件：\n"
+            msg += "   pip install av pillow sounddevice\n"
+            msg += "2. 若為打包版 EXE：請確認 VideoToSubtitle.spec 已納入套件收集設定並重新打包。"
+            messagebox.showwarning("缺少套件", msg)
             return False
             
         self.close_video()

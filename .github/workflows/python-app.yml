@@ -22,12 +22,12 @@ jobs:
     - name: 設定 Python 環境
       uses: actions/setup-python@v5
       with:
-        python-version: '3.9' # 指定 Python 版本
+        python-version: '3.11' # 指定穩定支援最新 wheel 之 Python 版本
 
     - name: 安裝核心依賴套件
       run: |
         python -m pip install --upgrade pip
-        pip install customtkinter tkinterdnd2 faster-whisper ctranslate2 opencc pyinstaller tomli
+        pip install customtkinter tkinterdnd2 faster-whisper ctranslate2 opencc pyinstaller tomli av pillow sounddevice
 
     - name: 安裝 Mac 專屬依賴套件 (mlx-whisper)
       if: matrix.os == 'macos-latest'
@@ -105,6 +105,7 @@ jobs:
           name: Release v${{ steps.get_version.outputs.version }}
           draft: false
           prerelease: false
+          generate_release_notes: true
           files: |
             output-windows/VideoToSubtitle.exe
             output-mac/VideoToSubtitle.dmg
