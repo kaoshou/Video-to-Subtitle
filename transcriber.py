@@ -1,6 +1,9 @@
 import os
 import datetime
+import shutil
+import time
 from faster_whisper import WhisperModel
+from tqdm.auto import tqdm
 import json
 import logging
 
@@ -12,10 +15,87 @@ except ImportError:
     logging.warning("尚未安裝 opencc，將無法支援強制轉換繁體功能，請執行 pip install opencc")
 
 
+# 模型資訊對照表 (用於顯示預估大小、說明與磁碟空間檢查)
+MODEL_INFO = {
+    "tiny": {"repo_id": "Systran/faster-whisper-tiny", "mlx_repo": "mlx-community/whisper-tiny", "approx_size_mb": 75, "desc": "極速模型 (約 75 MB)"},
+    "base": {"repo_id": "Systran/faster-whisper-base", "mlx_repo": "mlx-community/whisper-base", "approx_size_mb": 145, "desc": "基礎模型 (約 145 MB)"},
+    "small": {"repo_id": "Systran/faster-whisper-small", "mlx_repo": "mlx-community/whisper-small", "approx_size_mb": 480, "desc": "標準模型 (約 480 MB)"},
+    "medium": {"repo_id": "Systran/faster-whisper-medium", "mlx_repo": "mlx-community/whisper-medium", "approx_size_mb": 1500, "desc": "中型模型 (約 1.5 GB)"},
+    "large-v3": {"repo_id": "Systran/faster-whisper-large-v3", "mlx_repo": "mlx-community/whisper-large-v3", "approx_size_mb": 3100, "desc": "高精準大型模型 (約 3.1 GB)"},
+    "large-v3-turbo": {"repo_id": "mobiuslabsgmbh/faster-whisper-large-v3-turbo", "mlx_repo": "mlx-community/whisper-large-v3-turbo", "approx_size_mb": 1600, "desc": "極速大模型 (約 1.6 GB)"},
+}
+
+
+def check_disk_space(target_dir, required_mb):
+    """
+    檢查指定路徑所在磁碟的可用空間是否足夠
+    返回 (free_mb, is_enough)
+    """
+    try:
+        p = os.path.abspath(target_dir)
+        while not os.path.exists(p):
+            parent = os.path.dirname(p)
+            if parent == p:
+                break
+            p = parent
+        usage = shutil.disk_usage(p)
+        free_mb = usage.free / (1024 * 1024)
+        return free_mb, free_mb >= required_mb
+    except Exception:
+        # 若系統不支援或檢測失敗，放行不阻擋
+        return 999999, True
+
+
+class CorruptedModelError(RuntimeError):
+    """本地模型快取檔案損毀或不完整例外"""
+    def __init__(self, message, model_size, cache_dir=None):
+        super().__init__(message)
+        self.model_size = model_size
+        self.cache_dir = cache_dir
+
+
+def clear_model_cache(model_size, download_root=None, device="cpu"):
+    """
+    清除指定模型的本地快取資料夾，以便重新乾淨下載
+    返回 (bool, str) 代表是否成功及說明訊息
+    """
+    clean_size = model_size.split()[0].strip()
+    is_mlx = device in ["mps", "mlx"]
+    if is_mlx:
+        repo_id = MODEL_INFO.get(clean_size, {}).get("mlx_repo", f"mlx-community/whisper-{clean_size}")
+    else:
+        import faster_whisper
+        repo_id = faster_whisper.utils._MODELS.get(clean_size) or MODEL_INFO.get(clean_size, {}).get("repo_id", f"Systran/faster-whisper-{clean_size}")
+        
+    cache_dir = download_root if download_root else os.path.expanduser("~/.cache/huggingface/hub")
+    repo_folder = os.path.join(cache_dir, "models--" + repo_id.replace("/", "--"))
+    
+    deleted = False
+    if os.path.exists(repo_folder):
+        try:
+            shutil.rmtree(repo_folder)
+            deleted = True
+        except Exception as e:
+            return False, f"無法刪除快取資料夾 {repo_folder}: {e}"
+            
+    # 如果 download_root 直接存放 model.bin 與 config.json (獨立目錄模式)
+    if download_root and os.path.isdir(download_root):
+        for f in ["model.bin", "config.json", "tokenizer.json", "vocabulary.txt"]:
+            fp = os.path.join(download_root, f)
+            if os.path.isfile(fp):
+                try:
+                    os.remove(fp)
+                    deleted = True
+                except Exception:
+                    pass
+                    
+    return True, f"已成功清除模型 [{clean_size}] 的快取檔案。"
+
+
 def check_model_downloaded(model_size, download_root=None, device="cpu"):
     """
-    快速檢測指定模型是否已下載至本地（不發送網路請求）
-    返回 True 表示已下載/離線可用，False 表示未下載
+    快速檢測指定模型是否已下載至本地（含基礎大小完整性檢查，不發送網路請求）
+    返回 True 表示已下載/離線可用，False 表示未下載或檔案損毀
     """
     clean_size = model_size.split()[0].strip()
     if device in ["mps", "mlx"]:
@@ -29,14 +109,325 @@ def check_model_downloaded(model_size, download_root=None, device="cpu"):
     else:
         try:
             import faster_whisper
+            # 若為自訂目錄直接存放檔案
             if download_root and os.path.isdir(download_root):
                 direct_files = ["model.bin", "config.json"]
                 if all(os.path.exists(os.path.join(download_root, f)) for f in direct_files):
-                    return True
-            faster_whisper.download_model(clean_size, cache_dir=download_root, local_files_only=True)
-            return True
+                    # 檔案完整性檢查：model.bin 至少需大於 5MB (最小的 tiny 模型也有 75MB)
+                    m_bin = os.path.join(download_root, "model.bin")
+                    if os.path.getsize(m_bin) > 5 * 1024 * 1024:
+                        return True
+                    else:
+                        return False
+            
+            # 使用 faster_whisper 快取檢查
+            snapshot_dir = faster_whisper.download_model(clean_size, cache_dir=download_root, local_files_only=True)
+            if snapshot_dir and os.path.isdir(snapshot_dir):
+                m_bin = os.path.join(snapshot_dir, "model.bin")
+                # 核心權重檔案必須確實存在，且大小必須大於 5MB (避免 incomplete 或剛建立目錄之元數據)
+                if not os.path.exists(m_bin):
+                    return False
+                if os.path.getsize(m_bin) < 5 * 1024 * 1024:
+                    return False
+                return True
+            return False
         except Exception:
             return False
+
+
+
+try:
+    from huggingface_hub.utils import tqdm as hf_tqdm
+    BaseTqdm = hf_tqdm
+except Exception:
+    BaseTqdm = tqdm
+
+
+class _DownloadProgressTqdm(BaseTqdm):
+    """
+    自訂 Tqdm 類別，攔截 Hugging Face 下載字節流並即時計算進度百分比、速度與 ETA
+    """
+    _log_callback = None
+    _progress_callback = None
+    _cancel_check_callback = None
+    _last_update_time = 0.0
+    _last_log_time = 0.0
+    _last_log_pct = -10.0
+    _start_time = 0.0
+
+    @classmethod
+    def reset(cls, log_cb=None, prog_cb=None, cancel_cb=None):
+        cls._log_callback = log_cb
+        cls._progress_callback = prog_cb
+        cls._cancel_check_callback = cancel_cb
+        cls._last_update_time = 0.0
+        cls._last_log_time = 0.0
+        cls._last_log_pct = -10.0
+        cls._start_time = 0.0
+
+    def __init__(self, *args, **kwargs):
+        # 移除 huggingface_hub 內部傳入但原生 tqdm 不支援的額外參數 (如 'name')
+        kwargs.pop("name", None)
+        self.is_bytes_bar = (kwargs.get("unit") == "B")
+        super().__init__(*args, **kwargs)
+        if self.is_bytes_bar and _DownloadProgressTqdm._start_time == 0.0:
+            _DownloadProgressTqdm._start_time = time.time()
+            _DownloadProgressTqdm._last_update_time = 0.0 # 初次保持 0.0，確保首次 update 立即觸發 UI 回呼
+
+    def update(self, n=1):
+        super().update(n)
+        if _DownloadProgressTqdm._cancel_check_callback and _DownloadProgressTqdm._cancel_check_callback():
+            raise InterruptedError("使用者已手動取消模型下載。")
+
+        if not self.is_bytes_bar:
+            return
+
+        now = time.time()
+        # 限制更新頻率在約 80ms，避免過度刷新影響 UI
+        if now - _DownloadProgressTqdm._last_update_time >= 0.08 or (self.total and self.n >= self.total):
+            _DownloadProgressTqdm._last_update_time = now
+            total = self.total if self.total and self.total > 0 else 0
+            current = self.n
+            fraction = (current / total) if total > 0 else 0.0
+            percent = fraction * 100.0
+
+            elapsed = now - _DownloadProgressTqdm._start_time
+            speed_bps = (current / elapsed) if elapsed > 0.1 else 0.0
+            if speed_bps >= 1024 * 1024:
+                speed_str = f"{speed_bps / (1024 * 1024):.1f} MB/s"
+            elif speed_bps >= 1024:
+                speed_str = f"{speed_bps / 1024:.1f} KB/s"
+            else:
+                speed_str = f"{speed_bps:.0f} B/s"
+
+            if total > current and speed_bps > 1024:
+                remaining_secs = int((total - current) / speed_bps)
+                mins = remaining_secs // 60
+                secs = remaining_secs % 60
+                eta_str = f"{mins:02d}:{secs:02d}"
+            else:
+                eta_str = "--:--"
+
+            downloaded_mb = current / (1024 * 1024)
+            total_mb = total / (1024 * 1024)
+
+            info_dict = {
+                "percent": percent,
+                "fraction": fraction,
+                "downloaded_mb": downloaded_mb,
+                "total_mb": total_mb,
+                "speed_str": speed_str,
+                "eta_str": eta_str,
+                "current_bytes": current,
+                "total_bytes": total,
+            }
+
+            if _DownloadProgressTqdm._progress_callback:
+                try:
+                    _DownloadProgressTqdm._progress_callback(fraction, info_dict)
+                except Exception as e:
+                    print(f"DEBUG: progress_callback error: {e}")
+
+            # 定期日誌輸出 (每 10% 或每 5 秒輸出一次)
+            if percent - _DownloadProgressTqdm._last_log_pct >= 10.0 or (now - _DownloadProgressTqdm._last_log_time >= 5.0):
+                _DownloadProgressTqdm._last_log_pct = percent
+                _DownloadProgressTqdm._last_log_time = now
+                if _DownloadProgressTqdm._log_callback:
+                    try:
+                        _DownloadProgressTqdm._log_callback(
+                            f"  > 下載進度: {percent:5.1f}% ({downloaded_mb:.1f} MB / {total_mb:.1f} MB) | 速度: {speed_str} | 預估剩餘: {eta_str}"
+                        )
+                    except Exception as log_err:
+                        print(f"DEBUG: log_callback error: {log_err}")
+
+
+
+def download_model_with_progress(model_size, download_root=None, device="cpu", log_callback=None, progress_callback=None, cancel_check_callback=None):
+    """
+    下載指定模型並提供詳細百分比進度、速度、ETA 及完整例外處理
+    返回下載後的快取路徑
+    """
+    clean_size = model_size.split()[0].strip()
+    is_mlx = device in ["mps", "mlx"]
+    
+    # 決定 Hugging Face Repo ID
+    if is_mlx:
+        repo_id = MODEL_INFO.get(clean_size, {}).get("mlx_repo", f"mlx-community/whisper-{clean_size}")
+    else:
+        import faster_whisper
+        repo_id = faster_whisper.utils._MODELS.get(clean_size) or MODEL_INFO.get(clean_size, {}).get("repo_id", f"Systran/faster-whisper-{clean_size}")
+        
+    cache_dir = download_root if download_root else os.path.expanduser("~/.cache/huggingface/hub")
+    
+    # 1. 檢查是否已下載
+    if check_model_downloaded(clean_size, download_root=download_root, device=device):
+        if log_callback:
+            log_callback(f"[快取就緒] 模型 '{clean_size}' 已存在於本地快取中，無須重新下載。")
+        return cache_dir
+
+    # 2. 檢查磁碟剩餘空間
+    approx_mb = MODEL_INFO.get(clean_size, {}).get("approx_size_mb", 1500)
+    free_mb, is_enough = check_disk_space(cache_dir, approx_mb + 300) # 保留 300MB 緩衝
+    if not is_enough:
+        err_msg = (
+            f"[錯誤] 磁碟剩餘空間不足！\n\n"
+            f"目標儲存路徑: {os.path.abspath(cache_dir)}\n"
+            f"磁碟可用空間: {free_mb:.1f} MB\n"
+            f"模型所需空間: 約 {approx_mb} MB (需保留至少 {approx_mb + 300} MB 空間)\n\n"
+            f"【解決方案】\n"
+            f"請至主畫面右下角的「模型儲存管理」，將儲存路徑變更至其他空間充裕的磁碟（例如 D 槽或外部硬碟）。"
+        )
+        if log_callback:
+            log_callback(err_msg)
+        raise RuntimeError(err_msg)
+
+    # 3. 準備下載前資訊提示
+    if log_callback:
+        log_callback(f"--------------------------------------------------")
+        log_callback(f"開始下載模型: {clean_size} ({MODEL_INFO.get(clean_size, {}).get('desc', '約 500MB~2GB')})")
+        log_callback(f"儲存目錄: {os.path.abspath(cache_dir)}")
+        log_callback(f"來源伺服器: Hugging Face ({repo_id})")
+        log_callback(f"正在連線並取得檔案資訊，請稍候...")
+
+    # 4. 初始化進度條與回調
+    _DownloadProgressTqdm.reset(log_callback, progress_callback, cancel_check_callback)
+    
+    import huggingface_hub
+    allow_patterns = None if is_mlx else [
+        "config.json",
+        "preprocessor_config.json",
+        "model.bin",
+        "tokenizer.json",
+        "vocabulary.*",
+    ]
+
+    try:
+        if cancel_check_callback and cancel_check_callback():
+            raise InterruptedError("使用者已手動取消模型下載。")
+            
+        kwargs = {
+            "cache_dir": download_root,
+            "tqdm_class": _DownloadProgressTqdm,
+            "etag_timeout": 15,
+        }
+        if allow_patterns:
+            kwargs["allow_patterns"] = allow_patterns
+            
+        snapshot_path = huggingface_hub.snapshot_download(repo_id, **kwargs)
+        
+        # 下載完成回呼 100%
+        if progress_callback:
+            try:
+                progress_callback(1.0, {
+                    "percent": 100.0,
+                    "fraction": 1.0,
+                    "downloaded_mb": approx_mb,
+                    "total_mb": approx_mb,
+                    "speed_str": "--",
+                    "eta_str": "00:00"
+                })
+            except Exception:
+                pass
+
+        if log_callback:
+            log_callback(f"[成功] 模型 '{clean_size}' 下載完成！正在校驗與載入中...")
+            
+        return snapshot_path
+
+    except InterruptedError as e:
+        if log_callback:
+            log_callback("[已取消] 使用者已手動取消模型下載。")
+        raise e
+        
+    except Exception as e:
+        error_str = str(e).lower()
+        print(f"DEBUG: Download error: {e}")
+        
+        # 1. SSL 安全憑證錯誤 (公司內網/防毒軟體干擾)
+        ssl_keywords = ["certificate_verify_failed", "sslcerterror", "self signed", "certificate verify failed"]
+        if any(k in error_str for k in ssl_keywords):
+            friendly_msg = (
+                f"模型下載失敗：SSL 安全連線驗證失敗！\n\n"
+                f"【可能原因】\n"
+                f"您的電腦目前所在的網路（如公司/學校內部網路、公共 Wi-Fi）或電腦內安裝的防毒軟體正在進行 SSL 深度封包檢測，導致無法建立對 Hugging Face 的加密連線。\n\n"
+                f"【解決步驟】\n"
+                f"1. 請檢查防毒軟體（如卡巴斯基、趨勢等）是否有開啟「HTTPS/SSL 掃描」，可暫時將其關閉。\n"
+                f"2. 若處於公司內網，建議切換至手機熱點或其他無憑證攔截的網路環境完成下載。\n"
+                f"3. 下載完成後即支援永久離線使用。"
+            )
+            if log_callback:
+                log_callback(f"[錯誤] SSL 憑證驗證失敗，無法安全連接伺服器。")
+            raise RuntimeError(friendly_msg)
+
+        # 2. 網路連線逾時 / 無法連線
+        net_keywords = [
+            "connectionerror", "connection error", "getaddrinfo", "max retries exceeded", 
+            "timed out", "timeout", "offline mode", "unreachable", "localentrynotfound",
+            "couldn't connect", "could not resolve", "failed to establish",
+            "connection refused", "connection reset", "network is down",
+            "cannot reach host", "cant reach host", "network unreachable"
+        ]
+        is_net_err = any(k in error_str for k in net_keywords)
+        try:
+            import requests
+            if isinstance(e, requests.exceptions.RequestException):
+                is_net_err = True
+        except ImportError:
+            pass
+
+        if is_net_err:
+            friendly_msg = (
+                f"模型下載失敗 (模型: {clean_size})\n\n"
+                "【原因】\n"
+                "首次執行或使用新模型時，系統需要連線至 Hugging Face (huggingface.co) 下載模型權重檔案。\n"
+                "目前偵測到無網路連線、連線逾時或伺服器連線中斷。\n\n"
+                "【解決步驟】\n"
+                "1. 請檢查您的網際網路連線是否正常 (若在公司/學校內網，可能需要設定代理或檢查防火牆)。\n"
+                "2. 本程式支援「斷點續傳」，網路恢復後再次點擊，將自動從上次進度繼續下載。\n"
+                "3. 您可透過主畫面右下角的「模型儲存管理」視窗預先下載模型，無須先載入影音檔案。"
+            )
+            if log_callback:
+                log_callback(f"[錯誤] 網路連線失敗，無法下載模型 '{clean_size}'。")
+            raise RuntimeError(friendly_msg)
+            
+        # 3. 磁碟空間或寫入錯誤
+        if "no space left on device" in error_str or "disk full" in error_str:
+            friendly_msg = (
+                f"模型下載失敗：磁碟空間已滿！\n\n"
+                f"儲存路徑 {os.path.abspath(cache_dir)} 空間不足。\n"
+                f"請清理磁碟空間或至「模型儲存管理」切換至其他磁碟。"
+            )
+            if log_callback:
+                log_callback("[錯誤] 磁碟空間不足，下載中止。")
+            raise RuntimeError(friendly_msg)
+            
+        # 4. 存取權限不足
+        if "permission denied" in error_str or "access is denied" in error_str:
+            friendly_msg = (
+                f"模型下載失敗：存取權限不足！\n\n"
+                f"系統無法寫入目錄: {os.path.abspath(cache_dir)}\n"
+                f"建議點擊右下角「模型儲存管理」更改儲存路徑至有完整讀寫權限的資料夾。"
+            )
+            if log_callback:
+                log_callback("[錯誤] 存取權限不足，無法寫入模型目錄。")
+            raise RuntimeError(friendly_msg)
+
+        # 5. Windows 長路徑限制
+        if os.name == 'nt' and ("path too long" in error_str or ("filenotfound" in error_str and len(os.path.abspath(cache_dir)) > 200)):
+            friendly_msg = (
+                f"模型下載失敗：路徑長度超過 Windows 限制！\n\n"
+                f"目前儲存路徑層級過深 ({len(os.path.abspath(cache_dir))} 字元)。\n"
+                f"【解決方案】\n"
+                f"請至「模型儲存管理」將模型路徑設定為較短的路徑（例如 'C:\\whisper_models' 或 'D:\\models'）。"
+            )
+            if log_callback:
+                log_callback("[錯誤] 路徑長度超過 Windows 系統限制。")
+            raise RuntimeError(friendly_msg)
+
+
+        if log_callback:
+            log_callback(f"[錯誤] 模型下載異常: {e}")
+        raise e
 
 
 class SubtitleTranscriber:
@@ -48,19 +439,29 @@ class SubtitleTranscriber:
         self.cpu_threads = cpu_threads
         self.model = None
 
-    def load_model(self, log_callback):
-        """載入模型 (第一次執行會自動下載)"""
+    def load_model(self, log_callback=None, progress_callback=None, cancel_check_callback=None):
+        """載入模型 (第一次執行會自動下載，支援進度百分比、速度、ETA 與取消控制)"""
         print(f"DEBUG: load_model called. Model size: {self.model_size}, Device: {self.device}, Root: {self.download_root}")
         # 如果模型已經載入，直接返回
         if self.model: 
             print("DEBUG: Model already loaded.")
             return
         
+        # 1. 確保模型已下載 (若尚未下載，先呼叫帶進度回饋與例外防護的下載器)
+        download_model_with_progress(
+            self.model_size,
+            download_root=self.download_root,
+            device=self.device,
+            log_callback=log_callback,
+            progress_callback=progress_callback,
+            cancel_check_callback=cancel_check_callback
+        )
+        
         if log_callback:
-            log_callback(f"正在載入模型: {self.model_size} (Device: {self.device})...")
+            log_callback(f"正在載入模型核心: {self.model_size} (Device: {self.device})...")
             model_path = os.path.abspath(self.download_root) if self.download_root else os.path.abspath(os.path.expanduser("~/.cache/huggingface/hub"))
             log_callback(f"模型儲存路徑: {model_path}")
-            log_callback("初次執行需下載模型檔案 (約 500MB - 2GB)，請稍候...")
+
         try:
             if self.device in ["mps", "mlx"]:
                 print("DEBUG: Initializing MLX Whisper for Apple Silicon...")
@@ -73,10 +474,9 @@ class SubtitleTranscriber:
                     raise RuntimeError(msg)
                 
                 self.model_type = "mlx-whisper"
-                # MLX-Whisper 模型前綴，例如 mlx-community/whisper-small
                 self.mlx_model_path = f"mlx-community/whisper-{self.model_size}"
                 if log_callback:
-                    log_callback(f"MLX 框架準備就緒，預計使用 HuggingFace 模型: {self.mlx_model_path}")
+                    log_callback(f"MLX 框架準備就緒，預計使用模型: {self.mlx_model_path}")
                 print("DEBUG: MLX whisper config ready.")
             else:
                 print("DEBUG: Initializing WhisperModel...")
@@ -85,7 +485,8 @@ class SubtitleTranscriber:
                     device=self.device, 
                     compute_type=self.compute_type,
                     cpu_threads=self.cpu_threads,
-                    download_root=self.download_root
+                    download_root=self.download_root,
+                    local_files_only=True # 已由前置下載器下載完成，這裡強制離線載入避免靜默阻塞
                 )
                 self.model_type = "faster-whisper"
                 print("DEBUG: WhisperModel initialized successfully.")
@@ -106,32 +507,43 @@ class SubtitleTranscriber:
                 if log_callback:
                     log_callback("錯誤: 缺少 GPU 函式庫，請切換至 CPU 模式。")
                 raise RuntimeError(friendly_msg)
-            
-            # 2. 檢查網路連線 / 下載失敗 (無網路、無法連線至 Hugging Face)
-            net_keywords = [
-                "connection", "getaddrinfo", "max retries", "timeout", "timed out",
-                "huggingface", "offline", "unreachable", "localentrynotfound",
-                "couldn't connect", "could not resolve", "failed to establish",
-                "connection refused", "ssl", "proxy", "network is down",
-                "cannot reach", "cant reach", "entry not found", "cannot find the requested files"
+
+            # 2. 檢查模型快取是否損毀或檔案不完整
+            corrupted_keywords = [
+                "unable to open file", "corrupted", "invalid load key", "bad file", 
+                "magic number", "unexpected end of file", "cannot open", "badzipfile", "eof"
             ]
-            if any(k in error_str for k in net_keywords):
+            if any(k in error_str for k in corrupted_keywords):
                 friendly_msg = (
-                    f"模型下載/載入失敗 (模型: {self.model_size})\n\n"
-                    "【原因】\n"
-                    "首次執行或切換新模型時，系統需要連線至網路下載模型檔案。\n"
-                    "目前偵測到無網路連線、連線逾時或無法存取 Hugging Face 伺服器。\n\n"
-                    "【解決方法】\n"
-                    "1. 請確認電腦已連上網際網路後，再次點擊「開始轉錄」。\n"
-                    "2. 若處於完全離線環境，請在有網路的電腦預先下載模型，並將模型檔案複製至本機模型目錄中。"
+                    f"模型載入失敗：本地模型檔案損毀或未完整寫入！\n"
+                    f"模型規格: {self.model_size}\n\n"
+                    f"【原因】\n"
+                    f"上次下載被異常強制中斷、非正常關機或防毒軟體鎖定，導致快取檔案不完整。\n\n"
+                    f"【建議修復方式】\n"
+                    f"可點選「清除快取並重新下載」自動修復損毀檔案。"
                 )
                 if log_callback:
-                    log_callback(f"❌ 網路連線失敗，無法下載模型 '{self.model_size}'。請確認網路已連線。")
+                    log_callback(f"[錯誤] 模型檔案損毀或無法開啟: {e}")
+                raise CorruptedModelError(friendly_msg, model_size=self.model_size, cache_dir=self.download_root)
+
+            # 3. 檢查記憶體不足 (OOM)
+            oom_keywords = ["bad_alloc", "out of memory", "cannot allocate memory", "memoryerror", "std::bad_alloc"]
+            if any(k in error_str for k in oom_keywords):
+                friendly_msg = (
+                    f"載入模型失敗：電腦記憶體不足 (Out of Memory)！\n"
+                    f"模型: {self.model_size}\n\n"
+                    f"【建議解決方案】\n"
+                    f"1. 請將「準確度 (Model)」切換為較輕量的模型（例如 'small' 或 'base'）。\n"
+                    f"2. 關閉其他佔用高記憶體的應用程式（如瀏覽器多個分頁或大型軟體）後再試。"
+                )
+                if log_callback:
+                    log_callback(f"[錯誤] 記憶體不足，無法載入模型 {self.model_size}。")
                 raise RuntimeError(friendly_msg)
             
             if log_callback:
                 log_callback(f"模型載入失敗: {e}")
             raise e
+
 
     def format_timestamp(self, seconds, separator=","):
         """
@@ -164,7 +576,7 @@ class SubtitleTranscriber:
             max_chars = 35 if task != "translate" else 80
         if not self.model:
             print("DEBUG: Model not loaded in run(), calling load_model()...")
-            self.load_model(log_callback)
+            self.load_model(log_callback, progress_callback=progress_callback, cancel_check_callback=cancel_check_callback)
 
         # --- 記錄開始時間 ---
         start_time = datetime.datetime.now()
