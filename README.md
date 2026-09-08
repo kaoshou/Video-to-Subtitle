@@ -12,13 +12,13 @@
 
 ![](screenshot.png)
 
-## 🚀 v2.6.1 更新說明
-本版本重點強化模型支援、離線體驗與系統穩定性：
-* **支援最新高性價比模型 `large-v3-turbo`**：新增 `large-v3-turbo` 旗艦模型支援，轉錄速度較傳統 `large-v3` 提升約 2~3 倍，顯存與記憶體消耗大幅降低，同時維持極高水準的辨識準確率。
-* **模型快取狀態即時標記 (`[已下載]` / `[未下載]`)**：下拉選單自動檢測本地快取，即時標記每個模型的下載狀態，讓使用者在完全離線環境下能一目了然哪些模型可以直接使用。
-* **動態連動與即時刷新**：當在「模型儲存管理」更換儲存路徑、切換運算單元，或首次下載新模型完成後，下拉選單標籤均會自動即時重新整理。
-* **無網路與離線安全防護**：全面加強模型下載與載入階段的例外攔截，在無網路或連線逾時時提供清晰具體的繁體中文排解引導對話框，確保程式絕不閃退與崩潰，UI 狀態完整安全復原。
-* **模型儲存路徑自訂管理**：主介面提供「模型儲存管理」視窗，方便使用者自訂快取磁區（如 C 槽空間不足時搬移至其他磁碟），並提供一鍵開啟資料夾功能。
+## 🚀 v2.7.0 更新說明
+本版本帶來重大的影音同步校對體驗升級與多項細節優化：
+* **全新影音同步播放器**：字幕編輯器原生整合 PyAV 與 sounddevice，支援選取字幕跳轉對應影片畫面、播放時字幕自動滾動定位，影音幀毫秒級 A/V 同步。
+* **原生音訊串流與音量控制**：採用 Planar 浮點重採樣（`fltp`），還原標準 1.0x 語速與自然立體聲音質；支援音量滑桿微調（0%~100%）、動態圖示（🔊/🔉/🔇）與一鍵靜音/記憶還原。
+* **左右可調分割面板 (PanedWindow)**：字幕列表與影片播放器之間提供原生分割條，支援滑鼠自由拖曳調整比例，影片畫布自動等比例平滑縮放。
+* **視窗縮放與最大化完整支援**：移除視窗屬性限制，恢復系統原生最大化按鈕與雙擊標題列放大，放寬 minsize 並提供快捷鍵 F11 與工具列切換按鈕。
+* **版本更新說明智慧 Fallback**：優化 GitHub Release 檢查邏輯，自動抓取 Commit 說明，徹底解決改版說明顯示為「無」的問題。
 
 ## ✨ 主要功能
 * **支援最新 `large-v3-turbo` 與多模型切換**：整合 `tiny`、`base`、`small`、`medium`、`large-v3` 及 `large-v3-turbo`，下拉選單即時標示本地下載狀態。
@@ -87,7 +87,7 @@
     ```
     安裝所需套件 (Windows / 一般環境):
     ```bash
-    pip install customtkinter tkinterdnd2 faster-whisper opencc pyinstaller
+    pip install customtkinter tkinterdnd2 faster-whisper opencc av pillow sounddevice pyinstaller
     ```
     (若為 Mac 開發者並需啟用 MPS 硬體加速，請額外安裝 `mlx-whisper`):
     ```bash
@@ -101,7 +101,7 @@
 
 4. **使用 PyInstaller 打包為單一執行檔**
     ```bash
-    pyinstaller --noconsole --onefile --name "VideoToSubtitle" --collect-all customtkinter --collect-all tkinterdnd2 --collect-all faster_whisper --collect-all opencc SubtitleTranscriber.py
+    pyinstaller --noconsole --onefile --name "VideoToSubtitle" --collect-all customtkinter --collect-all tkinterdnd2 --collect-all faster_whisper --collect-all opencc --collect-all av --collect-all PIL --collect-all sounddevice SubtitleTranscriber.py
     ```
     打包完成後，執行檔將位於 `dist/VideoToSubtitle.exe`。
 
@@ -114,6 +114,9 @@
 | [mlx-whisper](https://github.com/ml-explore/mlx-examples/tree/main/whisper) | MIT | Apple Silicon GPU (MPS) 專用高速語音辨識框架 |
 | [CustomTkinter](https://github.com/TomSchimansky/CustomTkinter) | MIT | 現代化 GUI 介面框架 |
 | [tkinterdnd2](https://github.com/pmgagne/tkinterdnd2) | MIT | GUI 檔案拖放支援 |
+| [PyAV (av)](https://github.com/PyAV-Org/PyAV) | BSD-2-Clause | 原生影音幀解碼、音訊重採樣與時間軸精準定位 |
+| [Pillow](https://github.com/python-pillow/Pillow) | HPND | 影像自適應等比例縮放與畫布渲染 |
+| [sounddevice](https://github.com/spatialaudio/python-sounddevice) | MIT | 跨平台低延遲音訊串流輸出 (PortAudio) |
 | [OpenCC](https://github.com/BYVoid/OpenCC) | Apache-2.0 | 精準的繁簡中文轉換庫 |
 | [tomli](https://github.com/hukkin/tomli) | MIT | 支援 Python 舊版本讀取 pyproject.toml 設定檔 |
 | [huggingface-hub](https://github.com/huggingface/huggingface_hub) | Apache-2.0 | 語音辨識模型下載與快取儲存通道 |

@@ -20,6 +20,28 @@ except ImportError:
     DND_AVAILABLE = False
     print("提示: 若要啟用檔案拖曳功能，請執行 pip install tkinterdnd2")
 
+import queue
+import numpy as np
+
+# --- 嘗試匯入影像與音訊播放庫 (Pillow, PyAV, sounddevice) ---
+try:
+    from PIL import Image, ImageTk
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+
+try:
+    import av
+    AV_AVAILABLE = True
+except ImportError:
+    AV_AVAILABLE = False
+
+try:
+    import sounddevice as sd
+    SD_AVAILABLE = True
+except ImportError:
+    SD_AVAILABLE = False
+
 # --- 版本資訊讀取 ---
 def get_version():
     """從 pyproject.toml 讀取版本號"""
@@ -62,6 +84,645 @@ if DND_AVAILABLE:
             self.TkdndVersion = TkinterDnD._require(self)
     BaseClass = CTkDnD
 
+class VideoPlayerWidget(ctk.CTkFrame):
+    """
+    原生高效影音播放與預覽控制器：
+    1. 基於 PyAV + Pillow + sounddevice，支援毫秒級畫面解碼與即時聲音串流播放 (A/V Sync)。
+    2. 採雙 Container 解耦架構，視訊與音訊獨立解碼與 Seek，杜絕死鎖與卡頓。
+    3. 時間軸拖曳跳轉 (Seek)、播放/暫停、快轉/倒轉 (±5s)。
+    4. 時間更新回報回呼 (on_time_update)，即時驅動字幕雙向同步。
+    """
+    def __init__(self, master, on_time_update=None, **kwargs):
+        super().__init__(master, **kwargs)
+        self.on_time_update = on_time_update
+        
+        self.video_path = None
+        self.container = None
+        self.video_stream = None
+        self.duration_sec = 0.0
+        self.fps = 25.0
+        self.current_sec = 0.0
+        self.is_playing = False
+        self.has_video = False
+        
+        # 音訊串流相關
+        self.has_audio = False
+        self.audio_container = None
+        self.audio_stream = None
+        self.audio_resampler = None
+        self.sd_stream = None
+        self._audio_queue = queue.Queue(maxsize=35)
+        self._audio_thread = None
+        self._stop_audio = threading.Event()
+        self._audio_gen = None
+        self._audio_lock = threading.Lock()
+        
+        self._frame_gen = None
+        self._latest_image = None
+        self._photo_image = None
+        self._play_start_wall = 0.0
+        self._play_start_media = 0.0
+        self._is_user_dragging = False
+        self._play_timer = None
+        self._debounce_timer = None
+        
+        # 音量與靜音控制 (0.0~1.0，支援一鍵靜音與記憶還原)
+        self.volume = 1.0
+        self.is_muted = False
+        self._pre_mute_volume = 1.0
+        
+        self._build_ui()
+
+    def _build_ui(self):
+        # 1. 頂部控制列 (檔名與選擇按鈕)
+        self.top_bar = ctk.CTkFrame(self, fg_color="transparent")
+        self.top_bar.pack(fill="x", padx=6, pady=(6, 4))
+        
+        self.btn_select_video = ctk.CTkButton(
+            self.top_bar, text="選擇影片", width=75, height=26,
+            fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
+            text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
+            font=ctk.CTkFont(size=11, weight="bold"), command=self.browse_video
+        )
+        self.btn_select_video.pack(side="left")
+        
+        self.lbl_video_name = ctk.CTkLabel(
+            self.top_bar, text="未載入影片", 
+            font=ctk.CTkFont(size=11), text_color="gray", anchor="w"
+        )
+        self.lbl_video_name.pack(side="left", padx=8, fill="x", expand=True)
+        
+        self.btn_close_video = ctk.CTkButton(
+            self.top_bar, text="關閉", width=45, height=26,
+            fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
+            text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
+            font=ctk.CTkFont(size=11), command=self.close_video
+        )
+        self.btn_close_video.pack(side="right")
+        
+        # 2. 影片畫布 Canvas
+        self.canvas_frame = ctk.CTkFrame(self, fg_color="black", corner_radius=6)
+        self.canvas_frame.pack(fill="both", expand=True, padx=6, pady=4)
+        
+        self.canvas = tk.Canvas(self.canvas_frame, bg="black", highlightthickness=0)
+        self.canvas.pack(fill="both", expand=True)
+        self.canvas.bind("<Configure>", lambda e: self._on_canvas_resize())
+        self.canvas.bind("<Button-1>", lambda e: self.toggle_play())
+        
+        # 3. 底部播放控制列
+        self.controls_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.controls_frame.pack(fill="x", padx=6, pady=(4, 6))
+        
+        # 時間軸 Slider 與時間標籤
+        slider_row = ctk.CTkFrame(self.controls_frame, fg_color="transparent")
+        slider_row.pack(fill="x", pady=(0, 4))
+        
+        self.slider = ctk.CTkSlider(
+            slider_row, from_=0.0, to=100.0, height=14,
+            command=self._on_slider_move
+        )
+        self.slider.set(0.0)
+        self.slider.pack(side="left", fill="x", expand=True, padx=(0, 6))
+        self.slider.bind("<Button-1>", self._on_slider_press)
+        self.slider.bind("<ButtonRelease-1>", self._on_slider_release)
+        
+        self.lbl_time = ctk.CTkLabel(
+            slider_row, text="00:00:00 / 00:00:00",
+            font=ctk.CTkFont(family="Consolas", size=11), width=125, anchor="e"
+        )
+        self.lbl_time.pack(side="right")
+        
+        # 按鈕列
+        btn_row = ctk.CTkFrame(self.controls_frame, fg_color="transparent")
+        btn_row.pack(fill="x")
+        
+        self.btn_prev5 = ctk.CTkButton(
+            btn_row, text="◀◀ -5s", width=62, height=26,
+            fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
+            text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
+            font=ctk.CTkFont(size=11), command=lambda: self.seek_relative(-5.0)
+        )
+        self.btn_prev5.pack(side="left", padx=(0, 4))
+        
+        self.btn_play = ctk.CTkButton(
+            btn_row, text="播放 ▶", width=75, height=26,
+            fg_color="#1f538d", hover_color="#14375e",
+            text_color="white", font=ctk.CTkFont(size=11, weight="bold"),
+            command=self.toggle_play
+        )
+        self.btn_play.pack(side="left", padx=4)
+        
+        self.btn_next5 = ctk.CTkButton(
+            btn_row, text="+5s ▶▶", width=62, height=26,
+            fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
+            text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
+            font=ctk.CTkFont(size=11), command=lambda: self.seek_relative(5.0)
+        )
+        self.btn_next5.pack(side="left", padx=(4, 0))
+        
+        # 音量控制區 (靜音切換 + 音量滑桿 + 百分比)
+        self.btn_mute = ctk.CTkButton(
+            btn_row, text="🔊", width=32, height=26,
+            fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
+            text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
+            font=ctk.CTkFont(size=12), command=self._toggle_mute
+        )
+        self.btn_mute.pack(side="left", padx=(10, 4))
+        
+        self.slider_volume = ctk.CTkSlider(
+            btn_row, from_=0.0, to=1.0, width=65, height=14,
+            command=self._on_volume_slider
+        )
+        self.slider_volume.set(1.0)
+        self.slider_volume.pack(side="left", padx=2)
+        
+        self.lbl_volume = ctk.CTkLabel(
+            btn_row, text="100%", font=ctk.CTkFont(family="Consolas", size=10),
+            width=36, anchor="w", text_color="gray"
+        )
+        self.lbl_volume.pack(side="left", padx=(2, 0))
+        
+        self.lbl_hotkey_tip = ctk.CTkLabel(
+            btn_row, text="[點擊畫面或按空白鍵播放/暫停]",
+            font=ctk.CTkFont(size=10), text_color="gray"
+        )
+        self.lbl_hotkey_tip.pack(side="right")
+        
+        self.after(100, self._render_canvas)
+
+    @staticmethod
+    def _format_time(sec):
+        if sec is None or sec < 0: sec = 0
+        total_s = int(sec)
+        m, s = divmod(total_s, 60)
+        h, m = divmod(m, 60)
+        return f"{h:02d}:{m:02d}:{s:02d}"
+
+    def _toggle_mute(self):
+        """切換靜音與原音量"""
+        if self.is_muted:
+            # 解除靜音
+            self.is_muted = False
+            self.volume = self._pre_mute_volume if self._pre_mute_volume > 0.05 else 0.5
+            if hasattr(self, 'slider_volume'):
+                self.slider_volume.set(self.volume)
+        else:
+            # 進入靜音
+            self._pre_mute_volume = self.volume if self.volume > 0.05 else 1.0
+            self.is_muted = True
+            self.volume = 0.0
+            if hasattr(self, 'slider_volume'):
+                self.slider_volume.set(0.0)
+        self._update_volume_ui()
+
+    def _on_volume_slider(self, val):
+        """音量滑桿拖曳回呼"""
+        try:
+            self.volume = max(0.0, min(1.0, float(val)))
+        except (ValueError, TypeError):
+            self.volume = 1.0
+            
+        if self.volume <= 0.01:
+            self.is_muted = True
+        else:
+            self.is_muted = False
+            self._pre_mute_volume = self.volume
+            
+        self._update_volume_ui()
+
+    def _update_volume_ui(self):
+        """更新音量圖示與百分比文字"""
+        if self.is_muted or self.volume <= 0.01:
+            icon = "🔇"
+            text_str = "靜音"
+        elif self.volume <= 0.5:
+            icon = "🔉"
+            text_str = f"{int(self.volume * 100)}%"
+        else:
+            icon = "🔊"
+            text_str = f"{int(self.volume * 100)}%"
+            
+        if hasattr(self, 'btn_mute'):
+            self.btn_mute.configure(text=icon)
+        if hasattr(self, 'lbl_volume'):
+            self.lbl_volume.configure(text=text_str)
+
+    def browse_video(self):
+        filetypes = [
+            ("影片檔案", "*.mp4 *.mkv *.mov *.avi *.webm *.flv *.m4v *.ts *.mp3 *.wav"),
+            ("所有檔案", "*.*")
+        ]
+        path = filedialog.askopenfilename(title="選擇要對照的影音檔案", filetypes=filetypes)
+        if path:
+            self.load_video(path)
+
+    def _audio_callback(self, outdata, frames, time_info, status):
+        """sounddevice 串流輸出回呼，持續從音訊緩衝隊列填充音效取樣"""
+        filled = 0
+        while filled < frames:
+            try:
+                chunk = self._audio_queue.get_nowait()
+                chunk_len = len(chunk)
+                needed = frames - filled
+                if chunk_len <= needed:
+                    outdata[filled:filled+chunk_len] = chunk
+                    filled += chunk_len
+                else:
+                    outdata[filled:frames] = chunk[:needed]
+                    with self._audio_lock:
+                        self._audio_queue.queue.appendleft(chunk[needed:])
+                    filled = frames
+            except (queue.Empty, IndexError):
+                outdata[filled:] = 0
+                break
+
+        # 即時音量與完全靜音增益運算
+        vol = getattr(self, "volume", 1.0)
+        is_muted = getattr(self, "is_muted", False)
+        if is_muted or vol <= 0.001:
+            outdata.fill(0)
+        elif vol < 0.999 or vol > 1.001:
+            outdata[:filled] *= vol
+
+    def _audio_worker(self):
+        """背景音訊解碼執行緒：在播放狀態下維持隊列約 0.5 秒音訊取樣"""
+        while not self._stop_audio.is_set():
+            if not self.is_playing or not self.has_audio or not self.audio_container:
+                time.sleep(0.02)
+                continue
+            if self._audio_queue.qsize() >= 25:
+                time.sleep(0.02)
+                continue
+            try:
+                with self._audio_lock:
+                    if self._audio_gen is None:
+                        self._audio_gen = self.audio_container.decode(self.audio_stream)
+                    frame = next(self._audio_gen)
+                resampled = self.audio_resampler.resample(frame)
+                for r in resampled:
+                    arr = r.to_ndarray()
+                    if arr.ndim == 2:
+                        arr = arr.T
+                    elif arr.ndim == 1:
+                        arr = np.column_stack((arr, arr))
+                    self._audio_queue.put(arr, timeout=0.1)
+            except (StopIteration, Exception):
+                time.sleep(0.02)
+
+    def load_video(self, path):
+        if not path or not os.path.exists(path):
+            return False
+        if not AV_AVAILABLE or not PIL_AVAILABLE:
+            messagebox.showwarning("缺少套件", "系統未偵測到 PyAV 或 Pillow，無法啟用影音播放。")
+            return False
+            
+        self.close_video()
+        try:
+            # 1. 開啟視訊 Container
+            self.container = av.open(path)
+            if not self.container.streams.video:
+                messagebox.showinfo("提示", "所選檔案不包含視訊軌，僅支援時間軸同步。")
+                return False
+                
+            self.video_stream = self.container.streams.video[0]
+            self.fps = float(self.video_stream.average_rate) if self.video_stream.average_rate else 25.0
+            
+            if self.video_stream.duration:
+                self.duration_sec = float(self.video_stream.duration * self.video_stream.time_base)
+            elif self.container.duration:
+                self.duration_sec = float(self.container.duration / 1000000.0)
+            else:
+                self.duration_sec = 0.0
+                
+            # 2. 開啟獨立音訊 Container 與 sounddevice 串流 (若存在音軌且支援 SD)
+            self.has_audio = False
+            if SD_AVAILABLE and len(self.container.streams.audio) > 0:
+                try:
+                    self.audio_container = av.open(path)
+                    self.audio_stream = self.audio_container.streams.audio[0]
+                    # 使用 planar float32 (fltp)，確保解碼 ndarray 形狀為 (channels, samples)
+                    self.audio_resampler = av.AudioResampler(format='fltp', layout='stereo', rate=44100)
+                    self.sd_stream = sd.OutputStream(
+                        samplerate=44100, channels=2, dtype='float32',
+                        callback=self._audio_callback, blocksize=1024
+                    )
+                    self.has_audio = True
+                except Exception as e:
+                    print(f"Audio init warning: {e}")
+                    self.has_audio = False
+                    if self.audio_container:
+                        try: self.audio_container.close()
+                        except: pass
+                    self.audio_container = None
+                
+            self.video_path = path
+            self.has_video = True
+            
+            # 更新介面
+            fname = os.path.basename(path)
+            if len(fname) > 22:
+                short_name = fname[:10] + "..." + fname[-9:]
+            else:
+                short_name = fname
+            self.lbl_video_name.configure(text=short_name, text_color=("gray10", "gray90"))
+            
+            self.slider.configure(from_=0.0, to=max(0.1, self.duration_sec))
+            self.slider.set(0.0)
+            self.current_sec = 0.0
+            self._update_time_label()
+            
+            # 讀取首幀畫面
+            self.seek(0.0)
+            return True
+        except Exception as e:
+            print(f"Error opening video {path}: {e}")
+            self.close_video()
+            return False
+
+    def close_video(self):
+        self.pause()
+        # 關閉音訊串流與容器
+        if self.sd_stream:
+            try:
+                self.sd_stream.close()
+            except Exception:
+                pass
+            self.sd_stream = None
+        if self.audio_container:
+            try:
+                self.audio_container.close()
+            except Exception:
+                pass
+            self.audio_container = None
+            self.audio_stream = None
+            self.audio_resampler = None
+        self.has_audio = False
+        
+        # 關閉視訊容器
+        if self.container:
+            try:
+                self.container.close()
+            except Exception:
+                pass
+        self.container = None
+        self.video_stream = None
+        self._frame_gen = None
+        self.has_video = False
+        self.video_path = None
+        self.duration_sec = 0.0
+        self.current_sec = 0.0
+        self._latest_image = None
+        self._photo_image = None
+        
+        self.lbl_video_name.configure(text="未載入影片", text_color="gray")
+        self.slider.configure(from_=0.0, to=100.0)
+        self.slider.set(0.0)
+        self.lbl_time.configure(text="00:00:00 / 00:00:00")
+        self._render_canvas()
+
+    def _on_canvas_resize(self):
+        self._render_canvas()
+
+    def _render_canvas(self):
+        try:
+            if not self.winfo_exists():
+                return
+        except Exception:
+            return
+            
+        cw = self.canvas.winfo_width()
+        ch = self.canvas.winfo_height()
+        if cw <= 10 or ch <= 10:
+            cw, ch = 440, 260
+            
+        self.canvas.delete("all")
+        
+        if self.has_video and self._latest_image is not None:
+            try:
+                img_w, img_h = self._latest_image.size
+                scale = min(cw / img_w, ch / img_h)
+                new_w = max(1, int(img_w * scale))
+                new_h = max(1, int(img_h * scale))
+                
+                resized = self._latest_image.resize((new_w, new_h), Image.Resampling.BILINEAR)
+                self._photo_image = ImageTk.PhotoImage(resized, master=self.canvas)
+                self.canvas.create_image(cw // 2, ch // 2, image=self._photo_image, anchor="center")
+                return
+            except Exception as e:
+                print(f"Render canvas error: {e}")
+                
+        # 無影片或尚未渲染時顯示提示
+        tip_text = "未載入影音檔案\n\n點選上方「選擇影片」載入對應檔案\n點選左側字幕畫面將即時同步跳轉\n播放或快轉時字幕列表將自動定位" if not self.has_video else "載入中..."
+        self.canvas.create_text(
+            cw // 2, ch // 2, text=tip_text, 
+            fill="#718096", font=("Helvetica", 11), justify="center"
+        )
+
+    def _update_time_label(self):
+        cur_str = self._format_time(self.current_sec)
+        dur_str = self._format_time(self.duration_sec)
+        self.lbl_time.configure(text=f"{cur_str} / {dur_str}")
+
+    def _on_slider_press(self, event):
+        self._is_user_dragging = True
+
+    def _on_slider_release(self, event):
+        self._is_user_dragging = False
+        target = self.slider.get()
+        self.seek(target)
+
+    def _on_slider_move(self, val):
+        self.current_sec = float(val)
+        self._update_time_label()
+        if self._is_user_dragging:
+            # 使用 debounce 避免高頻拖曳造成解碼阻塞
+            if self._debounce_timer:
+                self.after_cancel(self._debounce_timer)
+            self._debounce_timer = self.after(80, lambda: self.seek(self.current_sec, notify_callback=True))
+
+    def seek_relative(self, delta_sec):
+        if not self.has_video: return
+        self.seek(self.current_sec + delta_sec)
+
+    def seek(self, target_sec, notify_callback=True):
+        if not self.has_video or not self.container or not self.video_stream:
+            return
+            
+        target_sec = max(0.0, min(self.duration_sec, float(target_sec)))
+        self.current_sec = target_sec
+        
+        # 1. 視訊 Seek 與首幀解碼
+        try:
+            pts = int(target_sec / self.video_stream.time_base)
+            self.container.seek(pts, stream=self.video_stream, backward=True)
+            self._frame_gen = self.container.decode(self.video_stream)
+            
+            # 依序讀取到達 target_sec 的首個幀
+            found_frame = None
+            for frame in self._frame_gen:
+                f_sec = float(frame.pts * self.video_stream.time_base)
+                found_frame = frame
+                if f_sec >= target_sec:
+                    break
+                    
+            if found_frame is not None:
+                self._latest_image = found_frame.to_image()
+                self._render_canvas()
+        except Exception as e:
+            print(f"Seek video error: {e}")
+            
+        # 2. 音訊 Seek 與緩衝隊列重設
+        if self.has_audio and self.audio_container and self.audio_stream:
+            try:
+                with self._audio_lock:
+                    while not self._audio_queue.empty():
+                        try: self._audio_queue.get_nowait()
+                        except: pass
+                    a_pts = int(target_sec / self.audio_stream.time_base)
+                    self.audio_container.seek(a_pts, stream=self.audio_stream, backward=True)
+                    self._audio_gen = self.audio_container.decode(self.audio_stream)
+                    # 丟棄早於 target_sec 的音訊
+                    for f in self._audio_gen:
+                        f_sec = float(f.pts * self.audio_stream.time_base)
+                        if f_sec >= target_sec - 0.05:
+                            if self.is_playing:
+                                resampled = self.audio_resampler.resample(f)
+                                for r in resampled:
+                                    arr = r.to_ndarray()
+                                    if arr.ndim == 2: arr = arr.T
+                                    elif arr.ndim == 1: arr = np.column_stack((arr, arr))
+                                    self._audio_queue.put(arr)
+                            break
+            except Exception as e:
+                print(f"Seek audio error: {e}")
+            
+        if not self._is_user_dragging:
+            self.slider.set(self.current_sec)
+        self._update_time_label()
+        
+        if self.is_playing:
+            self._play_start_wall = time.time()
+            self._play_start_media = self.current_sec
+            
+        if notify_callback and self.on_time_update:
+            try:
+                self.on_time_update(self.current_sec)
+            except Exception:
+                pass
+
+    def play(self):
+        if not self.has_video or not self.container:
+            return
+        if self.current_sec >= self.duration_sec - 0.1:
+            self.seek(0.0)
+            
+        self.is_playing = True
+        self.btn_play.configure(text="暫停 ⏸")
+        self._play_start_wall = time.time()
+        self._play_start_media = self.current_sec
+        
+        # 啟動音訊串流與解碼線程
+        if self.has_audio and self.sd_stream:
+            try:
+                self._stop_audio.clear()
+                with self._audio_lock:
+                    while not self._audio_queue.empty():
+                        try: self._audio_queue.get_nowait()
+                        except: pass
+                    a_pts = int(self.current_sec / self.audio_stream.time_base)
+                    self.audio_container.seek(a_pts, stream=self.audio_stream, backward=True)
+                    self._audio_gen = self.audio_container.decode(self.audio_stream)
+                    for f in self._audio_gen:
+                        f_sec = float(f.pts * self.audio_stream.time_base)
+                        if f_sec >= self.current_sec - 0.05:
+                            resampled = self.audio_resampler.resample(f)
+                            for r in resampled:
+                                arr = r.to_ndarray()
+                                if arr.ndim == 2: arr = arr.T
+                                elif arr.ndim == 1: arr = np.column_stack((arr, arr))
+                                self._audio_queue.put(arr)
+                            break
+                if self._audio_thread is None or not self._audio_thread.is_alive():
+                    self._audio_thread = threading.Thread(target=self._audio_worker, daemon=True)
+                    self._audio_thread.start()
+                self.sd_stream.start()
+            except Exception as e:
+                print(f"Error starting audio stream: {e}")
+                
+        self._render_loop()
+
+    def pause(self):
+        self.is_playing = False
+        if hasattr(self, 'btn_play') and self.btn_play.winfo_exists():
+            self.btn_play.configure(text="播放 ▶")
+            
+        # 停止音訊串流
+        if self.has_audio and self.sd_stream:
+            try:
+                self.sd_stream.stop()
+            except Exception:
+                pass
+        self._stop_audio.set()
+        
+        if self._play_timer:
+            try:
+                self.after_cancel(self._play_timer)
+            except Exception:
+                pass
+            self._play_timer = None
+
+    def toggle_play(self):
+        if self.is_playing:
+            self.pause()
+        else:
+            self.play()
+
+    def _render_loop(self):
+        if not self.is_playing or not self.has_video:
+            return
+            
+        elapsed = time.time() - self._play_start_wall
+        target_media = self._play_start_media + elapsed
+        
+        if target_media >= self.duration_sec:
+            self.seek(self.duration_sec)
+            self.pause()
+            return
+            
+        frame = None
+        if self._frame_gen is not None:
+            try:
+                while True:
+                    f = next(self._frame_gen)
+                    f_sec = float(f.pts * self.video_stream.time_base)
+                    frame = f
+                    if f_sec >= target_media:
+                        break
+            except StopIteration:
+                self.seek(self.duration_sec)
+                self.pause()
+                return
+            except Exception:
+                pass
+                
+        if frame is not None:
+            self._latest_image = frame.to_image()
+            self._render_canvas()
+            
+        self.current_sec = target_media
+        if not self._is_user_dragging:
+            self.slider.set(self.current_sec)
+        self._update_time_label()
+        
+        if self.on_time_update:
+            try:
+                self.on_time_update(self.current_sec)
+            except Exception:
+                pass
+                
+        # 約 25fps ~ 40ms 更新一次視訊幀
+        self._play_timer = self.after(35, self._render_loop)
+
 class SubtitleEditorWindow(ctk.CTkToplevel):
     """
     全新專業高效字幕校對編輯器：
@@ -71,14 +732,15 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
     4. 即時關鍵字搜尋：輸入關鍵字立即過濾目標條目並跳轉定位。
     5. 雙模式自由切換：支援「結構化表格模式」與「純文字原始碼模式」切換。
     """
-    def __init__(self, parent, file_path):
+    def __init__(self, parent, file_path, video_path=None):
         super().__init__(parent)
         self.title(f"快速校對編輯 - {os.path.basename(file_path)}")
-        self.geometry("920x720")
-        self.minsize(800, 600)
+        self.geometry("1240x740")
+        self.minsize(750, 480)
+        self.resizable(True, True)
         
+        # 保留模態焦點鎖定，不使用 transient(parent) 以便 Windows/Linux 完整保留標題列最大化與最小化按鈕
         if platform.system() != "Darwin":
-            self.transient(parent)
             self.grab_set()
             
         # 套用 APP 圖標
@@ -90,13 +752,26 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
                 print(f"Failed to set editor window icon: {e}")
         
         self.file_path = file_path
+        self.video_path = video_path
         self.is_txt = file_path.lower().endswith(".txt")
         self.is_vtt = file_path.lower().endswith(".vtt")
         
+        # 尋找同目錄同名影片
+        if not self.video_path and not self.is_txt:
+            base_no_ext, _ = os.path.splitext(file_path)
+            for ext in [".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".m4v", ".ts", ".mp3", ".wav"]:
+                cand = base_no_ext + ext
+                if os.path.exists(cand):
+                    self.video_path = cand
+                    break
+                    
         self.items = []
         self.filtered_indices = []
         self.current_selected_idx = None
         self.is_raw_mode = False
+        self._is_seeking_from_sub = False
+        self._is_syncing_from_video = False
+        self._video_visible = True
         
         # 讀取並解析
         if self.is_txt:
@@ -113,10 +788,15 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             self._populate_treeview()
             if self.items:
                 self.after(100, lambda: self._select_tree_row(0))
+            if self.video_path:
+                self.after(250, lambda: self.video_player.load_video(self.video_path))
                 
-        # 綁定快捷鍵
+        # 綁定快捷鍵與視窗狀態監聽
         self.bind("<Alt-Up>", lambda e: self._navigate_item(-1))
         self.bind("<Alt-Down>", lambda e: self._navigate_item(1))
+        self.bind("<space>", self._on_space_key)
+        self.bind("<F11>", lambda e: self._toggle_maximize())
+        self.bind("<Configure>", self._on_window_configure)
 
     # --- 輔助時間解析與格式化 ---
     @staticmethod
@@ -231,7 +911,15 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         )
         self.lbl_stats.pack(side="left", padx=10)
         
-        # 右側模式切換按鈕
+        # 右側控制按鈕 (視窗最大化/還原、模式與預覽切換)
+        self.btn_maximize = ctk.CTkButton(
+            header_sub, text="最大化 🗖", width=85, height=28,
+            fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
+            text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
+            font=ctk.CTkFont(size=12), command=self._toggle_maximize
+        )
+        self.btn_maximize.pack(side="right")
+        
         if not self.is_txt:
             self.btn_toggle_mode = ctk.CTkButton(
                 header_sub, text="切換至全文原始碼模式", width=150, height=28,
@@ -239,7 +927,15 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
                 text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
                 font=ctk.CTkFont(size=12, weight="bold"), command=self._toggle_raw_mode
             )
-            self.btn_toggle_mode.pack(side="right")
+            self.btn_toggle_mode.pack(side="right", padx=(0, 8))
+            
+            self.btn_toggle_video = ctk.CTkButton(
+                header_sub, text="收合影片預覽", width=105, height=28,
+                fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
+                text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
+                font=ctk.CTkFont(size=12), command=self._toggle_video_preview
+            )
+            self.btn_toggle_video.pack(side="right", padx=(0, 8))
             
         # 搜尋過濾工具列 (僅在表格模式下顯示)
         if not self.is_txt:
@@ -277,12 +973,18 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             self.txt_editor.pack(fill="both", expand=True)
             self.txt_editor.insert("0.0", self.raw_content)
         else:
-            # 結構化模式主容器
+            # 結構化模式主容器 (支援左右自由拖曳調整比例之 PanedWindow 分割佈局)
             self.structured_frame = ctk.CTkFrame(self.main_container, fg_color="transparent")
             self.structured_frame.pack(fill="both", expand=True)
             
-            # 1. 上半部：高效 Treeview 表格
-            self.tree_container = ctk.CTkFrame(self.structured_frame)
+            self.paned_window = ttk.PanedWindow(self.structured_frame, orient="horizontal")
+            self.paned_window.pack(fill="both", expand=True)
+            
+            # --- 左側：字幕列表與編輯工作區 ---
+            self.sub_frame = ctk.CTkFrame(self.paned_window, fg_color="transparent")
+            
+            # 1. 左側上半部：高效 Treeview 表格
+            self.tree_container = ctk.CTkFrame(self.sub_frame)
             self.tree_container.pack(fill="both", expand=True, pady=(0, 10))
             
             columns = ("idx", "start", "end", "text")
@@ -293,10 +995,10 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             self.tree.heading("end", text="結束時間", anchor="center")
             self.tree.heading("text", text="字幕內容 (單擊選取直接校對)", anchor="w")
             
-            self.tree.column("idx", width=55, minwidth=40, anchor="center")
-            self.tree.column("start", width=120, minwidth=90, anchor="center")
-            self.tree.column("end", width=120, minwidth=90, anchor="center")
-            self.tree.column("text", width=580, minwidth=200, anchor="w")
+            self.tree.column("idx", width=50, minwidth=40, anchor="center")
+            self.tree.column("start", width=110, minwidth=85, anchor="center")
+            self.tree.column("end", width=110, minwidth=85, anchor="center")
+            self.tree.column("text", width=380, minwidth=180, anchor="w")
             
             vsb = ttk.Scrollbar(self.tree_container, orient="vertical", command=self.tree.yview)
             self.tree.configure(yscrollcommand=vsb.set)
@@ -309,8 +1011,8 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             self.tree.bind("<KeyRelease-Up>", self._on_tree_select)
             self.tree.bind("<KeyRelease-Down>", self._on_tree_select)
             
-            # 2. 下半部：即時詳細編輯工作面板 (Dock Panel)
-            self.editor_dock = ctk.CTkFrame(self.structured_frame)
+            # 2. 左側下半部：即時詳細編輯工作面板 (Dock Panel)
+            self.editor_dock = ctk.CTkFrame(self.sub_frame)
             self.editor_dock.pack(fill="x")
             
             # 編輯列 1：時間軸調整
@@ -323,26 +1025,26 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             self.lbl_edit_item_idx.pack(side="left")
             
             ctk.CTkLabel(time_row, text="開始時間:", font=ctk.CTkFont(size=12, weight="bold"), text_color=("gray10", "gray90")).pack(side="left", padx=(5, 3))
-            self.entry_start = ctk.CTkEntry(time_row, width=115, height=28, font=ctk.CTkFont(family="Consolas", size=12))
+            self.entry_start = ctk.CTkEntry(time_row, width=110, height=28, font=ctk.CTkFont(family="Consolas", size=12))
             self.entry_start.pack(side="left", padx=2)
             self.entry_start.bind("<KeyRelease>", lambda e: self._on_time_edit())
             
             ctk.CTkLabel(time_row, text="結束時間:", font=ctk.CTkFont(size=12, weight="bold"), text_color=("gray10", "gray90")).pack(side="left", padx=(10, 3))
-            self.entry_end = ctk.CTkEntry(time_row, width=115, height=28, font=ctk.CTkFont(family="Consolas", size=12))
+            self.entry_end = ctk.CTkEntry(time_row, width=110, height=28, font=ctk.CTkFont(family="Consolas", size=12))
             self.entry_end.pack(side="left", padx=2)
             self.entry_end.bind("<KeyRelease>", lambda e: self._on_time_edit())
             
             # 時間微調按鈕 (具備清晰底色與邊框)
             ctk.CTkButton(
-                time_row, text="-0.5s", width=52, height=28,
+                time_row, text="-0.5s", width=50, height=28,
                 fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
                 text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
                 font=ctk.CTkFont(size=11, weight="bold"),
                 command=lambda: self._shift_current_time(-500)
-            ).pack(side="left", padx=(12, 2))
+            ).pack(side="left", padx=(10, 2))
             
             ctk.CTkButton(
-                time_row, text="+0.5s", width=52, height=28,
+                time_row, text="+0.5s", width=50, height=28,
                 fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
                 text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
                 font=ctk.CTkFont(size=11, weight="bold"),
@@ -371,6 +1073,15 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             self.txt_item_editor = ctk.CTkTextbox(text_row, height=65, font=ctk.CTkFont(size=13))
             self.txt_item_editor.pack(fill="x", expand=True)
             self.txt_item_editor.bind("<KeyRelease>", lambda e: self._on_text_edit())
+            
+            # --- 右側：影片同步播放與預覽視圖 (寬度可由中間分割條自由拖曳調整) ---
+            self.video_pane = ctk.CTkFrame(self.paned_window, fg_color="transparent")
+            self.video_player = VideoPlayerWidget(self.video_pane, on_time_update=self._on_video_time_update)
+            self.video_player.pack(fill="both", expand=True)
+            
+            # 將左側字幕與右側影片面板加入水平分割窗
+            self.paned_window.add(self.sub_frame, weight=6)
+            self.paned_window.add(self.video_pane, weight=4)
             
             # 3. 原始碼模式容器 (預設隱藏)
             self.raw_frame = ctk.CTkFrame(self.main_container, fg_color="transparent")
@@ -497,6 +1208,115 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         
         self.txt_item_editor.delete("0.0", "end")
         self.txt_item_editor.insert("0.0", item["text"])
+        
+        # 字幕選取同步驅動影片跳轉
+        if hasattr(self, 'video_player') and self.video_player.has_video and not getattr(self, '_is_syncing_from_video', False):
+            self._is_seeking_from_sub = True
+            start_ms = self._parse_time_ms(item["start"])
+            self.video_player.seek(start_ms / 1000.0, notify_callback=False)
+            self.after(150, lambda: setattr(self, '_is_seeking_from_sub', False))
+
+    def _load_item_to_editor_silent(self, idx):
+        """僅更新下方編輯器文字與時間，不向影片發送跳轉請求 (避免循環觸發)"""
+        if idx < 0 or idx >= len(self.items):
+            return
+        self.current_selected_idx = idx
+        item = self.items[idx]
+        
+        self.lbl_edit_item_idx.configure(text=f"[第 {item['index']} 筆]")
+        self.entry_start.delete(0, "end")
+        self.entry_start.insert(0, item["start"])
+        self.entry_end.delete(0, "end")
+        self.entry_end.insert(0, item["end"])
+        self.txt_item_editor.delete("0.0", "end")
+        self.txt_item_editor.insert("0.0", item["text"])
+
+    def _on_video_time_update(self, current_sec):
+        """影片播放或快轉倒轉時，自動定位並高亮選取當前時間所屬的字幕條目"""
+        if getattr(self, '_is_seeking_from_sub', False) or not self.items:
+            return
+            
+        current_ms = int(current_sec * 1000)
+        matched_idx = self._find_subtitle_at_time(current_ms)
+        
+        if matched_idx is not None and matched_idx != self.current_selected_idx:
+            iid = str(matched_idx)
+            if self.tree.exists(iid):
+                self._is_syncing_from_video = True
+                self.tree.selection_set(iid)
+                self.tree.see(iid)
+                
+                # 若使用者正在下方打字或調整時間，避免打斷輸入焦點
+                try:
+                    focused = self.focus_get()
+                    if focused not in (self.txt_item_editor, self.entry_start, self.entry_end):
+                        self._load_item_to_editor_silent(matched_idx)
+                    else:
+                        self.current_selected_idx = matched_idx
+                        self.lbl_edit_item_idx.configure(text=f"[第 {self.items[matched_idx]['index']} 筆]")
+                except Exception:
+                    self._load_item_to_editor_silent(matched_idx)
+                    
+                self.after(80, lambda: setattr(self, '_is_syncing_from_video', False))
+
+    def _find_subtitle_at_time(self, current_ms):
+        """比對給定時間毫秒落在哪個字幕區間"""
+        # 優先比對當前條目是否仍符合 (通常大部分連續播放幀都在當前條目內)
+        if self.current_selected_idx is not None and 0 <= self.current_selected_idx < len(self.items):
+            cur = self.items[self.current_selected_idx]
+            s_ms = self._parse_time_ms(cur["start"])
+            e_ms = self._parse_time_ms(cur["end"])
+            if s_ms <= current_ms <= e_ms:
+                return self.current_selected_idx
+
+        # 全局遍歷搜尋
+        for idx, item in enumerate(self.items):
+            s_ms = self._parse_time_ms(item["start"])
+            e_ms = self._parse_time_ms(item["end"])
+            if s_ms <= current_ms <= e_ms:
+                return idx
+            if s_ms > current_ms:
+                break
+        return None
+
+    def _toggle_video_preview(self):
+        """一鍵收合或展開右側影片預覽面板"""
+        if self._video_visible:
+            if hasattr(self, 'paned_window'):
+                try:
+                    self.paned_window.forget(self.video_pane)
+                except Exception:
+                    pass
+            elif hasattr(self, 'video_pane'):
+                self.video_pane.pack_forget()
+            if hasattr(self, 'btn_toggle_video'):
+                self.btn_toggle_video.configure(text="展開影片預覽")
+            self._video_visible = False
+        else:
+            if hasattr(self, 'paned_window'):
+                try:
+                    self.paned_window.add(self.video_pane, weight=4)
+                except Exception:
+                    pass
+            elif hasattr(self, 'video_pane'):
+                self.video_pane.pack(side="right", fill="both", expand=False)
+            if hasattr(self, 'btn_toggle_video'):
+                self.btn_toggle_video.configure(text="收合影片預覽")
+            self._video_visible = True
+
+    def _on_space_key(self, event):
+        """按下空白鍵切換影片播放/暫停 (若在文字輸入框則正常輸入空格)"""
+        try:
+            focused = self.focus_get()
+            f_str = str(focused).lower()
+            if "entry" in f_str or "text" in f_str:
+                return
+        except Exception:
+            pass
+            
+        if hasattr(self, 'video_player') and self.video_player.has_video:
+            self.video_player.toggle_play()
+            return "break"
 
     def _on_text_edit(self):
         """文字輸入時即時同步至記憶體與上方表格，零延遲"""
@@ -636,6 +1456,59 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             self.destroy()
         except Exception as e:
             messagebox.showerror("儲存失敗", f"儲存檔案時發生錯誤:\n{e}", parent=self)
+
+    def _toggle_maximize(self):
+        """切換視窗最大化與一般尺寸狀態"""
+        try:
+            is_zoomed = False
+            try:
+                is_zoomed = (self.state() == "zoomed")
+            except Exception:
+                pass
+                
+            if is_zoomed:
+                try:
+                    self.state("normal")
+                except Exception:
+                    self.wm_state("normal")
+                if hasattr(self, "btn_maximize"):
+                    self.btn_maximize.configure(text="最大化 🗖")
+            else:
+                try:
+                    self.state("zoomed")
+                except Exception:
+                    try:
+                        self.attributes("-zoomed", True)
+                    except Exception:
+                        self.wm_state("zoomed")
+                if hasattr(self, "btn_maximize"):
+                    self.btn_maximize.configure(text="還原 🗗")
+        except Exception as e:
+            print(f"Toggle maximize warning: {e}")
+
+    def _on_window_configure(self, event=None):
+        """監聽視窗大小變更，當使用者透過系統標題列或快捷鍵最大化/還原時同步按鈕狀態"""
+        if event and getattr(event, "widget", None) == self:
+            try:
+                is_zoomed = (self.state() == "zoomed")
+                target_text = "還原 🗗" if is_zoomed else "最大化 🗖"
+                if hasattr(self, "btn_maximize") and self.btn_maximize.cget("text") != target_text:
+                    self.btn_maximize.configure(text=target_text)
+            except Exception:
+                pass
+
+    def destroy(self):
+        """關閉視窗時安全釋放影音播放器資源與焦點鎖定"""
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+        if hasattr(self, 'video_player'):
+            try:
+                self.video_player.close_video()
+            except Exception:
+                pass
+        super().destroy()
 
 
 class SmoothProgressBar(ctk.CTkProgressBar):
@@ -1816,7 +2689,25 @@ class App(BaseClass):
 
                 if version_to_tuple(latest_version) > version_to_tuple(current_version):
                     release_url = data.get("html_url") or f"https://github.com/{repo}/releases"
-                    body = data.get("body") or "無更新說明"
+                    body = (data.get("body") or "").strip()
+                    tag_name = data.get("tag_name") or f"v{latest_version}"
+                    
+                    # 智慧 Fallback：若 GitHub Release 未填寫 description (body 為空/None)
+                    # 自動透過 Commit API 取得該版本對應之 Commit Message (使用者撰寫之詳細更新說明)
+                    if not body:
+                        try:
+                            commit_url = f"https://api.github.com/repos/{repo}/commits/{tag_name}"
+                            c_req = urllib.request.Request(commit_url, headers={'User-Agent': 'SubtitleTranscriber-Updater'})
+                            with urllib.request.urlopen(c_req, timeout=5) as c_resp:
+                                c_data = json.loads(c_resp.read().decode())
+                                c_msg = (c_data.get("commit", {}).get("message") or "").strip()
+                                if c_msg:
+                                    body = c_msg
+                        except Exception as e_commit:
+                            print(f"Fallback fetch commit message warning: {e_commit}")
+                            
+                    if not body:
+                        body = "無更新說明"
                     
                     # 彈出提示
                     target_parent = getattr(self, 'about_window', self)
@@ -1840,9 +2731,13 @@ class App(BaseClass):
     def show_update_dialog(self, latest_version, url, body, parent=None):
         """顯示更新提示視窗"""
         parent = parent if parent else self
-        # 確保 body 為字串，避免 NoneType 錯誤 (例如 GitHub Release 無內文時)
-        safe_body = body if body else "無更新說明"
-        msg = f"發現新版本：v{latest_version}\n目前版本：v{get_version()}\n\n是否要前往下載新版本？\n\n更新說明：\n{safe_body[:200]}{'...' if len(safe_body) > 200 else ''}"
+        safe_body = body.strip() if body else "無更新說明"
+        if len(safe_body) > 600:
+            display_body = safe_body[:600] + "\n..."
+        else:
+            display_body = safe_body
+            
+        msg = f"發現新版本：v{latest_version}\n目前版本：v{get_version()}\n\n是否要前往下載新版本？\n\n【更新說明】\n{display_body}"
         if messagebox.askyesno("軟體更新提示", msg, parent=parent):
             webbrowser.open_new(url)
 
@@ -1940,6 +2835,9 @@ class App(BaseClass):
             ("mlx-whisper", "MIT License", "https://github.com/ml-explore/mlx-examples/tree/main/whisper"),
             ("CustomTkinter", "MIT License", "https://github.com/TomSchimansky/CustomTkinter"),
             ("tkinterdnd2", "MIT License", "https://github.com/pmgagne/tkinterdnd2"),
+            ("PyAV (av)", "BSD-2-Clause License", "https://github.com/PyAV-Org/PyAV"),
+            ("Pillow", "HPND License", "https://github.com/python-pillow/Pillow"),
+            ("sounddevice", "MIT License", "https://github.com/spatialaudio/python-sounddevice"),
             ("OpenCC", "Apache-2.0 License", "https://github.com/BYVoid/OpenCC"),
             ("tomli", "MIT License", "https://github.com/hukkin/tomli"),
             ("huggingface-hub", "Apache-2.0 License", "https://github.com/huggingface/huggingface_hub")
@@ -1975,8 +2873,13 @@ class App(BaseClass):
         # Value is float between 0.0 and 1.0
         def _update():
             try:
+                pct = max(0.0, min(100.0, float(value) * 100.0))
                 if hasattr(self, 'progressbar') and self.progressbar.winfo_exists():
+                    if hasattr(self.progressbar, 'stop'):
+                        self.progressbar.stop()
                     self.progressbar.set(value)
+                if hasattr(self, 'progress_label') and self.progress_label.winfo_exists():
+                    self.progress_label.configure(text=f"{pct:.1f}%")
             except Exception:
                 pass
         try:
