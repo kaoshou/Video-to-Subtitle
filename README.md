@@ -12,6 +12,17 @@
 
 ![主操作介面](screenshot_main.png)
 
+## 🚀 v2.7.1 更新說明
+本版本針對校對效率、操作流暢度與 macOS 跨平台環境相容性進行全面升級：
+* **影片即時字幕疊加預覽 (CC / Subtitle Overlay)**：右側影片播放器畫面底部即時繪製高對比度字幕（深黑底塊 + 清晰白字，多行自動居中），具備專屬 CC 開關，左側文字編輯時即時同步更新。
+* **字幕一鍵分割 (Ctrl+K) 與合併 (Ctrl+J)**：
+  * **拆分 (Ctrl+K)**：在文字游標處一鍵拆為兩條，時間軸自動依前後字數比例精確切分，自動聚焦下一條。
+  * **合併 (Ctrl+J)**：將當前條目與下一條字幕文字與時間軸一鍵無縫接合，刪除多餘序號並重新編號。
+* **播放器多倍速播放切換**：新增播放速度切換按鈕，支援 `1.0x` ➔ `1.25x` ➔ `1.5x` ➔ `2.0x` ➔ `0.75x` 循環切換，視訊時鐘與音訊取樣率自適應同步變速。
+* **字幕點選 0 毫秒極速響應（消除頓挫感）**：清理 Treeview 冗餘事件監聽，杜絕重複重繪，並對影片跳轉（Seek）加入 35ms 輕量防抖延遲，點選表格與文字載入絲滑零延遲。
+* **macOS MLX 模式 FFmpeg 自動補齊與友善引導**：自動將 Homebrew 路徑（`/opt/homebrew/bin`、`/usr/local/bin` 等）注入系統 PATH，徹底解決 macOS GUI 應用找不到 ffmpeg (`[Error 2] No such file or directory`) 的問題，並於缺少時跳出直觀安裝指引。
+* **macOS SSL 根憑證驗證容錯降級**：全域配置 CA 憑證路徑並實作 `safe_urlopen` 容錯機制，徹底修復點選檢查更新時出現 `[SSL: CERTIFICATE_VERIFY_FAILED]` 憑證缺失錯誤。
+
 ## 🚀 v2.7.0 更新說明
 本版本帶來重大的影音同步校對體驗升級與多項細節優化：
 * **全新影音同步播放器**：字幕編輯器原生整合 PyAV 與 sounddevice，支援選取字幕跳轉對應影片畫面、播放時字幕自動滾動定位，影音幀毫秒級 A/V 同步。
@@ -62,7 +73,7 @@
   3. **選擇運算單元與格式**：
       - **運算單元**：Windows 可選 cpu / cuda；macOS 上可選 cpu / mlx (Apple Silicon GPU，將自動啟用 MLX 框架加速)。
           - 若要在 Windows 使用 CUDA 加速，需安裝對應版本的 [cuDNN](https://developer.nvidia.com/cudnn) 。詳情請參閱 [CTranslate2 文件](https://opennmt.net/CTranslate2/installation.html)。
-          - 若要在 Mac 使用 MLX 加速，請先執行 `pip install mlx-whisper` 安裝套件。
+          - 若要在 Mac 使用 MLX 加速，請確保已安裝 FFmpeg（執行 `brew install ffmpeg`）與 `mlx-whisper` 套件（執行 `pip install mlx-whisper`）。
       - **輸出格式**：可選擇 SRT, VTT, TXT, TSV 或 JSON。
       - **進階功能**：可視需求勾選「強制繁體中文」(自動轉台灣繁體)或「翻譯成英文」。
   4. **開始生成**：點選「開始轉錄」按鈕，程式將自動處理清單中的所有檔案。底部進度條會顯示當前檔案的處理進度。

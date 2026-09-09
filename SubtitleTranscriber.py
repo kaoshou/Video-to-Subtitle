@@ -10,7 +10,65 @@ import time
 import json
 
 # Import core logic from transcriber.py
-from transcriber import SubtitleTranscriber, check_model_downloaded, download_model_with_progress, MODEL_INFO, CorruptedModelError, clear_model_cache
+from transcriber import (
+    SubtitleTranscriber, check_model_downloaded, download_model_with_progress,
+    MODEL_INFO, CorruptedModelError, clear_model_cache,
+    ensure_ffmpeg_path, check_ffmpeg_available
+)
+
+# 啟動時確保系統環境變數 PATH 包含 FFmpeg 常用路徑 (特別是 macOS Homebrew /opt/homebrew/bin)
+ensure_ffmpeg_path()
+
+def setup_ssl_certificates():
+    """
+    全域配置 SSL 根憑證路徑，特別解決 macOS 官方 Python 未執行 Install Certificates.command
+    導致的 [SSL: CERTIFICATE_VERIFY_FAILED] 錯誤。
+    """
+    try:
+        import certifi
+        ca_path = certifi.where()
+        if ca_path and os.path.exists(ca_path):
+            os.environ.setdefault("SSL_CERT_FILE", ca_path)
+            os.environ.setdefault("REQUESTS_CA_BUNDLE", ca_path)
+    except Exception:
+        pass
+        
+    if platform.system() == "Darwin":
+        for cand in ["/etc/ssl/cert.pem", "/opt/homebrew/etc/ca-certificates/cert.pem", "/usr/local/etc/openssl/cert.pem"]:
+            if os.path.exists(cand):
+                os.environ.setdefault("SSL_CERT_FILE", cand)
+                break
+
+setup_ssl_certificates()
+
+def safe_urlopen(req, timeout=5):
+    """
+    安全發送 HTTP/HTTPS 請求，針對 macOS 憑證缺失環境提供智慧容錯降級。
+    """
+    import ssl
+    import urllib.request
+    
+    ctx = None
+    try:
+        import certifi
+        ctx = ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        try:
+            ctx = ssl.create_default_context()
+        except Exception:
+            ctx = None
+
+    try:
+        return urllib.request.urlopen(req, timeout=timeout, context=ctx)
+    except Exception as e:
+        err_str = str(e).lower()
+        if "certificate_verify_failed" in err_str or "certificate" in err_str or "ssl" in err_str:
+            try:
+                unverified_ctx = ssl._create_unverified_context()
+                return urllib.request.urlopen(req, timeout=timeout, context=unverified_ctx)
+            except Exception:
+                raise e
+        raise e
 
 # --- 嘗試匯入拖曳功能庫 (tkinterdnd2) ---
 try:
@@ -66,7 +124,7 @@ def get_version():
     except Exception as e:
         print(f"DEBUG: Failed to load version from pyproject.toml: {e}")
     
-    return "2.5.1" # Fallback
+    return "2.7.1" # Fallback
 
 # --- 設定外觀 ---
 ctk.set_appearance_mode("System")  # Modes: "System" (standard), "Dark", "Light"
@@ -134,6 +192,13 @@ class VideoPlayerWidget(ctk.CTkFrame):
         self.is_muted = False
         self._pre_mute_volume = 1.0
         
+        # 多倍速播放 (0.75x, 1.0x, 1.25x, 1.5x, 2.0x)
+        self.playback_speed = 1.0
+        
+        # 即時字幕疊加預覽 (CC / Subtitle Overlay)
+        self.show_subtitle_overlay = True
+        self.current_subtitle_text = ""
+        
         self._build_ui()
 
     def _build_ui(self):
@@ -200,40 +265,58 @@ class VideoPlayerWidget(ctk.CTkFrame):
         btn_row.pack(fill="x")
         
         self.btn_prev5 = ctk.CTkButton(
-            btn_row, text="◀◀ -5s", width=62, height=26,
+            btn_row, text="◀◀ -5s", width=55, height=26,
             fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
             text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
             font=ctk.CTkFont(size=11), command=lambda: self.seek_relative(-5.0)
         )
-        self.btn_prev5.pack(side="left", padx=(0, 4))
+        self.btn_prev5.pack(side="left", padx=(0, 3))
         
         self.btn_play = ctk.CTkButton(
-            btn_row, text="播放 ▶", width=75, height=26,
+            btn_row, text="播放 ▶", width=68, height=26,
             fg_color="#1f538d", hover_color="#14375e",
             text_color="white", font=ctk.CTkFont(size=11, weight="bold"),
             command=self.toggle_play
         )
-        self.btn_play.pack(side="left", padx=4)
+        self.btn_play.pack(side="left", padx=3)
         
         self.btn_next5 = ctk.CTkButton(
-            btn_row, text="+5s ▶▶", width=62, height=26,
+            btn_row, text="+5s ▶▶", width=55, height=26,
             fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
             text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
             font=ctk.CTkFont(size=11), command=lambda: self.seek_relative(5.0)
         )
-        self.btn_next5.pack(side="left", padx=(4, 0))
+        self.btn_next5.pack(side="left", padx=(0, 4))
+        
+        # 多倍速切換按鈕 (1.0x, 1.25x, 1.5x, 2.0x, 0.75x)
+        self.btn_speed = ctk.CTkButton(
+            btn_row, text="1.0x", width=42, height=26,
+            fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
+            text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
+            font=ctk.CTkFont(size=11, weight="bold"), command=self._cycle_speed
+        )
+        self.btn_speed.pack(side="left", padx=(0, 4))
+        
+        # 字幕疊加預覽開關按鈕 (CC)
+        self.btn_cc = ctk.CTkButton(
+            btn_row, text="CC", width=36, height=26,
+            fg_color="#1f538d", hover_color="#14375e",
+            text_color="white", border_width=1, border_color=("#94a3b8", "#475569"),
+            font=ctk.CTkFont(size=11, weight="bold"), command=self.toggle_subtitle_overlay
+        )
+        self.btn_cc.pack(side="left", padx=(0, 4))
         
         # 音量控制區 (靜音切換 + 音量滑桿 + 百分比)
         self.btn_mute = ctk.CTkButton(
-            btn_row, text="🔊", width=32, height=26,
+            btn_row, text="🔊", width=30, height=26,
             fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
             text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
             font=ctk.CTkFont(size=12), command=self._toggle_mute
         )
-        self.btn_mute.pack(side="left", padx=(10, 4))
+        self.btn_mute.pack(side="left", padx=(2, 3))
         
         self.slider_volume = ctk.CTkSlider(
-            btn_row, from_=0.0, to=1.0, width=65, height=14,
+            btn_row, from_=0.0, to=1.0, width=58, height=14,
             command=self._on_volume_slider
         )
         self.slider_volume.set(1.0)
@@ -241,12 +324,12 @@ class VideoPlayerWidget(ctk.CTkFrame):
         
         self.lbl_volume = ctk.CTkLabel(
             btn_row, text="100%", font=ctk.CTkFont(family="Consolas", size=10),
-            width=36, anchor="w", text_color="gray"
+            width=32, anchor="w", text_color="gray"
         )
         self.lbl_volume.pack(side="left", padx=(2, 0))
         
         self.lbl_hotkey_tip = ctk.CTkLabel(
-            btn_row, text="[點擊畫面或按空白鍵播放/暫停]",
+            btn_row, text="[點擊畫面或空白鍵播放]",
             font=ctk.CTkFont(size=10), text_color="gray"
         )
         self.lbl_hotkey_tip.pack(side="right")
@@ -309,6 +392,82 @@ class VideoPlayerWidget(ctk.CTkFrame):
             self.btn_mute.configure(text=icon)
         if hasattr(self, 'lbl_volume'):
             self.lbl_volume.configure(text=text_str)
+
+    def _cycle_speed(self):
+        """循環切換播放倍速：1.0x -> 1.25x -> 1.5x -> 2.0x -> 0.75x -> 1.0x"""
+        speeds = [1.0, 1.25, 1.5, 2.0, 0.75]
+        try:
+            curr_idx = speeds.index(self.playback_speed)
+            next_idx = (curr_idx + 1) % len(speeds)
+        except ValueError:
+            next_idx = 0
+        self.set_speed(speeds[next_idx])
+
+    def set_speed(self, speed):
+        """設定播放倍速並同步音訊輸出取樣率"""
+        speed = float(speed)
+        if self.is_playing:
+            # 結算當前播放點，重設時鐘基準點避免時間突變
+            self._play_start_media = self.current_sec
+            self._play_start_wall = time.time()
+        self.playback_speed = speed
+        if hasattr(self, 'btn_speed'):
+            self.btn_speed.configure(text=f"{self.playback_speed}x")
+        if self.has_audio:
+            self._recreate_audio_stream_for_speed()
+
+    def _recreate_audio_stream_for_speed(self):
+        """依倍速重建 sounddevice 串流輸出，實現音訊變速與視訊同步"""
+        if not self.has_audio or not SD_AVAILABLE or not self.audio_container:
+            return
+        target_sr = int(44100 * self.playback_speed)
+        was_playing = self.is_playing
+        try:
+            if self.sd_stream:
+                try:
+                    self.sd_stream.stop()
+                    self.sd_stream.close()
+                except Exception:
+                    pass
+            self.sd_stream = sd.OutputStream(
+                samplerate=target_sr, channels=2, dtype='float32',
+                callback=self._audio_callback, blocksize=1024
+            )
+            if was_playing:
+                self.sd_stream.start()
+        except Exception as e:
+            print(f"Recreate audio stream for speed error: {e}")
+            try:
+                self.sd_stream = sd.OutputStream(
+                    samplerate=44100, channels=2, dtype='float32',
+                    callback=self._audio_callback, blocksize=1024
+                )
+                if was_playing:
+                    self.sd_stream.start()
+            except Exception:
+                pass
+
+    def toggle_subtitle_overlay(self):
+        """一鍵切換影片畫面字幕疊加預覽 (CC)"""
+        self.show_subtitle_overlay = not self.show_subtitle_overlay
+        if hasattr(self, 'btn_cc'):
+            if self.show_subtitle_overlay:
+                self.btn_cc.configure(
+                    fg_color="#1f538d", hover_color="#14375e", text_color="white"
+                )
+            else:
+                self.btn_cc.configure(
+                    fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
+                    text_color=("#0f172a", "#f8fafc")
+                )
+        self._render_canvas()
+
+    def set_overlay_text(self, text):
+        """更新當前疊加在影片畫面上的字幕文字並重新渲染"""
+        new_t = (text or "").strip()
+        if new_t != self.current_subtitle_text:
+            self.current_subtitle_text = new_t
+            self._render_canvas()
 
     def browse_video(self):
         filetypes = [
@@ -413,8 +572,9 @@ class VideoPlayerWidget(ctk.CTkFrame):
                     self.audio_stream = self.audio_container.streams.audio[0]
                     # 使用 planar float32 (fltp)，確保解碼 ndarray 形狀為 (channels, samples)
                     self.audio_resampler = av.AudioResampler(format='fltp', layout='stereo', rate=44100)
+                    target_sr = int(44100 * getattr(self, 'playback_speed', 1.0))
                     self.sd_stream = sd.OutputStream(
-                        samplerate=44100, channels=2, dtype='float32',
+                        samplerate=target_sr, channels=2, dtype='float32',
                         callback=self._audio_callback, blocksize=1024
                     )
                     self.has_audio = True
@@ -518,6 +678,10 @@ class VideoPlayerWidget(ctk.CTkFrame):
                 resized = self._latest_image.resize((new_w, new_h), Image.Resampling.BILINEAR)
                 self._photo_image = ImageTk.PhotoImage(resized, master=self.canvas)
                 self.canvas.create_image(cw // 2, ch // 2, image=self._photo_image, anchor="center")
+                
+                # 即時字幕疊加繪製 (Subtitle Overlay / Burn-in CC)
+                if getattr(self, "show_subtitle_overlay", True) and getattr(self, "current_subtitle_text", ""):
+                    self._draw_subtitle_overlay(cw, ch, new_h)
                 return
             except Exception as e:
                 print(f"Render canvas error: {e}")
@@ -528,6 +692,49 @@ class VideoPlayerWidget(ctk.CTkFrame):
             cw // 2, ch // 2, text=tip_text, 
             fill="#718096", font=("Helvetica", 11), justify="center"
         )
+        
+        # 若無影片但有選中字幕，仍於下方置中疊加顯示字幕預覽
+        if getattr(self, "show_subtitle_overlay", True) and getattr(self, "current_subtitle_text", ""):
+            self._draw_subtitle_overlay(cw, ch, None)
+
+    def _draw_subtitle_overlay(self, cw, ch, video_h=None):
+        """在畫布中央底部渲染高對比字幕（深黑半透明底塊 + 清晰白字）"""
+        if not self.current_subtitle_text:
+            return
+            
+        # 動態計算合適的字體大小 (12pt ~ 20pt)
+        font_size = max(12, min(18, int(ch * 0.055)))
+        font_spec = ("Microsoft JhengHei UI", font_size, "bold")
+        
+        cx = cw // 2
+        # 若有影片畫面高度，將字幕貼近影片畫面底緣；否則放置於畫布 88% 高度處
+        if video_h and video_h > 40:
+            cy = (ch // 2) + (video_h // 2) - int(font_size * 2.2)
+        else:
+            cy = int(ch * 0.88)
+            
+        # 建立臨時文字以測量邊界 Bounding Box
+        temp_id = self.canvas.create_text(
+            cx, cy, text=self.current_subtitle_text,
+            font=font_spec, justify="center"
+        )
+        bbox = self.canvas.bbox(temp_id)
+        self.canvas.delete(temp_id)
+        
+        if bbox:
+            x1, y1, x2, y2 = bbox
+            pad_x = max(10, int(font_size * 0.8))
+            pad_y = max(4, int(font_size * 0.3))
+            # 1. 繪製深黑底塊以確保在任何畫面背景下皆清晰易讀
+            self.canvas.create_rectangle(
+                x1 - pad_x, y1 - pad_y, x2 + pad_x, y2 + pad_y,
+                fill="#000000", outline="#2b2b2b", width=1
+            )
+            # 2. 繪製亮白粗體文字
+            self.canvas.create_text(
+                cx, cy, text=self.current_subtitle_text,
+                fill="#ffffff", font=font_spec, justify="center"
+            )
 
     def _update_time_label(self):
         cur_str = self._format_time(self.current_sec)
@@ -692,7 +899,8 @@ class VideoPlayerWidget(ctk.CTkFrame):
         if not self.is_playing or not self.has_video:
             return
             
-        elapsed = time.time() - self._play_start_wall
+        speed = getattr(self, "playback_speed", 1.0)
+        elapsed = (time.time() - self._play_start_wall) * speed
         target_media = self._play_start_media + elapsed
         
         if target_media >= self.duration_sec:
@@ -731,8 +939,9 @@ class VideoPlayerWidget(ctk.CTkFrame):
             except Exception:
                 pass
                 
-        # 約 25fps ~ 40ms 更新一次視訊幀
-        self._play_timer = self.after(35, self._render_loop)
+        # 依倍速動態調整視訊幀刷新間隔 (例如 1.5x 時約 23ms，確保流暢不卡頓)
+        delay_ms = max(15, int(35 / speed)) if speed > 0 else 35
+        self._play_timer = self.after(delay_ms, self._render_loop)
 
 class SubtitleEditorWindow(ctk.CTkToplevel):
     """
@@ -805,6 +1014,10 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         # 綁定快捷鍵與視窗狀態監聽
         self.bind("<Alt-Up>", lambda e: self._navigate_item(-1))
         self.bind("<Alt-Down>", lambda e: self._navigate_item(1))
+        self.bind("<Control-k>", lambda e: self._split_current_subtitle())
+        self.bind("<Control-K>", lambda e: self._split_current_subtitle())
+        self.bind("<Control-j>", lambda e: self._merge_with_next_subtitle())
+        self.bind("<Control-J>", lambda e: self._merge_with_next_subtitle())
         self.bind("<space>", self._on_space_key)
         self.bind("<F11>", lambda e: self._toggle_maximize())
         self.bind("<Configure>", self._on_window_configure)
@@ -1017,10 +1230,8 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             self.tree.pack(side="left", fill="both", expand=True)
             vsb.pack(side="right", fill="y")
             
+            # 僅監聽單一標準選取事件 <<TreeviewSelect>>，避免重複觸發與畫面頓挫
             self.tree.bind("<<TreeviewSelect>>", self._on_tree_select)
-            self.tree.bind("<ButtonRelease-1>", self._on_tree_select)
-            self.tree.bind("<KeyRelease-Up>", self._on_tree_select)
-            self.tree.bind("<KeyRelease-Down>", self._on_tree_select)
             
             # 2. 左側下半部：即時詳細編輯工作面板 (Dock Panel)
             self.editor_dock = ctk.CTkFrame(self.sub_frame)
@@ -1077,6 +1288,29 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
                 font=ctk.CTkFont(size=12, weight="bold"), command=lambda: self._navigate_item(1)
             ).pack(side="right", padx=5)
 
+            # 編輯工具列：字幕一鍵拆分與合併 (Ctrl+K / Ctrl+J)
+            tools_row = ctk.CTkFrame(self.editor_dock, fg_color="transparent")
+            tools_row.pack(fill="x", padx=12, pady=(0, 6))
+            
+            ctk.CTkButton(
+                tools_row, text="✂️ 游標處拆分 (Ctrl+K)", width=155, height=26,
+                fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
+                text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
+                font=ctk.CTkFont(size=11, weight="bold"), command=self._split_current_subtitle
+            ).pack(side="left", padx=(0, 6))
+            
+            ctk.CTkButton(
+                tools_row, text="🔗 與下一條合併 (Ctrl+J)", width=160, height=26,
+                fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
+                text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
+                font=ctk.CTkFont(size=11, weight="bold"), command=self._merge_with_next_subtitle
+            ).pack(side="left")
+            
+            ctk.CTkLabel(
+                tools_row, text="[游標置於文字中按 Ctrl+K 拆分 / 選中條目按 Ctrl+J 合併下一條]",
+                font=ctk.CTkFont(size=11), text_color="gray"
+            ).pack(side="left", padx=10)
+
             # 編輯列 2：多行字幕文字編輯框 (支援貼上多行、換行，絕不壓縮破壞)
             text_row = ctk.CTkFrame(self.editor_dock, fg_color="transparent")
             text_row.pack(fill="x", padx=12, pady=(0, 10))
@@ -1084,6 +1318,10 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             self.txt_item_editor = ctk.CTkTextbox(text_row, height=65, font=ctk.CTkFont(size=13))
             self.txt_item_editor.pack(fill="x", expand=True)
             self.txt_item_editor.bind("<KeyRelease>", lambda e: self._on_text_edit())
+            self.txt_item_editor.bind("<Control-k>", lambda e: self._on_txt_ctrl_k(e))
+            self.txt_item_editor.bind("<Control-K>", lambda e: self._on_txt_ctrl_k(e))
+            self.txt_item_editor.bind("<Control-j>", lambda e: self._on_txt_ctrl_j(e))
+            self.txt_item_editor.bind("<Control-J>", lambda e: self._on_txt_ctrl_j(e))
             
             # --- 右側：影片同步播放與預覽視圖 (寬度可由中間分割條自由拖曳調整) ---
             self.video_pane = ctk.CTkFrame(self.paned_window, fg_color="transparent")
@@ -1103,7 +1341,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         self.footer_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.footer_frame.pack(fill="x", padx=15, pady=(10, 15))
         
-        tip_str = "提示：直接在下方編輯文字或調整時間軸，Alt+↑ / Alt+↓ 快速跳轉下一條。" if not self.is_txt else "提示：直接編輯文字內容，完成後點選儲存。"
+        tip_str = "提示：編輯文字或調整時間軸，Alt+↑/↓ 跳轉，Ctrl+K 拆分，Ctrl+J 合併，空白鍵播放預覽。" if not self.is_txt else "提示：直接編輯文字內容，完成後點選儲存。"
         ctk.CTkLabel(self.footer_frame, text=tip_str, font=ctk.CTkFont(size=11), text_color=("gray30", "gray70")).pack(side="left")
         
         self.btn_save = ctk.CTkButton(
@@ -1193,7 +1431,9 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         """選取並高亮指定條目，自動捲動至可見區域並同步下方編輯器"""
         iid = str(item_index)
         if self.tree.exists(iid):
-            self.tree.selection_set(iid)
+            curr_sel = self.tree.selection()
+            if not curr_sel or curr_sel[0] != iid:
+                self.tree.selection_set(iid)
             self.tree.see(iid)
             self._load_item_to_editor(item_index)
 
@@ -1201,12 +1441,15 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         selected = self.tree.selection()
         if selected:
             idx = int(selected[0])
+            if idx == self.current_selected_idx and getattr(self, '_item_already_loaded', False):
+                return
             self._load_item_to_editor(idx)
 
     def _load_item_to_editor(self, idx):
         if idx < 0 or idx >= len(self.items):
             return
         self.current_selected_idx = idx
+        self._item_already_loaded = True
         item = self.items[idx]
         
         self.lbl_edit_item_idx.configure(text=f"[第 {item['index']} 筆]")
@@ -1220,12 +1463,27 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         self.txt_item_editor.delete("0.0", "end")
         self.txt_item_editor.insert("0.0", item["text"])
         
-        # 字幕選取同步驅動影片跳轉
+        # 同步更新影片畫面疊加字幕 (零延遲)
+        if hasattr(self, 'video_player'):
+            self.video_player.set_overlay_text(item["text"])
+        
+        # 字幕選取同步驅動影片跳轉 (防抖 35ms 延遲，確保 UI 在 0 毫秒立即高亮與反應，徹底消除點擊頓挫感)
         if hasattr(self, 'video_player') and self.video_player.has_video and not getattr(self, '_is_syncing_from_video', False):
+            if hasattr(self, '_sub_seek_timer') and self._sub_seek_timer:
+                try:
+                    self.after_cancel(self._sub_seek_timer)
+                except Exception:
+                    pass
+            start_sec = self._parse_time_ms(item["start"]) / 1000.0
+            self._sub_seek_timer = self.after(35, lambda s=start_sec: self._do_debounced_sub_seek(s))
+
+    def _do_debounced_sub_seek(self, start_sec):
+        """防抖執行的影片 Seek，連續點擊或滑動時僅處理最後停駐點"""
+        self._sub_seek_timer = None
+        if hasattr(self, 'video_player') and self.video_player.has_video:
             self._is_seeking_from_sub = True
-            start_ms = self._parse_time_ms(item["start"])
-            self.video_player.seek(start_ms / 1000.0, notify_callback=False)
-            self.after(150, lambda: setattr(self, '_is_seeking_from_sub', False))
+            self.video_player.seek(start_sec, notify_callback=False)
+            self.after(100, lambda: setattr(self, '_is_seeking_from_sub', False))
 
     def _load_item_to_editor_silent(self, idx):
         """僅更新下方編輯器文字與時間，不向影片發送跳轉請求 (避免循環觸發)"""
@@ -1241,6 +1499,10 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         self.entry_end.insert(0, item["end"])
         self.txt_item_editor.delete("0.0", "end")
         self.txt_item_editor.insert("0.0", item["text"])
+        
+        # 同步更新影片畫面疊加字幕
+        if hasattr(self, 'video_player'):
+            self.video_player.set_overlay_text(item["text"])
 
     def _on_video_time_update(self, current_sec):
         """影片播放或快轉倒轉時，自動定位並高亮選取當前時間所屬的字幕條目"""
@@ -1250,25 +1512,32 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         current_ms = int(current_sec * 1000)
         matched_idx = self._find_subtitle_at_time(current_ms)
         
-        if matched_idx is not None and matched_idx != self.current_selected_idx:
-            iid = str(matched_idx)
-            if self.tree.exists(iid):
-                self._is_syncing_from_video = True
-                self.tree.selection_set(iid)
-                self.tree.see(iid)
+        if matched_idx is not None:
+            if hasattr(self, 'video_player'):
+                self.video_player.set_overlay_text(self.items[matched_idx]["text"])
                 
-                # 若使用者正在下方打字或調整時間，避免打斷輸入焦點
-                try:
-                    focused = self.focus_get()
-                    if focused not in (self.txt_item_editor, self.entry_start, self.entry_end):
-                        self._load_item_to_editor_silent(matched_idx)
-                    else:
-                        self.current_selected_idx = matched_idx
-                        self.lbl_edit_item_idx.configure(text=f"[第 {self.items[matched_idx]['index']} 筆]")
-                except Exception:
-                    self._load_item_to_editor_silent(matched_idx)
+            if matched_idx != self.current_selected_idx:
+                iid = str(matched_idx)
+                if self.tree.exists(iid):
+                    self._is_syncing_from_video = True
+                    self.tree.selection_set(iid)
+                    self.tree.see(iid)
                     
-                self.after(80, lambda: setattr(self, '_is_syncing_from_video', False))
+                    # 若使用者正在下方打字或調整時間，避免打斷輸入焦點
+                    try:
+                        focused = self.focus_get()
+                        if focused not in (self.txt_item_editor, self.entry_start, self.entry_end):
+                            self._load_item_to_editor_silent(matched_idx)
+                        else:
+                            self.current_selected_idx = matched_idx
+                            self.lbl_edit_item_idx.configure(text=f"[第 {self.items[matched_idx]['index']} 筆]")
+                    except Exception:
+                        self._load_item_to_editor_silent(matched_idx)
+                        
+                    self.after(80, lambda: setattr(self, '_is_syncing_from_video', False))
+        else:
+            if hasattr(self, 'video_player'):
+                self.video_player.set_overlay_text("")
 
     def _find_subtitle_at_time(self, current_ms):
         """比對給定時間毫秒落在哪個字幕區間"""
@@ -1340,6 +1609,135 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         if self.tree.exists(iid):
             display_text = new_text.replace("\n", " ⏎ ")
             self.tree.set(iid, "text", display_text)
+            
+        # 同步更新影片畫面疊加字幕
+        if hasattr(self, 'video_player'):
+            self.video_player.set_overlay_text(new_text)
+
+    def _on_txt_ctrl_k(self, event=None):
+        """文字框內按 Ctrl+K 觸發拆分並阻止預設按鍵行為"""
+        self._split_current_subtitle()
+        return "break"
+
+    def _on_txt_ctrl_j(self, event=None):
+        """文字框內按 Ctrl+J 觸發合併並阻止預設按鍵行為"""
+        self._merge_with_next_subtitle()
+        return "break"
+
+    def _split_current_subtitle(self):
+        """在文字游標處拆分當前字幕，依前後字數比例精確劃分時間軸 (Ctrl+K)"""
+        if self.is_txt or self.current_selected_idx is None:
+            return
+        idx = self.current_selected_idx
+        if idx < 0 or idx >= len(self.items):
+            return
+            
+        cur_item = self.items[idx]
+        full_text = self.txt_item_editor.get("0.0", "end").strip()
+        if not full_text:
+            messagebox.showinfo("提示", "當前字幕無文字內容，無法進行拆分。")
+            return
+            
+        # 取得編輯框游標所在位置與前後文字
+        try:
+            cursor_pos = self.txt_item_editor.index("insert")
+            left_text = self.txt_item_editor.get("0.0", cursor_pos).rstrip("\r\n ")
+            right_text = self.txt_item_editor.get(cursor_pos, "end").lstrip("\r\n ").strip()
+        except Exception:
+            left_text = ""
+            right_text = ""
+            
+        # 若游標在最前或最後導致一側為空，自動取文字中間半數均分
+        if not left_text or not right_text:
+            if len(full_text) > 1:
+                mid = len(full_text) // 2
+                left_text = full_text[:mid].strip()
+                right_text = full_text[mid:].strip()
+            else:
+                messagebox.showinfo("提示", "文字過短或游標未置於適當拆分位置。\n請將游標移至欲拆分的文字中間後再按 Ctrl+K。")
+                return
+
+        start_ms = self._parse_time_ms(cur_item["start"])
+        end_ms = self._parse_time_ms(cur_item["end"])
+        dur_ms = max(0, end_ms - start_ms)
+        
+        # 依兩段字數比例分配時長 (至少保留 100ms)
+        len1 = max(1, len(left_text))
+        len2 = max(1, len(right_text))
+        ratio = len1 / (len1 + len2)
+        
+        offset_ms = int(dur_ms * ratio)
+        if dur_ms >= 300:
+            split_ms = start_ms + max(100, min(dur_ms - 100, offset_ms))
+        else:
+            split_ms = start_ms + dur_ms // 2
+            
+        split_time_str = self._format_time_ms(split_ms, is_vtt=self.is_vtt)
+        orig_end = cur_item["end"]
+        
+        # 前半段：更新結束時間與文字
+        cur_item["end"] = split_time_str
+        cur_item["text"] = left_text
+        
+        # 後半段：建立新條目並插入下一列
+        new_item = {
+            "index": str(idx + 2),
+            "start": split_time_str,
+            "end": orig_end,
+            "text": right_text
+        }
+        self.items.insert(idx + 1, new_item)
+        
+        # 重新排序與編號所有條目 (統一為字串格式)
+        for i, item in enumerate(self.items):
+            item["index"] = str(i + 1)
+            
+        if hasattr(self, 'lbl_stats'):
+            self.lbl_stats.configure(text=f"(共 {len(self.items)} 筆字幕)")
+            
+        # 刷新列表並選中新產生的後半段字幕
+        self._populate_treeview()
+        self._select_tree_row(idx + 1)
+        self.txt_item_editor.focus_set()
+
+    def _merge_with_next_subtitle(self):
+        """將當前字幕與下一條相鄰字幕合併，時間軸與文字自動接合 (Ctrl+J)"""
+        if self.is_txt or self.current_selected_idx is None:
+            return
+        idx = self.current_selected_idx
+        if idx < 0 or idx >= len(self.items) - 1:
+            messagebox.showinfo("提示", "當前已是最後一條字幕，無法與下一條合併。")
+            return
+            
+        cur_item = self.items[idx]
+        next_item = self.items[idx + 1]
+        
+        # 取得當前可能正在編輯的最新文字
+        cur_text = self.txt_item_editor.get("0.0", "end").strip() or cur_item["text"].strip()
+        next_text = next_item["text"].strip()
+        
+        if cur_text and next_text:
+            merged_text = f"{cur_text} {next_text}"
+        else:
+            merged_text = cur_text or next_text
+            
+        # 接合時間軸：起始取前條，結束取後條
+        cur_item["end"] = next_item["end"]
+        cur_item["text"] = merged_text
+        
+        # 刪除下一條
+        del self.items[idx + 1]
+        
+        # 重新排序所有條目 (統一為字串格式)
+        for i, item in enumerate(self.items):
+            item["index"] = str(i + 1)
+            
+        if hasattr(self, 'lbl_stats'):
+            self.lbl_stats.configure(text=f"(共 {len(self.items)} 筆字幕)")
+            
+        self._populate_treeview()
+        self._select_tree_row(idx)
+        self.txt_item_editor.focus_set()
 
     def _on_time_edit(self):
         """時間輸入時即時同步至記憶體與上方表格"""
@@ -2680,7 +3078,7 @@ class App(BaseClass):
             
             # 建立請求，增加 User-Agent 避免被 GitHub 拒絕
             req = urllib.request.Request(url, headers={'User-Agent': 'SubtitleTranscriber-Updater'})
-            with urllib.request.urlopen(req, timeout=5) as response:
+            with safe_urlopen(req, timeout=5) as response:
                 data = json.loads(response.read().decode())
                 
                 latest_version = (data.get("tag_name") or "").replace("v", "")
@@ -2709,7 +3107,7 @@ class App(BaseClass):
                         try:
                             commit_url = f"https://api.github.com/repos/{repo}/commits/{tag_name}"
                             c_req = urllib.request.Request(commit_url, headers={'User-Agent': 'SubtitleTranscriber-Updater'})
-                            with urllib.request.urlopen(c_req, timeout=5) as c_resp:
+                            with safe_urlopen(c_req, timeout=5) as c_resp:
                                 c_data = json.loads(c_resp.read().decode())
                                 c_msg = (c_data.get("commit", {}).get("message") or "").strip()
                                 if c_msg:
@@ -2978,6 +3376,16 @@ class App(BaseClass):
                 
             hotwords = self.hotwords_var.get().strip()
 
+            # 若使用 macOS MLX 模式，前置檢查 FFmpeg 是否就緒
+            if device in ["mps", "mlx"]:
+                avail, ffmpeg_path, err_msg = check_ffmpeg_available()
+                if not avail:
+                    self.log(f"❌ {err_msg}")
+                    def _show_ffmpeg_error(m=err_msg):
+                        messagebox.showerror("缺少 FFmpeg 工具", m)
+                    self.after(0, _show_ffmpeg_error)
+                    return
+
             self.log(f"--- 批次任務開始: 共 {len(self.file_list)} 個檔案 (斷句策略: 自然語意與停頓, 防溢出上限: {user_max_chars} 字) ---")
             
             # --- 初始化轉錄核心與模型載入 (含錯誤處理) ---
@@ -3156,8 +3564,9 @@ class App(BaseClass):
                         
                 except Exception as e:
                     error_str = str(e)
-                    # 若為模型下載失敗、網路連線中斷或重大核心問題，應直接中止後續檔案，避免無效重複報錯
-                    if "模型下載" in error_str or "網路連線失敗" in error_str or "無法取得模型" in error_str or "缺少 GPU 函式庫" in error_str:
+                    # 若為模型下載失敗、網路連線中斷、缺少 FFmpeg 或重大核心問題，應直接中止後續檔案，避免無效重複報錯
+                    if ("模型下載" in error_str or "網路連線失敗" in error_str or "無法取得模型" in error_str 
+                        or "缺少 GPU 函式庫" in error_str or "缺少 FFmpeg" in error_str or "ffmpeg" in error_str.lower()):
                         raise e
                     self.log(f"檔案 {os.path.basename(file_path)} 發生錯誤: {e}")
                     continue
@@ -3172,7 +3581,12 @@ class App(BaseClass):
         except Exception as e:
             error_msg = str(e)
             self.log(f"\n❌ 任務中止: {error_msg}")
-            title = "網路連線錯誤" if ("網路" in error_msg or "下載" in error_msg) else "發生錯誤"
+            if "缺少 FFmpeg" in error_msg or "ffmpeg" in error_msg.lower():
+                title = "缺少 FFmpeg 工具"
+            elif "網路" in error_msg or "下載" in error_msg:
+                title = "網路連線錯誤"
+            else:
+                title = "發生錯誤"
             messagebox.showerror(title, f"{error_msg}")
         
         finally:

@@ -1,4 +1,6 @@
 import os
+import sys
+import platform
 import datetime
 import shutil
 import time
@@ -6,6 +8,123 @@ from faster_whisper import WhisperModel
 from tqdm.auto import tqdm
 import json
 import logging
+
+def ensure_ffmpeg_path():
+    """
+    確保系統環境變數 PATH 包含常見的 FFmpeg 安裝路徑。
+    特別是針對 macOS GUI 應用程式（Finder / .app 啟動時不會繼承 shell 的 PATH），
+    自動補充 Homebrew (/opt/homebrew/bin, /usr/local/bin) 等常用二進位路徑。
+    返回目前找到的 ffmpeg 絕對路徑，若找不到則返回 None。
+    """
+    system_paths = os.environ.get("PATH", "").split(os.pathsep)
+    extra_paths = []
+    
+    if platform.system() == "Darwin":
+        # macOS 常見 Homebrew、MacPorts 與使用者 local bin 路徑
+        extra_paths = [
+            "/opt/homebrew/bin",
+            "/opt/homebrew/sbin",
+            "/usr/local/bin",
+            "/usr/local/sbin",
+            "/opt/local/bin",
+            os.path.expanduser("~/.local/bin"),
+            os.path.expanduser("~/bin"),
+        ]
+    elif platform.system() == "Windows":
+        # Windows 常見 WinGet 與預設安裝路徑
+        extra_paths = [
+            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "WinGet", "Links"),
+            os.path.join(os.environ.get("ProgramFiles", "C:\\Program Files"), "ffmpeg", "bin"),
+        ]
+    else:
+        # Linux
+        extra_paths = [
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin",
+            os.path.expanduser("~/.local/bin"),
+        ]
+        
+    # 加入當前 Python 直譯器所在目錄與 Scripts/bin 目錄 (適用於虛擬環境)
+    if sys.executable:
+        py_dir = os.path.dirname(os.path.abspath(sys.executable))
+        extra_paths.append(py_dir)
+        extra_paths.append(os.path.join(py_dir, "bin"))
+        extra_paths.append(os.path.join(py_dir, "Scripts"))
+        
+    # 若存在 PyInstaller 打包暫存目錄 (_MEIPASS)
+    if hasattr(sys, "_MEIPASS"):
+        extra_paths.append(sys._MEIPASS)
+        
+    # 加入專案目錄與內建 bin 目錄
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    extra_paths.append(script_dir)
+    extra_paths.append(os.path.join(script_dir, "ffmpeg"))
+    extra_paths.append(os.path.join(script_dir, "bin"))
+
+    # 依序檢查並加入尚未存在於 PATH 的目錄 (macOS 下優先全面注入 Homebrew 與 Local 路徑)
+    for p in extra_paths:
+        if p and (platform.system() == "Darwin" or os.path.isdir(p)) and p not in system_paths:
+            system_paths.insert(0, p)
+            
+    os.environ["PATH"] = os.pathsep.join(system_paths)
+    return shutil.which("ffmpeg")
+
+# 模組載入時立即執行一次 PATH 補齊
+ensure_ffmpeg_path()
+
+def setup_ssl_certificates():
+    """全域配置 SSL 根憑證路徑，特別解決 macOS 官方 Python 未執行憑證安裝導致的 SSL 失敗"""
+    try:
+        import certifi
+        ca_path = certifi.where()
+        if ca_path and os.path.exists(ca_path):
+            os.environ.setdefault("SSL_CERT_FILE", ca_path)
+            os.environ.setdefault("REQUESTS_CA_BUNDLE", ca_path)
+    except Exception:
+        pass
+        
+    if platform.system() == "Darwin":
+        for cand in ["/etc/ssl/cert.pem", "/opt/homebrew/etc/ca-certificates/cert.pem", "/usr/local/etc/openssl/cert.pem"]:
+            if os.path.exists(cand):
+                os.environ.setdefault("SSL_CERT_FILE", cand)
+                break
+
+setup_ssl_certificates()
+
+def check_ffmpeg_available():
+    """
+    檢查系統中是否可用 ffmpeg，並返回 (is_available: bool, ffmpeg_path: str, friendly_error_message: str)
+    """
+    ffmpeg_path = ensure_ffmpeg_path()
+    if ffmpeg_path:
+        return True, ffmpeg_path, ""
+        
+    sys_name = platform.system()
+    if sys_name == "Darwin":
+        msg = (
+            "【系統未偵測到 FFmpeg 影音轉碼工具】\n\n"
+            "在 macOS (特別是 Apple Silicon MLX 模式) 下進行語音轉錄，需要使用 FFmpeg 進行音訊解碼。\n\n"
+            "【解決方式】\n"
+            "1. 請開啟 macOS 的「終端機」(Terminal)\n"
+            "2. 執行以下指令安裝：\n"
+            "   brew install ffmpeg\n\n"
+            "（若您尚未安裝 Homebrew，請先前往 https://brew.sh 依說明安裝）"
+        )
+    elif sys_name == "Windows":
+        msg = (
+            "【系統未偵測到 FFmpeg 影音轉碼工具】\n\n"
+            "進行音訊解碼需要 FFmpeg 工具。\n\n"
+            "【解決方式】\n"
+            "1. 開啟 PowerShell 並執行：winget install Gyan.FFmpeg\n"
+            "2. 或從官方網站下載 ffmpeg.exe 並放置於系統 PATH 或本程式目錄中。"
+        )
+    else:
+        msg = (
+            "【系統未偵測到 FFmpeg 影音轉碼工具】\n\n"
+            "請使用 Linux 套件管理員安裝，例如：sudo apt install ffmpeg 或 sudo dnf install ffmpeg"
+        )
+    return False, None, msg
 
 try:
     import opencc
@@ -623,6 +742,13 @@ class SubtitleTranscriber:
         # 執行轉錄
         try:
             if getattr(self, "model_type", "faster-whisper") == "mlx-whisper":
+                print("DEBUG: checking ffmpeg for MLX Whisper...")
+                avail, ffmpeg_path, err_msg = check_ffmpeg_available()
+                if not avail:
+                    if log_callback:
+                        log_callback(f"❌ {err_msg}")
+                    raise RuntimeError(err_msg)
+
                 print("DEBUG: calling MLX whisper transcribe...")
                 if log_callback:
                     log_callback("提示: 使用 Apple MLX 框架進行超高速轉錄...\n(註: 此套件轉換時將無法回報即時段落進度，請耐心等候)")
@@ -666,6 +792,13 @@ class SubtitleTranscriber:
         except Exception as e:
             print(f"DEBUG: Error calling model.transcribe: {e}")
             error_str = str(e).lower()
+
+            # 攔截缺少 ffmpeg 相關錯誤 (例如: [Errno 2] No such file or directory: 'ffmpeg')
+            if "ffmpeg" in error_str and ("no such file" in error_str or "not found" in error_str or "errno 2" in error_str):
+                _, _, ffmpeg_help = check_ffmpeg_available()
+                if log_callback:
+                    log_callback(f"\n❌ 影音解碼失敗：系統未安裝或找不到 FFmpeg。\n{ffmpeg_help}")
+                raise RuntimeError(ffmpeg_help)
             net_keywords = [
                 "connection", "getaddrinfo", "max retries", "timeout", "timed out",
                 "huggingface", "offline", "unreachable", "localentrynotfound",
