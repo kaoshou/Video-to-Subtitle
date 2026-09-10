@@ -6,6 +6,7 @@ datas = []
 binaries = []
 hiddenimports = []
 datas += [('pyproject.toml', '.')]
+datas += [('assets', 'assets')]
 tmp_ret = collect_all('customtkinter')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('tkinterdnd2')
@@ -14,7 +15,7 @@ tmp_ret = collect_all('faster_whisper')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('ctranslate2')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-hiddenimports += ['tomli']
+hiddenimports += ['tomli', 'evercam_integration']
 try:
     if sys.platform == 'darwin':
         tmp_ret = collect_all('mlx_whisper')

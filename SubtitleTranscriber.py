@@ -17,6 +17,9 @@ from transcriber import (
     ensure_ffmpeg_path, check_ffmpeg_available
 )
 
+# Import EverCam subtitle player integration
+import evercam_integration as evercam
+
 # 啟動時確保系統環境變數 PATH 包含 FFmpeg 常用路徑 (特別是 macOS Homebrew /opt/homebrew/bin)
 ensure_ffmpeg_path()
 
@@ -2252,43 +2255,91 @@ class App(BaseClass):
             except Exception as e:
                 print(f"拖曳功能初始化失敗: {e}")
 
-    def on_drop(self, event):
-        files_data = event.data
-        # 處理 tkinterdnd2 的路徑格式 (大括號包覆含空白的路徑)
-        new_files = self.parse_dnd_files(files_data)
-        
+    def add_files_from_paths(self, paths):
+        """統一處理自拖曳或對話框選取加入的檔案清單，智慧辨識 EverCam 專案與影音格式"""
+        if not paths:
+            return
+
         valid_files_added = 0
         invalid_files = []
+        evercam_detected_count = 0
 
-        for f in new_files:
+        for f in paths:
             # 去除可能的引號與多餘空白
             f = f.strip().strip('"').strip("'")
-            
-            if not os.path.exists(f): 
+            if not os.path.exists(f):
                 continue
 
-            # 驗證副檔名
+            # 情況 1：若選取或拖入的是資料夾，且屬於 EverCam 課程專案，自動找出媒體檔案並載入
+            if os.path.isdir(f) and evercam.is_evercam_folder(f):
+                ec_found = False
+                for item in sorted(os.listdir(f)):
+                    sub_f = os.path.join(f, item)
+                    sub_ext = os.path.splitext(item)[1].lower()
+                    if sub_ext in SUPPORTED_EXTENSIONS and sub_f not in self.file_list:
+                        self.file_list.append(sub_f)
+                        valid_files_added += 1
+                        ec_found = True
+                if ec_found:
+                    evercam_detected_count += 1
+                    self.log(f"💡 偵測並載入 EverCam 數位課程專案: {os.path.basename(f)}")
+                continue
+
+            # 情況 2：若選取的是 EverCam 專案目錄下的設定檔或標誌檔案 (如 config.js 或 index.html)
+            if os.path.isfile(f) and os.path.basename(f).lower() in ("config.js", "index.html"):
+                p_dir = os.path.dirname(f)
+                if evercam.is_evercam_folder(p_dir):
+                    ec_found = False
+                    for item in sorted(os.listdir(p_dir)):
+                        sub_f = os.path.join(p_dir, item)
+                        sub_ext = os.path.splitext(item)[1].lower()
+                        if sub_ext in SUPPORTED_EXTENSIONS and sub_f not in self.file_list:
+                            self.file_list.append(sub_f)
+                            valid_files_added += 1
+                            ec_found = True
+                    if ec_found:
+                        evercam_detected_count += 1
+                        self.log(f"💡 偵測並載入 EverCam 數位課程專案: {os.path.basename(p_dir)}")
+                    continue
+
+            # 情況 3：驗證副檔名是否為支援的影音檔案
             _, ext = os.path.splitext(f)
             if ext.lower() in SUPPORTED_EXTENSIONS:
                 if f not in self.file_list:
                     self.file_list.append(f)
                     valid_files_added += 1
+                    # 檢查是否屬於 EverCam 課程媒體 (支援透過父目錄特徵溯源檢測)
+                    is_ec, _ = evercam.detect_evercam_project(f)
+                    if is_ec:
+                        evercam_detected_count += 1
+                        self.log(f"💡 偵測到 EverCam 課程媒體: {os.path.basename(f)}")
             else:
                 invalid_files.append(os.path.basename(f))
-        
+
         self.update_file_list_ui()
-        
-        status_msg = f"已加入 {valid_files_added} 個檔案 (總計: {len(self.file_list)})"
-        if invalid_files:
-            # 顯示警告，但不要太打擾，用 status bar 提醒或彈窗
-            msg = f"已忽略不支援的檔案:\n{', '.join(invalid_files[:3])}"
-            if len(invalid_files) > 3: msg += "..."
-            self.log(f"⚠️ {msg}")
-            messagebox.showwarning("格式不支援", f"以下檔案非影片或音訊格式，已忽略：\n\n{msg}")
-        
-        if valid_files_added > 0:
+
+        # 檢查當前清單中是否含有 EverCam 專案
+        total_ec = sum(1 for p in self.file_list if evercam.detect_evercam_project(p)[0])
+
+        if valid_files_added > 0 or len(self.file_list) > 0:
+            status_msg = f"目前共有 {len(self.file_list)} 個檔案"
+            if total_ec > 0:
+                status_msg += f" (💡 包含 {total_ec} 個 EverCam 課程)"
             self.status_label.configure(text=status_msg)
             self.btn_run.focus_set()
+
+        if invalid_files:
+            msg = f"已忽略不支援的檔案:\n{', '.join(invalid_files[:3])}"
+            if len(invalid_files) > 3:
+                msg += "..."
+            self.log(f"⚠️ {msg}")
+            messagebox.showwarning("格式不支援", f"以下檔案非影片或音訊格式，已忽略：\n\n{msg}")
+
+    def on_drop(self, event):
+        files_data = event.data
+        # 處理 tkinterdnd2 的路徑格式 (大括號包覆含空白的路徑)
+        new_files = self.parse_dnd_files(files_data)
+        self.add_files_from_paths(new_files)
 
     def parse_dnd_files(self, data):
         # 簡單且強健的 Windows 路徑解析
@@ -3427,17 +3478,19 @@ class App(BaseClass):
             ("sounddevice", "MIT License", "https://github.com/spatialaudio/python-sounddevice"),
             ("OpenCC", "Apache-2.0 License", "https://github.com/BYVoid/OpenCC"),
             ("tomli", "MIT License", "https://github.com/hukkin/tomli"),
-            ("huggingface-hub", "Apache-2.0 License", "https://github.com/huggingface/huggingface_hub")
+            ("huggingface-hub", "Apache-2.0 License", "https://github.com/huggingface/huggingface_hub"),
+            ("evercam-subtitle-player", "", "https://github.com/kaoshou/evercam-subtitle-player")
         ]
 
         for name, license_, url in libs:
             item_frame = ctk.CTkFrame(os_frame, fg_color="transparent")
             item_frame.pack(fill="x", pady=2)
-            ctk.CTkLabel(item_frame, text=f"• {name} ({license_})", font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=20)
+            title_text = f"• {name} ({license_})" if license_ else f"• {name}"
+            ctk.CTkLabel(item_frame, text=title_text, font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=20)
             create_link(item_frame, url, url).pack(anchor="w", padx=40)
 
         # Close Button
-        ctk.CTkButton(about_window, text="關閉 (Close)", command=about_window.destroy, width=100).pack(pady=10)
+        ctk.CTkButton(about_window, text="關閉", command=about_window.destroy, width=100).pack(pady=10)
         
         # 後台渲染完成後一次性置中並平滑呈現 (杜絕閃爍)
         center_and_smooth_show(self.about_window, self, 500, 600, is_modal=True)
@@ -3478,16 +3531,16 @@ class App(BaseClass):
             pass
 
     def browse_file(self):
+        media_exts = " ".join([f"*{ext}" for ext in sorted(SUPPORTED_EXTENSIONS)])
         filenames = filedialog.askopenfilenames(
-            filetypes=[("Media Files", "*.mp4 *.mp3 *.mkv *.wav *.mov *.avi *.m4a"), ("All Files", "*.*")]
+            title="選擇要轉錄的影音檔案或 EverCam 課程",
+            filetypes=[
+                ("影音媒體與 EverCam 專案", f"{media_exts} config.js"),
+                ("所有檔案 (*.*)", "*.*")
+            ]
         )
         if filenames:
-            for f in filenames:
-                if f not in self.file_list:
-                    self.file_list.append(f)
-            self.update_file_list_ui()
-            self.status_label.configure(text=f"目前共有 {len(self.file_list)} 個檔案")
-            self.btn_run.focus_set()
+            self.add_files_from_paths(filenames)
 
     def clear_files(self):
         self.file_list = []
@@ -3841,7 +3894,7 @@ class App(BaseClass):
         if platform.system() != "Darwin":
             dialog.transient(self)
             
-        # 套用 APP 圖標 (直接套用，消除 200ms 延遲標題列抖動)
+        # 套用 APP 圖標
         icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_icon.ico")
         if os.path.exists(icon_path):
             try:
@@ -3849,17 +3902,116 @@ class App(BaseClass):
             except Exception as e:
                 print(f"Failed to set dialog icon: {e}")
             
-        label_title = ctk.CTkLabel(dialog, text="轉錄任務已完成", font=ctk.CTkFont(size=18, weight="bold"), text_color=("#1f538d", "#DCE4EE"))
-        label_title.pack(pady=(15, 5))
+        # 檢測是否有 EverCam 課程專案檔案
+        evercam_projects = {}
+        for f_path in files:
+            is_ec, c_dir = evercam.detect_evercam_project(f_path)
+            if is_ec and c_dir not in evercam_projects:
+                evercam_projects[c_dir] = f_path
+
+        file_count = len(files)
+        # 精準動態高度計算，提供充足留白並確保底部控制列 100% 完整可見
+        if file_count == 1:
+            dialog_h = 310
+        elif file_count == 2:
+            dialog_h = 360
+        elif file_count == 3:
+            dialog_h = 410
+        else:
+            dialog_h = min(480, 260 + min(220, file_count * 48))
+
+        # --- 1. 頂部標題與說明區域 ---
+        top_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        top_frame.pack(side="top", fill="x", padx=24, pady=(16, 6))
+
+        label_title = ctk.CTkLabel(
+            top_frame, text="轉錄任務已完成",
+            font=ctk.CTkFont(size=18, weight="bold"),
+            text_color=("#1f538d", "#DCE4EE")
+        )
+        label_title.pack(anchor="center")
         
-        msg = f"已成功轉錄 {count} 個影音檔案。您可以直接在下方對個別檔案進行操作："
-        label_msg = ctk.CTkLabel(dialog, text=msg, font=ctk.CTkFont(size=13))
-        label_msg.pack(pady=(0, 10))
-        
-        # 轉換檔案列表滾動區域
-        scroll = ctk.CTkScrollableFrame(dialog, height=220)
-        scroll.pack(fill="both", expand=True, padx=20, pady=5)
-        
+        ec_count = len(evercam_projects)
+        msg = f"已成功轉錄 {count} 個影音檔案"
+        if ec_count > 0:
+            msg += f"，並偵測到 {ec_count} 個 EverCam 數位課程專案"
+        msg += "。您可以在下方直接進行操作："
+        label_msg = ctk.CTkLabel(top_frame, text=msg, font=ctk.CTkFont(size=12), text_color=("gray30", "gray75"))
+        label_msg.pack(anchor="center", pady=(3, 0))
+
+        # --- 2. 底部控制區域 (side='bottom' 優先 pack，保證絕對不被中間列表擠出) ---
+        bottom_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        bottom_frame.pack(side="bottom", fill="x", padx=24, pady=(10, 16))
+
+        def deploy_and_preview_evercam(target_folder, srt_file):
+            target_l = "en" if self.translate_en_var.get() else "zh-TW"
+            ok, msg, idx_p = evercam.deploy_evercam_player(target_folder, source_srt=srt_file, target_lang=target_l)
+            if ok:
+                self.log(f"✅ [EverCam] {msg} ({os.path.basename(target_folder)})")
+                messagebox.showinfo("EverCam 網頁轉換完成", f"{msg}\n\n已成功建立現代化字幕播放器！\n即將於瀏覽器中開啟預覽。", parent=dialog)
+                web_url = f"file:///{os.path.abspath(idx_p).replace(os.sep, '/')}"
+                webbrowser.open_new(web_url)
+            else:
+                self.log(f"❌ [EverCam] 轉換失敗: {msg}")
+                messagebox.showerror("EverCam 網頁轉換失敗", msg, parent=dialog)
+
+        bottom_btn_box = ctk.CTkFrame(bottom_frame, fg_color="transparent")
+        bottom_btn_box.pack(anchor="center")
+
+        if evercam_projects:
+            def deploy_all_evercam():
+                target_l = "en" if self.translate_en_var.get() else "zh-TW"
+                success_count = 0
+                first_preview_url = None
+                
+                for c_dir, s_file in evercam_projects.items():
+                    ok, msg, idx_p = evercam.deploy_evercam_player(c_dir, source_srt=s_file, target_lang=target_l)
+                    if ok:
+                        success_count += 1
+                        if first_preview_url is None and idx_p:
+                            first_preview_url = f"file:///{os.path.abspath(idx_p).replace(os.sep, '/')}"
+                        self.log(f"✅ [EverCam] {msg} ({os.path.basename(c_dir)})")
+                    else:
+                        self.log(f"❌ [EverCam] 轉換失敗: {msg} ({os.path.basename(c_dir)})")
+                
+                if success_count > 0:
+                    dialog_text = "共成功轉換 1 個 EverCam 網頁課程！\n\n已成功建立現代化字幕播放器，即將於瀏覽器中開啟預覽。" if success_count == 1 else f"共成功轉換 {success_count} 個 EverCam 網頁課程！\n\n已成功建立現代化字幕播放器，即將於瀏覽器中開啟預覽。"
+                    messagebox.showinfo("EverCam 網頁轉換完成", dialog_text, parent=dialog)
+                    if first_preview_url:
+                        webbrowser.open_new(first_preview_url)
+                else:
+                    messagebox.showerror("轉換失敗", "未能成功轉換任何 EverCam 網頁課程，請檢查檔案權限。", parent=dialog)
+
+            btn_ec_title = "🚀 一鍵轉換全部的 EverCam 網頁" if len(evercam_projects) > 1 else "🚀 立即轉換為 EverCam 網頁播放器"
+            btn_ec_main = ctk.CTkButton(
+                bottom_btn_box, text=btn_ec_title,
+                fg_color=("#1f8b4c", "#2ecc71"), hover_color=("#18703d", "#27ae60"),
+                text_color="white", font=ctk.CTkFont(size=13, weight="bold"), height=34, corner_radius=8,
+                command=deploy_all_evercam
+            )
+            btn_ec_main.pack(side="left", padx=8)
+
+        btn_close = ctk.CTkButton(
+            bottom_btn_box, text="關閉",
+            fg_color=("gray75", "gray35"), hover_color=("gray65", "gray45"),
+            text_color=("gray10", "gray95"), font=ctk.CTkFont(size=13, weight="bold"),
+            width=88, height=34, corner_radius=8,
+            command=dialog.destroy
+        )
+        btn_close.pack(side="left", padx=8)
+
+        # --- 3. 中間列表區域 ---
+        list_outer = ctk.CTkFrame(dialog, fg_color="transparent")
+        list_outer.pack(side="top", fill="both", expand=True, padx=24, pady=(0, 6))
+
+        # 關鍵優化：若檔案數量 <= 3 個，使用一般 Frame，徹底消除右側突兀粗糙的灰色長捲軸！
+        if file_count <= 3:
+            content_box = ctk.CTkFrame(list_outer, fg_color="transparent")
+            content_box.pack(fill="x")
+        else:
+            content_box = ctk.CTkScrollableFrame(list_outer, fg_color="transparent")
+            content_box.pack(fill="both", expand=True)
+
         def open_file(f_path):
             if os.path.exists(f_path):
                 if platform.system() == "Windows":
@@ -3885,53 +4037,101 @@ class App(BaseClass):
                     
         def edit_file(f_path):
             SubtitleEditorWindow(self, f_path)
-            
-        # 逐一填入檔案
+
+        # 逐一填入檔案精緻卡片
         for i, f_path in enumerate(files):
-            row_frame = ctk.CTkFrame(scroll, fg_color="transparent")
-            row_frame.pack(fill="x", pady=4, padx=5)
+            row_frame = ctk.CTkFrame(
+                content_box,
+                fg_color=("white", "gray20"),
+                corner_radius=8,
+                border_width=1,
+                border_color=("gray85", "gray30")
+            )
+            row_frame.pack(fill="x", pady=3, padx=2)
             
-            idx_str = f"[{i+1:02d}] "
+            # 左側資訊區
+            info_left = ctk.CTkFrame(row_frame, fg_color="transparent")
+            info_left.pack(side="left", fill="x", expand=True, padx=(8, 4), pady=5)
+
+            # 序號標籤
+            lbl_idx = ctk.CTkLabel(
+                info_left, text=f"[{i+1:02d}]",
+                font=ctk.CTkFont(family="Consolas", size=12, weight="bold"),
+                text_color=("#1f538d", "#5dade2"), width=34
+            )
+            lbl_idx.pack(side="left")
+
+            # 檔名標籤
             short_name = os.path.basename(f_path)
-            
-            # 限制長度
-            if len(short_name) > 35:
-                display_name = short_name[:17] + "..." + short_name[-15:]
+            if len(short_name) > 34:
+                display_name = short_name[:17] + "..." + short_name[-14:]
             else:
                 display_name = short_name
-                
-            lbl_name = ctk.CTkLabel(row_frame, text=idx_str + display_name, anchor="w", font=ctk.CTkFont(size=12))
-            lbl_name.pack(side="left", fill="x", expand=True, padx=(5, 10))
-            
+
+            lbl_name = ctk.CTkLabel(info_left, text=display_name, anchor="w", font=ctk.CTkFont(size=12, weight="bold"))
+            lbl_name.pack(side="left", padx=4)
+
+            # 若為 EverCam 專案，顯示精美徽章
+            is_ec_row, ec_row_dir = evercam.detect_evercam_project(f_path)
+            if is_ec_row:
+                lbl_badge = ctk.CTkLabel(
+                    info_left, text="EverCam 課程", font=ctk.CTkFont(size=10, weight="bold"),
+                    fg_color=("#e8f5e9", "#1b3820"), text_color=("#2e7d32", "#81c784"),
+                    corner_radius=4, padx=5, pady=1
+                )
+                lbl_badge.pack(side="left", padx=(2, 0))
+
+            # 右側按鈕群組 (Button Group：精緻化次要按鈕 + 品牌主按鈕，消除雜亂笨重感)
+            btn_group = ctk.CTkFrame(row_frame, fg_color="transparent")
+            btn_group.pack(side="right", padx=(4, 6), pady=5)
+
             can_edit = f_path.lower().endswith((".srt", ".vtt", ".txt"))
-            
-            # 按鈕 1：開啟
-            btn_open = ctk.CTkButton(row_frame, text="開啟", width=65, height=26, font=ctk.CTkFont(size=11),
-                                     command=lambda p=f_path: open_file(p))
-            btn_open.pack(side="left", padx=3)
-            
-            # 按鈕 2：校對
+
+            # 按鈕 1：開啟字幕 (精緻幽靈次要按鈕)
+            btn_open = ctk.CTkButton(
+                btn_group, text="開啟字幕", width=66, height=26, font=ctk.CTkFont(size=11),
+                fg_color=("gray90", "gray28"), hover_color=("gray80", "gray38"),
+                text_color=("gray20", "gray90"), corner_radius=6,
+                command=lambda p=f_path: open_file(p)
+            )
+            btn_open.pack(side="left", padx=2)
+
+            # 按鈕 2：開啟目錄 (精緻幽靈次要按鈕)
+            btn_dir = ctk.CTkButton(
+                btn_group, text="開啟目錄", width=66, height=26, font=ctk.CTkFont(size=11),
+                fg_color=("gray90", "gray28"), hover_color=("gray80", "gray38"),
+                text_color=("gray20", "gray90"), corner_radius=6,
+                command=lambda p=f_path: open_folder(p)
+            )
+            btn_dir.pack(side="left", padx=2)
+
+            # 按鈕 3：字幕校對 (品牌深藍核心按鈕)
             if can_edit:
-                btn_edit = ctk.CTkButton(row_frame, text="校對", width=65, height=26, font=ctk.CTkFont(size=11),
-                                         fg_color="#1f538d", hover_color="#14375e", text_color="white",
-                                         command=lambda p=f_path: edit_file(p))
+                btn_edit = ctk.CTkButton(
+                    btn_group, text="字幕校對", width=68, height=26, font=ctk.CTkFont(size=11, weight="bold"),
+                    fg_color=("#1f538d", "#14375e"), hover_color=("#163d66", "#1a4675"), text_color="white",
+                    corner_radius=6,
+                    command=lambda p=f_path: edit_file(p)
+                )
             else:
-                btn_edit = ctk.CTkButton(row_frame, text="校對", width=65, height=26, font=ctk.CTkFont(size=11),
-                                         state="disabled", fg_color="gray", text_color="lightgray")
-            btn_edit.pack(side="left", padx=3)
-            
-            # 按鈕 3：資料夾
-            btn_dir = ctk.CTkButton(row_frame, text="資料夾", width=75, height=26, font=ctk.CTkFont(size=11),
-                                    fg_color="transparent", border_width=1, text_color=("gray10", "#DCE4EE"),
-                                    command=lambda p=f_path: open_folder(p))
-            btn_dir.pack(side="left", padx=3)
-            
-        # 確定按鈕
-        btn_close = ctk.CTkButton(dialog, text="確定", command=dialog.destroy, width=120)
-        btn_close.pack(pady=15)
-        
+                btn_edit = ctk.CTkButton(
+                    btn_group, text="字幕校對", width=68, height=26, font=ctk.CTkFont(size=11),
+                    state="disabled", fg_color=("gray90", "gray28"), text_color="gray", corner_radius=6
+                )
+            btn_edit.pack(side="left", padx=2)
+
+            # 按鈕 4 (若為 EverCam 專案)：EverCam網頁轉換 (質感翡翠綠特色按鈕)
+            if is_ec_row:
+                btn_row_ec = ctk.CTkButton(
+                    btn_group, text="EverCam網頁轉換", width=110, height=26, font=ctk.CTkFont(size=11, weight="bold"),
+                    fg_color=("#1f8b4c", "#2ecc71"), hover_color=("#18703d", "#27ae60"), text_color="white",
+                    corner_radius=6,
+                    command=lambda fld=ec_row_dir, s_f=f_path: deploy_and_preview_evercam(fld, s_f)
+                )
+                btn_row_ec.pack(side="left", padx=2)
+
         # 後台渲染完成後一次性置中並平滑呈現 (杜絕閃爍)
-        center_and_smooth_show(dialog, self, 680, 420, is_modal=True)
+        center_and_smooth_show(dialog, self, 780, dialog_h, is_modal=True)
 
 if __name__ == "__main__":
     import multiprocessing

@@ -1,0 +1,126 @@
+<!doctype html>
+<!--
+    EverCam Subtitle Player
+    Project: https://github.com/kaoshou/evercam-subtitle-player
+    Developed by 鄭郁翰（崑山科技大學）
+    Copyright © 2026 鄭郁翰。
+    本專案為獨立開發的非官方工具，與 EverCam 商標權人無隸屬或授權關係。
+-->
+<html lang="zh-Hant">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#111111">
+    <title>課程影片</title>
+    <link rel="stylesheet" href="css/evercam-modern.css">
+</head>
+<body>
+    <main class="page-shell">
+        <header class="course-header">
+            <span class="course-mark" aria-hidden="true"><span></span></span>
+            <div class="course-heading">
+                <h1 id="course-title">正在載入課程名稱…</h1>
+                <div id="course-meta" class="course-meta" hidden>
+                    <span id="course-author" class="course-meta-item" hidden></span>
+                    <span id="course-duration" class="course-meta-item" hidden></span>
+                </div>
+            </div>
+        </header>
+
+        <div class="learning-layout">
+            <section class="player-card" aria-label="課程影片">
+                <div id="video-stage" class="video-stage">
+                    <video id="course-video" playsinline preload="metadata">
+                        您的瀏覽器不支援 HTML5 影片播放。
+                    </video>
+
+                    <div id="caption-overlay" class="caption-overlay caption-position-bottom"
+                        data-theme="white-black" hidden aria-hidden="true">
+                        <span id="caption-text" class="caption-text"></span>
+                    </div>
+
+                    <div id="loading-spinner" class="loading-spinner" hidden aria-label="影片載入中"></div>
+
+                    <button id="big-play" class="big-play" type="button" aria-label="播放影片">
+                        <span aria-hidden="true"></span>
+                    </button>
+
+                    <div id="video-controls" class="video-controls">
+                        <label class="sr-only" for="seek-slider">影片進度</label>
+                        <input id="seek-slider" class="seek-slider" type="range" min="0" max="1000" value="0" step="1">
+
+                        <div class="control-row">
+                            <button id="play-toggle" class="control-button play-toggle" type="button" aria-label="播放">
+                                <span aria-hidden="true"></span>
+                            </button>
+
+                            <div class="volume-control">
+                                <button id="mute-toggle" class="control-button volume-toggle" type="button" aria-label="靜音">
+                                    <span aria-hidden="true"></span>
+                                </button>
+                                <label class="sr-only" for="volume-slider">音量</label>
+                                <input id="volume-slider" class="volume-slider" type="range" min="0" max="1" value="1" step="0.05">
+                            </div>
+
+                            <div class="time-display" aria-label="播放時間">
+                                <span id="current-time">0:00</span>
+                                <span aria-hidden="true">/</span>
+                                <span id="total-time">0:00</span>
+                            </div>
+
+                            <span class="control-spacer"></span>
+
+                            <div id="caption-menu-wrap" class="menu-wrap" hidden>
+                                <button id="caption-button" class="control-button text-control" type="button"
+                                    aria-label="字幕" aria-haspopup="dialog" aria-expanded="false">CC</button>
+                                <div id="caption-menu" class="player-menu caption-menu" role="dialog"
+                                    aria-label="字幕設定" hidden></div>
+                            </div>
+
+                            <div class="menu-wrap">
+                                <button id="speed-button" class="control-button text-control speed-button" type="button"
+                                    aria-label="播放速度" aria-haspopup="menu" aria-expanded="false">1×</button>
+                                <div id="speed-menu" class="player-menu" role="menu" hidden></div>
+                            </div>
+
+                            <button id="pip-toggle" class="control-button pip-toggle" type="button"
+                                aria-label="子母畫面" title="子母畫面" hidden>
+                                <span aria-hidden="true"></span>
+                            </button>
+
+                            <button id="fullscreen-toggle" class="control-button fullscreen-toggle" type="button" aria-label="全螢幕">
+                                <span aria-hidden="true"></span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <aside class="chapter-card" aria-labelledby="chapters-heading">
+                <div class="chapter-header">
+                    <h2 id="chapters-heading">章節索引</h2>
+                </div>
+                <nav id="chapter-list" class="chapter-list" aria-label="影片章節"></nav>
+                <p id="chapter-empty" class="empty-state" hidden>尚無章節索引。</p>
+            </aside>
+        </div>
+
+        <footer class="course-footer" aria-label="播放器操作提示">
+            <p class="keyboard-hints">
+                <span><kbd>Space</kbd> 播放／暫停</span>
+                <span><kbd>← →</kbd> 快退／快轉</span>
+                <span><kbd>M</kbd> 靜音</span>
+                <span><kbd>F</kbd> 全螢幕</span>
+            </p>
+        </footer>
+    </main>
+
+    <noscript>
+        <div class="noscript-message">請啟用 JavaScript，才能載入影片、章節與字幕。</div>
+    </noscript>
+
+    <script src="config.js"></script>
+    <script src="subtitles-data.js"></script>
+    <script src="js/evercam-modern.js"></script>
+</body>
+</html>
