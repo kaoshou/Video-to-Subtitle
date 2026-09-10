@@ -4,7 +4,6 @@ import platform
 import datetime
 import shutil
 import time
-from faster_whisper import WhisperModel
 from tqdm.auto import tqdm
 import json
 import logging
@@ -599,6 +598,7 @@ class SubtitleTranscriber:
                 print("DEBUG: MLX whisper config ready.")
             else:
                 print("DEBUG: Initializing WhisperModel...")
+                from faster_whisper import WhisperModel
                 self.model = WhisperModel(
                     self.model_size, 
                     device=self.device, 

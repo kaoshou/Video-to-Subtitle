@@ -89,19 +89,37 @@ except Exception as e:
     PIL_AVAILABLE = False
     print(f"提示: 未偵測到 Pillow (PIL)，影音播放預覽將停用: {e}")
 
-try:
-    import av
-    AV_AVAILABLE = True
-except Exception as e:
-    AV_AVAILABLE = False
-    print(f"提示: 未偵測到 PyAV (av)，影音播放預覽將停用: {e}")
+# --- 影音解碼與播放庫延遲載入 (PyAV, sounddevice) ---
+av = None
+AV_AVAILABLE = None
+sd = None
+SD_AVAILABLE = None
 
-try:
-    import sounddevice as sd
-    SD_AVAILABLE = True
-except Exception as e:
-    SD_AVAILABLE = False
-    print(f"提示: 未偵測到 sounddevice，影片播放將無聲音: {e}")
+def ensure_av():
+    """延遲載入 PyAV 函式庫，避免主介面啟動時預先載入 FFmpeg C 庫造成卡頓"""
+    global av, AV_AVAILABLE
+    if AV_AVAILABLE is None:
+        try:
+            import av as _av
+            av = _av
+            AV_AVAILABLE = True
+        except Exception as e:
+            AV_AVAILABLE = False
+            print(f"提示: 未偵測到 PyAV (av)，影音播放預覽將停用: {e}")
+    return AV_AVAILABLE
+
+def ensure_sd():
+    """延遲載入 sounddevice 函式庫，避免主介面啟動時查詢 PortAudio 裝置造成延遲"""
+    global sd, SD_AVAILABLE
+    if SD_AVAILABLE is None:
+        try:
+            import sounddevice as _sd
+            sd = _sd
+            SD_AVAILABLE = True
+        except Exception as e:
+            SD_AVAILABLE = False
+            print(f"提示: 未偵測到 sounddevice，影片播放將無聲音: {e}")
+    return SD_AVAILABLE
 
 # --- 版本資訊讀取 ---
 def get_version():
@@ -124,7 +142,7 @@ def get_version():
     except Exception as e:
         print(f"DEBUG: Failed to load version from pyproject.toml: {e}")
     
-    return "2.7.1" # Fallback
+    return "2.7.2" # Fallback
 
 # --- 設定外觀 ---
 ctk.set_appearance_mode("System")  # Modes: "System" (standard), "Dark", "Light"
@@ -418,6 +436,7 @@ class VideoPlayerWidget(ctk.CTkFrame):
 
     def _recreate_audio_stream_for_speed(self):
         """依倍速重建 sounddevice 串流輸出，實現音訊變速與視訊同步"""
+        ensure_sd()
         if not self.has_audio or not SD_AVAILABLE or not self.audio_container:
             return
         target_sr = int(44100 * self.playback_speed)
@@ -534,6 +553,8 @@ class VideoPlayerWidget(ctk.CTkFrame):
     def load_video(self, path):
         if not path or not os.path.exists(path):
             return False
+        ensure_av()
+        ensure_sd()
         if not AV_AVAILABLE or not PIL_AVAILABLE:
             missing_pkgs = []
             if not AV_AVAILABLE: missing_pkgs.append("PyAV (av)")
