@@ -1,5 +1,6 @@
 
 import os
+import sys
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -148,8 +149,116 @@ def get_version():
 ctk.set_appearance_mode("System")  # Modes: "System" (standard), "Dark", "Light"
 ctk.set_default_color_theme("blue")  # Themes: "blue" (standard), "green", "dark-blue"
 
+# --- 修正 CustomTkinter 在 Windows 上的視窗標題列閃爍問題 ---
+def _patch_windows_set_titlebar_color(window_self, color_mode: str):
+    """
+    以現代 Windows DWM API 原地套用標題列深/淺色主題，
+    徹底移除 CustomTkinter 內建粗暴的 super().withdraw() + super().update()，
+    根本解決子視窗開啟時「像開啟又關閉，再開啟」的反覆閃爍問題。
+    """
+    if not sys.platform.startswith("win") or getattr(window_self, "_deactivate_windows_window_header_manipulation", False):
+        return
+
+    val = 1 if str(color_mode).lower() == "dark" else 0
+    try:
+        import ctypes
+        hwnd = ctypes.windll.user32.GetParent(window_self.winfo_id())
+        if hwnd:
+            DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+            DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1 = 19
+            res = ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE,
+                ctypes.byref(ctypes.c_int(val)), ctypes.sizeof(ctypes.c_int(val))
+            )
+            if res != 0:
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1,
+                    ctypes.byref(ctypes.c_int(val)), ctypes.sizeof(ctypes.c_int(val))
+                )
+    except Exception:
+        pass
+    window_self._windows_set_titlebar_color_called = True
+
+ctk.CTkToplevel._windows_set_titlebar_color = _patch_windows_set_titlebar_color
+ctk.CTk._windows_set_titlebar_color = _patch_windows_set_titlebar_color
+
 # 支援的檔案格式
 SUPPORTED_EXTENSIONS = {".mp4", ".mp3", ".mkv", ".wav", ".mov", ".avi", ".m4a", ".flac", ".ogg", ".webm"}
+
+def create_smooth_toplevel(parent):
+    """建立自帶防閃爍與背景透明預渲染防護的 CTkToplevel 子視窗"""
+    top = ctk.CTkToplevel(parent)
+    top.withdraw()  # 立即鎖定隱藏，避免 200x200 預設視窗閃爍
+    if platform.system() == "Windows":
+        try:
+            top.attributes("-alpha", 0.0)  # 先行鎖定全透明，徹底杜絕子元件在眼前逐一繪製產生的過程
+        except Exception:
+            pass
+    return top
+
+def center_and_smooth_show(window, parent, width, height, is_modal=True):
+    """
+    將子視窗相對於父視窗置中，並在後台完成所有元件渲染後一次性平滑呈現，
+    徹底消除 CTkToplevel 閃爍與元件逐一產生的視覺跳動感。
+    """
+    is_win = (platform.system() == "Windows")
+    
+    # 在 Windows 上若支援透明度，先行鎖定完全透明，避免繪圖過程外露
+    if is_win:
+        try:
+            window.attributes("-alpha", 0.0)
+        except Exception:
+            pass
+
+    try:
+        if parent and parent.winfo_exists() and parent.state() != "withdrawn":
+            p_x = parent.winfo_rootx()
+            p_y = parent.winfo_rooty()
+            p_w = parent.winfo_width()
+            p_h = parent.winfo_height()
+        else:
+            p_x = 0
+            p_y = 0
+            p_w = window.winfo_screenwidth()
+            p_h = window.winfo_screenheight()
+        
+        # 計算置中座標
+        x = p_x + max(0, (p_w - width) // 2)
+        y = p_y + max(0, (p_h - height) // 2)
+        
+        # 螢幕邊界保護
+        screen_w = window.winfo_screenwidth()
+        screen_h = window.winfo_screenheight()
+        x = max(10, min(screen_w - width - 10, x))
+        y = max(10, min(screen_h - height - 40, y))
+        
+        window.geometry(f"{width}x{height}+{x}+{y}")
+    except Exception as e:
+        print(f"Centering error: {e}")
+        window.geometry(f"{width}x{height}")
+        
+    window.deiconify()
+    window.lift()
+    window.focus_force()
+    
+    if is_modal and platform.system() != "Darwin":
+        try:
+            window.grab_set()
+        except Exception:
+            pass
+
+    # 關鍵核心：在透明隱匿狀態下強制觸發所有元件的佈局與 Canvas 繪製 (WM_PAINT)
+    try:
+        window.update()
+    except Exception:
+        window.update_idletasks()
+        
+    # 所有元件已 100% 於後台記憶體繪製完畢，瞬間一體成型顯現，極致流暢自然！
+    if is_win:
+        try:
+            window.attributes("-alpha", 1.0)
+        except Exception:
+            pass
 
 # --- 圖形介面區 (CustomTkinter UI) ---
 
@@ -975,20 +1084,21 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
     """
     def __init__(self, parent, file_path, video_path=None):
         super().__init__(parent)
+        self.withdraw()  # 立即鎖定隱藏，避免 200x200 閃爍與 5ms 強制彈出！
+        if platform.system() == "Windows":
+            try:
+                self.attributes("-alpha", 0.0)
+            except Exception:
+                pass
         self.title(f"快速校對編輯 - {os.path.basename(file_path)}")
-        self.geometry("1240x740")
         self.minsize(750, 480)
         self.resizable(True, True)
-        
-        # 保留模態焦點鎖定，不使用 transient(parent) 以便 Windows/Linux 完整保留標題列最大化與最小化按鈕
-        if platform.system() != "Darwin":
-            self.grab_set()
             
-        # 套用 APP 圖標
+        # 套用 APP 圖標 (在隱藏狀態下直接套用，消除 200ms 延遲標題列抖動)
         icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_icon.ico")
         if os.path.exists(icon_path):
             try:
-                self.after(200, lambda: self.iconbitmap(icon_path))
+                self.iconbitmap(icon_path)
             except Exception as e:
                 print(f"Failed to set editor window icon: {e}")
         
@@ -1042,6 +1152,9 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         self.bind("<space>", self._on_space_key)
         self.bind("<F11>", lambda e: self._toggle_maximize())
         self.bind("<Configure>", self._on_window_configure)
+        
+        # 後台佈局完全就緒後一次性置中並平滑呈現 (杜絕閃爍)
+        center_and_smooth_show(self, parent, 1240, 740, is_modal=True)
 
     # --- 輔助時間解析與格式化 ---
     @staticmethod
@@ -2034,9 +2147,14 @@ class App(BaseClass):
     def __init__(self):
         super().__init__()
         
+        # 智慧螢幕尺寸偵測：針對筆電或 125%/150% 縮放螢幕自動匹配最佳高度，確保不沉入工作列
+        scale = self._get_window_scaling() if hasattr(self, '_get_window_scaling') else 1.0
+        screen_h = int(self.winfo_screenheight() / scale)
+        init_h = min(700, max(580, screen_h - 70))
         self.title("Video to Subtitle - 本地語音轉字幕工具")
-        self.geometry("780x800")
-        self.minsize(720, 750)
+        self.geometry(f"800x{init_h}")
+        self.minsize(760, 500)
+        self.is_adv_settings_visible = False
         
         # Windows 工作列圖示與進程組 ID 宣告，防止 Windows 使用 Python 預設火箭圖示
         if platform.system() == "Windows":
@@ -2068,6 +2186,7 @@ class App(BaseClass):
         self.translate_en_var = ctk.BooleanVar(value=False) 
         self.max_chars_var = ctk.StringVar(value="35") 
         self.hotwords_var = ctk.StringVar(value="") 
+        self.prompt_var = ctk.StringVar(value="") 
         self.model_path_var = ctk.StringVar(value="") 
         
         # 進階設定變數
@@ -2207,116 +2326,115 @@ class App(BaseClass):
 
         # --- 2. Main Content Area (Middle) ---
         self.main_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.main_frame.grid(row=1, column=0, sticky="nsew", padx=20, pady=10)
+        self.main_frame.grid(row=1, column=0, sticky="nsew", padx=20, pady=(5, 5))
         self.main_frame.grid_columnconfigure(0, weight=1)
-        self.main_frame.grid_rowconfigure(4, weight=1, minsize=90) # Log area expands, guaranteed at least ~4-5 lines
+        self.main_frame.grid_rowconfigure(4, weight=1, minsize=80) # 訊息日誌區隨著視窗高度自動展延
 
         # File Selection Frame (Batch Processing)
-        self.file_frame = ctk.CTkFrame(self.main_frame)
-        self.file_frame.grid(row=0, column=0, sticky="ew", pady=(0, 15))
+        self.file_frame = ctk.CTkFrame(self.main_frame, corner_radius=8)
+        self.file_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
         self.file_frame.grid_columnconfigure(0, weight=1) # Textbox expands
         
-        self.label_file = ctk.CTkLabel(self.file_frame, text="1. 待處理清單 (支援拖曳多個檔案)", font=ctk.CTkFont(size=14, weight="bold"))
-        self.label_file.grid(row=0, column=0, columnspan=2, padx=15, pady=(10, 0), sticky="w")
+        self.label_file = ctk.CTkLabel(self.file_frame, text="1. 待處理清單 (支援拖曳多個檔案)", font=ctk.CTkFont(size=13, weight="bold"))
+        self.label_file.grid(row=0, column=0, columnspan=2, padx=15, pady=(8, 2), sticky="w")
 
         # File List Textbox
-        self.textbox_files = ctk.CTkTextbox(self.file_frame, height=100)
-        self.textbox_files.grid(row=1, column=0, padx=15, pady=10, sticky="ew")
+        self.textbox_files = ctk.CTkTextbox(self.file_frame, height=75)
+        self.textbox_files.grid(row=1, column=0, padx=(15, 10), pady=(2, 8), sticky="ew")
         self.textbox_files.configure(state="disabled") # Read-only
         
         # Buttons Frame within File Frame (Right side)
         self.btns_file_frame = ctk.CTkFrame(self.file_frame, fg_color="transparent")
-        self.btns_file_frame.grid(row=1, column=1, padx=15, pady=10, sticky="n")
+        self.btns_file_frame.grid(row=1, column=1, padx=(0, 15), pady=(2, 8), sticky="n")
         
-        self.btn_add = ctk.CTkButton(self.btns_file_frame, text="加入檔案...", command=self.browse_file, width=120)
-        self.btn_add.pack(fill="x", pady=(0, 5))
+        self.btn_add = ctk.CTkButton(self.btns_file_frame, text="加入檔案...", command=self.browse_file, width=115, height=26)
+        self.btn_add.pack(fill="x", pady=(0, 4))
         
-        self.btn_clear = ctk.CTkButton(self.btns_file_frame, text="清除清單", command=self.clear_files, width=120, fg_color="gray")
-        self.btn_clear.pack(fill="x")
+        self.btn_clear = ctk.CTkButton(self.btns_file_frame, text="清除清單", command=self.clear_files, width=115, height=26, fg_color="gray")
+        self.btn_clear.pack(fill="x", pady=(0, 4))
         
-        self.btn_edit_manual = ctk.CTkButton(self.btns_file_frame, text="編輯現有字幕檔", command=self.open_manual_edit, width=120,
+        self.btn_edit_manual = ctk.CTkButton(self.btns_file_frame, text="編輯現有字幕檔", command=self.open_manual_edit, width=115, height=26,
                                              fg_color="transparent", border_width=1, text_color=("gray10", "#DCE4EE"))
-        self.btn_edit_manual.pack(fill="x", pady=(5, 0))
+        self.btn_edit_manual.pack(fill="x")
 
         # Settings Frame
-        self.settings_frame = ctk.CTkFrame(self.main_frame)
-        self.settings_frame.grid(row=1, column=0, sticky="ew", pady=(0, 15))
+        self.settings_frame = ctk.CTkFrame(self.main_frame, corner_radius=8)
+        self.settings_frame.grid(row=1, column=0, sticky="ew", pady=(0, 10))
         self.settings_frame.grid_columnconfigure(1, weight=1)
         self.settings_frame.grid_columnconfigure(3, weight=1)
         
-        self.label_settings = ctk.CTkLabel(self.settings_frame, text="2. 轉換設定", font=ctk.CTkFont(size=14, weight="bold"))
-        self.label_settings.grid(row=0, column=0, columnspan=4, padx=15, pady=(10, 5), sticky="w")
+        self.label_settings = ctk.CTkLabel(self.settings_frame, text="2. 轉換設定", font=ctk.CTkFont(size=13, weight="bold"))
+        self.label_settings.grid(row=0, column=0, columnspan=4, padx=15, pady=(8, 4), sticky="w")
 
         # Row 1: Comboboxes
         self.label_model = ctk.CTkLabel(self.settings_frame, text="準確度 (Model):")
-        self.label_model.grid(row=1, column=0, padx=15, pady=5, sticky="e")
+        self.label_model.grid(row=1, column=0, padx=15, pady=(2, 4), sticky="e")
         
         self.model_frame = ctk.CTkFrame(self.settings_frame, fg_color="transparent")
-        self.model_frame.grid(row=1, column=1, padx=15, pady=5, sticky="ew")
+        self.model_frame.grid(row=1, column=1, padx=15, pady=(2, 4), sticky="ew")
         
         self.combo_model = ctk.CTkOptionMenu(self.model_frame, variable=self.model_var, 
                                              values=self.available_models,
-                                             command=self.on_model_select)
+                                             command=self.on_model_select, height=28)
         self.combo_model.pack(side="left", fill="x", expand=True, padx=(0, 6))
         
-        self.btn_download_model = ctk.CTkButton(self.model_frame, text="下載模型", width=80, height=28,
+        self.btn_download_model = ctk.CTkButton(self.model_frame, text="下載模型", width=75, height=28,
                                                 font=ctk.CTkFont(size=12),
                                                 command=self.manual_download_model)
         self.btn_download_model.pack(side="right")
         
         self.label_device = ctk.CTkLabel(self.settings_frame, text="運算單元:")
-        self.label_device.grid(row=1, column=2, padx=15, pady=5, sticky="e")
+        self.label_device.grid(row=1, column=2, padx=15, pady=(2, 4), sticky="e")
         
         device_values = ["cpu", "mlx"] if platform.system() == "Darwin" else ["cpu", "cuda"]
         self.combo_device = ctk.CTkOptionMenu(self.settings_frame, variable=self.device_var, values=device_values,
-                                             command=lambda _: self.refresh_model_menu())
-        self.combo_device.grid(row=1, column=3, padx=15, pady=5, sticky="ew")
+                                              command=lambda _: self.refresh_model_menu(), height=28)
+        self.combo_device.grid(row=1, column=3, padx=15, pady=(2, 4), sticky="ew")
 
         # Row 2: Format & Checkboxes
         self.label_fmt = ctk.CTkLabel(self.settings_frame, text="輸出格式:")
-        self.label_fmt.grid(row=2, column=0, padx=15, pady=5, sticky="e")
+        self.label_fmt.grid(row=2, column=0, padx=15, pady=(2, 4), sticky="e")
         self.combo_fmt = ctk.CTkOptionMenu(self.settings_frame, variable=self.format_var, 
-                                           values=["srt", "vtt", "txt", "tsv", "json"], width=100)
-        self.combo_fmt.grid(row=2, column=1, padx=15, pady=5, sticky="w")
+                                           values=["srt", "vtt", "txt", "tsv", "json"], width=100, height=28)
+        self.combo_fmt.grid(row=2, column=1, padx=15, pady=(2, 4), sticky="w")
         
         # Checkboxes 
         self.chk_frame = ctk.CTkFrame(self.settings_frame, fg_color="transparent")
         self.chk_frame.grid(row=2, column=2, columnspan=2, sticky="w")
         
         self.chk_zhtw = ctk.CTkCheckBox(self.chk_frame, text="強制繁體中文", variable=self.zh_tw_var, command=self.on_check_zhtw)
-        self.chk_zhtw.pack(side="left", padx=(15, 10), pady=5)
+        self.chk_zhtw.pack(side="left", padx=(15, 10), pady=(2, 4))
 
         self.chk_trans = ctk.CTkCheckBox(self.chk_frame, text="翻譯為英文", variable=self.translate_en_var, command=self.on_check_trans)
-        self.chk_trans.pack(side="left", padx=10, pady=5)
+        self.chk_trans.pack(side="left", padx=10, pady=(2, 4))
 
-        # Row 3: Subtitle Segmentation Strategy (Natural speech & pause driven)
-        self.label_max_chars = ctk.CTkLabel(self.settings_frame, text="字幕斷句策略:")
-        self.label_max_chars.grid(row=3, column=0, padx=15, pady=(5, 10), sticky="e")
+        # Row 3: Initial Prompt (清理預設範例文字，保持乾淨簡約)
+        self.label_prompt = ctk.CTkLabel(self.settings_frame, text="前導提示 (Prompt):")
+        self.label_prompt.grid(row=3, column=0, padx=15, pady=(2, 4), sticky="e")
         
-        self.chars_frame = ctk.CTkFrame(self.settings_frame, fg_color="transparent")
-        self.chars_frame.grid(row=3, column=1, columnspan=3, sticky="w")
+        self.prompt_container = ctk.CTkFrame(self.settings_frame, fg_color="transparent")
+        self.prompt_container.grid(row=3, column=1, columnspan=3, padx=15, pady=(2, 4), sticky="ew")
         
-        self.label_strategy_desc = ctk.CTkLabel(self.chars_frame, text="自然語意與停頓 (預設)", font=ctk.CTkFont(weight="bold"))
-        self.label_strategy_desc.pack(side="left", padx=(15, 5), pady=(5, 10))
+        self.entry_prompt = ctk.CTkEntry(self.prompt_container, textvariable=self.prompt_var,
+                                         placeholder_text="", height=28)
+        self.entry_prompt.pack(side="left", fill="x", expand=True)
         
-        self.label_limit = ctk.CTkLabel(self.chars_frame, text="防溢出上限:")
-        self.label_limit.pack(side="left", padx=(15, 5), pady=(5, 10))
+        self.btn_help_prompt = ctk.CTkButton(self.prompt_container, text="?", width=28, height=28,
+                                             fg_color="gray", hover_color="#555555", corner_radius=14,
+                                             command=self.show_prompt_help)
+        self.btn_help_prompt.pack(side="left", padx=(5, 0))
         
-        self.entry_max_chars = ctk.CTkEntry(self.chars_frame, textvariable=self.max_chars_var, width=50)
-        self.entry_max_chars.pack(side="left", padx=5, pady=(5, 10))
-        
-        self.label_chars_hint = ctk.CTkLabel(self.chars_frame, text="字 (避免破碎斷句，依語意與聲音停頓自然斷句)", font=ctk.CTkFont(size=11), text_color="gray")
-        self.label_chars_hint.pack(side="left", padx=5, pady=(5, 10))
+        self.entry_prompt.bind("<FocusIn>", lambda e: self.show_temp_status("提示: 前導提示詞能引導 Whisper 理解語境、文風與專業領域。"))
 
         # Row 4: Hotwords
         self.label_hotwords = ctk.CTkLabel(self.settings_frame, text="熱詞補強 (Hotwords):")
-        self.label_hotwords.grid(row=4, column=0, padx=15, pady=(5, 15), sticky="e")
+        self.label_hotwords.grid(row=4, column=0, padx=15, pady=(2, 6), sticky="e")
         
         self.hotwords_container = ctk.CTkFrame(self.settings_frame, fg_color="transparent")
-        self.hotwords_container.grid(row=4, column=1, columnspan=3, padx=15, pady=(5, 15), sticky="ew")
+        self.hotwords_container.grid(row=4, column=1, columnspan=3, padx=15, pady=(2, 6), sticky="ew")
         
         self.entry_hotwords = ctk.CTkEntry(self.hotwords_container, textvariable=self.hotwords_var, 
-                                           placeholder_text="例如: Python, Unity, 鄭郁翰, 崑山科技大學 (以逗號分隔)")
+                                           placeholder_text="例如: Python, Unity, 鄭郁翰 (以逗號分隔)", height=28)
         self.entry_hotwords.pack(side="left", fill="x", expand=True)
         
         # New: Import Button for Hotwords
@@ -2335,60 +2453,81 @@ class App(BaseClass):
         # 進階設定折疊按鈕 (移除 Emoji)
         self.btn_toggle_adv = ctk.CTkButton(self.settings_frame, text="顯示進階設定", 
                                            fg_color="transparent", border_width=1, text_color=("gray10", "#DCE4EE"),
-                                           command=self.toggle_advanced_settings, height=28)
-        self.btn_toggle_adv.grid(row=5, column=0, columnspan=4, sticky="w", padx=15, pady=(5, 10))
+                                           command=self.toggle_advanced_settings, height=26)
+        self.btn_toggle_adv.grid(row=5, column=0, columnspan=4, sticky="w", padx=15, pady=(2, 8))
 
-        # 進階設定面板 (Nested inside settings_frame)
+        # 進階設定面板 (使用輕巧 CTkFrame，無多餘捲軸，超緊湊 2 行佈局，高度僅約 70px)
         self.adv_settings_frame = ctk.CTkFrame(self.settings_frame, fg_color=("gray92", "gray18"), corner_radius=6)
         self.adv_settings_frame.grid_remove() # 預設隱藏
-        self.adv_settings_frame.grid_columnconfigure((1, 3), weight=1)
+        self.adv_settings_frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
         
-        # Row 0: Word Timestamps & Spacing Checkbox
-        self.chk_word_ts = ctk.CTkCheckBox(self.adv_settings_frame, text="精準時間軸 (Word Timestamps)", variable=self.word_timestamps_var)
-        self.chk_word_ts.grid(row=0, column=0, columnspan=2, padx=15, pady=10, sticky="w")
+        # Row 0: Checkboxes (4 項複選功能單行橫向展開，精緻規整)
+        self.chk_word_ts = ctk.CTkCheckBox(self.adv_settings_frame, text="精準時間軸 (Word Timestamps)", variable=self.word_timestamps_var,
+                                           font=ctk.CTkFont(size=12), checkbox_width=18, checkbox_height=18)
+        self.chk_word_ts.grid(row=0, column=0, padx=(12, 4), pady=(6, 3), sticky="w")
         
-        self.chk_spacing = ctk.CTkCheckBox(self.adv_settings_frame, text="中英文自動加空格", variable=self.spacing_var)
-        self.chk_spacing.grid(row=0, column=2, columnspan=2, padx=15, pady=10, sticky="w")
+        self.chk_spacing = ctk.CTkCheckBox(self.adv_settings_frame, text="中英文自動加空格", variable=self.spacing_var,
+                                           font=ctk.CTkFont(size=12), checkbox_width=18, checkbox_height=18)
+        self.chk_spacing.grid(row=0, column=1, padx=(4, 4), pady=(6, 3), sticky="w")
         
-        # Row 1: Case Checkbox & VAD Filter Checkbox
-        self.chk_case_corr = ctk.CTkCheckBox(self.adv_settings_frame, text="熱詞大小寫自動校正", variable=self.case_correction_var)
-        self.chk_case_corr.grid(row=1, column=0, columnspan=2, padx=15, pady=(5, 10), sticky="w")
+        self.chk_case_corr = ctk.CTkCheckBox(self.adv_settings_frame, text="熱詞大小寫自動校正", variable=self.case_correction_var,
+                                             font=ctk.CTkFont(size=12), checkbox_width=18, checkbox_height=18)
+        self.chk_case_corr.grid(row=0, column=2, padx=(4, 4), pady=(6, 3), sticky="w")
         
-        self.chk_vad = ctk.CTkCheckBox(self.adv_settings_frame, text="VAD 靜音過濾 (消除靜音幻覺)", variable=self.vad_filter_var)
-        self.chk_vad.grid(row=1, column=2, columnspan=2, padx=15, pady=(5, 10), sticky="w")
+        self.chk_vad = ctk.CTkCheckBox(self.adv_settings_frame, text="VAD 靜音過濾", variable=self.vad_filter_var,
+                                       font=ctk.CTkFont(size=12), checkbox_width=18, checkbox_height=18)
+        self.chk_vad.grid(row=0, column=3, padx=(4, 12), pady=(6, 3), sticky="w")
         
-        # Row 2: CPU Threads & Punctuation Clean
-        self.label_threads = ctk.CTkLabel(self.adv_settings_frame, text="CPU 執行緒數:")
-        self.label_threads.grid(row=2, column=0, padx=15, pady=(5, 15), sticky="e")
-        
-        self.combo_threads = ctk.CTkOptionMenu(self.adv_settings_frame, variable=self.cpu_threads_var,
-                                               values=["1", "2", "4", "8", "16"], width=80)
-        self.combo_threads.grid(row=2, column=1, padx=15, pady=(5, 15), sticky="w")
+        # Row 1: 下拉選單與斷句設定 (全部整合為精緻的一行水平排列)
+        self.chars_frame = ctk.CTkFrame(self.adv_settings_frame, fg_color="transparent")
+        self.chars_frame.grid(row=1, column=0, columnspan=4, padx=12, pady=(2, 6), sticky="ew")
 
-        self.label_clean_punc = ctk.CTkLabel(self.adv_settings_frame, text="標點符號處理:")
-        self.label_clean_punc.grid(row=2, column=2, padx=15, pady=(5, 15), sticky="e")
+        self.label_threads = ctk.CTkLabel(self.chars_frame, text="CPU 執行緒:", font=ctk.CTkFont(size=12))
+        self.label_threads.pack(side="left", padx=(0, 4))
+        
+        self.combo_threads = ctk.CTkOptionMenu(self.chars_frame, variable=self.cpu_threads_var,
+                                               values=["1", "2", "4", "8", "16"], width=65, height=24, font=ctk.CTkFont(size=11))
+        self.combo_threads.pack(side="left", padx=(0, 12))
+
+        self.label_clean_punc = ctk.CTkLabel(self.chars_frame, text="標點處理:", font=ctk.CTkFont(size=12))
+        self.label_clean_punc.pack(side="left", padx=(0, 4))
         
         clean_punc_values = list(self.clean_punc_mapping.values())
-        self.combo_clean_punc = ctk.CTkOptionMenu(self.adv_settings_frame, variable=self.clean_punc_var,
-                                                  values=clean_punc_values)
-        self.combo_clean_punc.grid(row=2, column=3, padx=15, pady=(5, 15), sticky="w")
+        self.combo_clean_punc = ctk.CTkOptionMenu(self.chars_frame, variable=self.clean_punc_var,
+                                                  values=clean_punc_values, width=105, height=24, font=ctk.CTkFont(size=11))
+        self.combo_clean_punc.pack(side="left", padx=(0, 12))
+
+        self.label_max_chars = ctk.CTkLabel(self.chars_frame, text="斷句策略:", font=ctk.CTkFont(size=12))
+        self.label_max_chars.pack(side="left", padx=(0, 4))
+        
+        self.label_strategy_desc = ctk.CTkLabel(self.chars_frame, text="自然語意與停頓 (預設)", font=ctk.CTkFont(size=12, weight="bold"))
+        self.label_strategy_desc.pack(side="left", padx=(0, 10))
+        
+        self.label_limit = ctk.CTkLabel(self.chars_frame, text="防溢上限:", font=ctk.CTkFont(size=12))
+        self.label_limit.pack(side="left", padx=(0, 4))
+        
+        self.entry_max_chars = ctk.CTkEntry(self.chars_frame, textvariable=self.max_chars_var, width=42, height=24, font=ctk.CTkFont(size=12))
+        self.entry_max_chars.pack(side="left", padx=(0, 4))
+        
+        self.label_chars_hint = ctk.CTkLabel(self.chars_frame, text="字", font=ctk.CTkFont(size=11), text_color="gray")
+        self.label_chars_hint.pack(side="left")
 
         # Action Buttons
         self.action_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
-        self.action_frame.grid(row=2, column=0, sticky="ew", pady=(0, 10))
+        self.action_frame.grid(row=2, column=0, sticky="ew", pady=(0, 6))
 
         self.btn_run = ctk.CTkButton(self.action_frame, text="開始轉錄 (Start)", command=self.start_thread, 
-                                     font=ctk.CTkFont(size=15, weight="bold"), height=45)
+                                     font=ctk.CTkFont(size=14, weight="bold"), height=40)
         self.btn_run.pack(side="left", fill="x", expand=True, padx=(0, 10))
 
         self.btn_cancel = ctk.CTkButton(self.action_frame, text="取消 (Cancel)", command=self.cancel_task, 
                                         fg_color="transparent", border_width=2, text_color=("gray10", "#DCE4EE"),
-                                        font=ctk.CTkFont(size=15, weight="bold"), height=45, state="disabled")
+                                        font=ctk.CTkFont(size=14, weight="bold"), height=40, state="disabled")
         self.btn_cancel.pack(side="right", fill="x", expand=True, padx=(0, 0))
 
         # Progress Bar Frame (兼顧特效與進度顯示)
         self.progress_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
-        self.progress_frame.grid(row=3, column=0, sticky="ew", pady=(0, 10))
+        self.progress_frame.grid(row=3, column=0, sticky="ew", pady=(0, 6))
         self.progress_frame.grid_columnconfigure(0, weight=1)
 
         self.progressbar = SmoothProgressBar(self.progress_frame)
@@ -2398,9 +2537,9 @@ class App(BaseClass):
         self.progress_label = ctk.CTkLabel(self.progress_frame, text="0.0%", width=45, font=ctk.CTkFont(size=12, weight="bold"))
         self.progress_label.grid(row=0, column=1, sticky="e")
 
-        # Log Area
-        self.log_textbox = ctk.CTkTextbox(self.main_frame, height=95, font=ctk.CTkFont(family="Consolas", size=12))
-        self.log_textbox.grid(row=4, column=0, sticky="nsew", pady=(0, 5))
+        # Log Area (自動伸縮展延，滿足需求 1)
+        self.log_textbox = ctk.CTkTextbox(self.main_frame, height=85, font=ctk.CTkFont(family="Consolas", size=12))
+        self.log_textbox.grid(row=4, column=0, sticky="nsew", pady=(0, 4))
         self.log_textbox.configure(state="disabled")
 
         # --- 3. Footer Controls (Row 2) ---
@@ -2652,22 +2791,20 @@ class App(BaseClass):
             self.storage_window.focus_force()
             return
 
-        self.storage_window = ctk.CTkToplevel(self)
+        self.storage_window = create_smooth_toplevel(self)
         self.storage_window.title("模型儲存管理與預先下載")
-        self.storage_window.geometry("660x660")
         self.storage_window.resizable(False, False)
         
-        # 套用 APP 圖標
+        # 套用 APP 圖標 (直接套用，消除 200ms 延遲標題列抖動)
         icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_icon.ico")
         if os.path.exists(icon_path):
             try:
-                self.storage_window.after(200, lambda: self.storage_window.iconbitmap(icon_path))
+                self.storage_window.iconbitmap(icon_path)
             except Exception as e:
                 print(f"Failed to set storage window icon: {e}")
         
         if platform.system() != "Darwin":
             self.storage_window.transient(self)
-            self.storage_window.grab_set()
         
         # 狀態控制變數
         storage_cancel_flag = [False]
@@ -2936,6 +3073,9 @@ class App(BaseClass):
 
         # 5. 底部關閉按鈕
         ctk.CTkButton(self.storage_window, text="完成 (Close)", command=self.storage_window.destroy, width=110, height=32).pack(pady=(5, 15))
+        
+        # 後台渲染完成後一次性置中並平滑呈現 (杜絕閃爍)
+        center_and_smooth_show(self.storage_window, self, 660, 660, is_modal=True)
 
 
     def browse_model_path(self):
@@ -2992,6 +3132,7 @@ class App(BaseClass):
                     val = "35"
                 self.max_chars_var.set(val)
             if "hotwords" in config: self.hotwords_var.set(config["hotwords"])
+            if "prompt" in config: self.prompt_var.set(config["prompt"])
             if "model_path" in config:
                 saved_path = config["model_path"].strip()
                 if saved_path:
@@ -3021,6 +3162,7 @@ class App(BaseClass):
             "translate_en": self.translate_en_var.get(),
             "max_chars": self.max_chars_var.get(),
             "hotwords": self.hotwords_var.get(),
+            "prompt": self.prompt_var.get(),
             "model_path": self.model_path_var.get(),
             "appearance_mode": ctk.get_appearance_mode()
         }
@@ -3029,6 +3171,27 @@ class App(BaseClass):
                 json.dump(config, f, indent=4, ensure_ascii=False)
         except Exception as e:
             print(f"DEBUG: Failed to save config: {e}")
+
+    def show_prompt_help(self):
+        help_msg = (
+            "【自訂前導提示詞 (Initial Prompt) 使用說明】\n\n"
+            "前導提示詞是在語音辨識開始前，提供給 Whisper 模型的「上下文提示或開場語境」。\n\n"
+            "1. 運作原理：\n"
+            "   Whisper 會將這段文字作為開端，藉此推論影音的語境、行業主題、文風語氣或標點風格。\n\n"
+            "2. 適用場景：\n"
+            "   • 特定領域演講/課程：例如「這是一場關於機器學習與 Python 資料科學的線上教學。」\n"
+            "   • 訪談對話風格：例如「以下是主持人與來賓關於全球科技趨勢的深度訪談。」\n"
+            "   • 多語種或專有名詞情境：引導模型建立正確的詞彙理解方向。\n\n"
+            "3. 與「熱詞補強 (Hotwords)」的差異：\n"
+            "   • 前導提示詞：適合「完整語意句子」，奠定整篇語境與文風風格。\n"
+            "   • 熱詞補強：適合「以逗號分隔的特定單詞/人名/術語」，精準提升該詞彙的命中率。\n"
+            "   • 兩者可同時搭配使用，達到最佳的轉錄精準度！\n\n"
+            "4. 注意事項：\n"
+            "   • 請保持精簡扼要（建議 1~3 句話以內），避免填寫過長造成注意力分散。\n"
+            "   • 若有勾選「強制繁體中文」，系統會自動將繁中引導語與您的自訂提示詞完美融合。"
+        )
+        parent = self.about_window if (hasattr(self, 'about_window') and self.about_window is not None and self.about_window.winfo_exists()) else self
+        self.after(100, lambda: messagebox.showinfo("功能說明: 自訂前導提示詞", help_msg, parent=parent))
 
     def show_hotwords_help(self):
         help_msg = (
@@ -3193,26 +3356,20 @@ class App(BaseClass):
             return
 
         # Create a new Toplevel window
-        self.about_window = ctk.CTkToplevel(self)
+        self.about_window = create_smooth_toplevel(self)
         self.about_window.title("關於本程式")
-        self.about_window.geometry("500x600")
         self.about_window.resizable(False, False)
         
-        # 套用 APP 圖標
+        # 套用 APP 圖標 (直接套用，消除 200ms 延遲標題列抖動)
         icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_icon.ico")
         if os.path.exists(icon_path):
             try:
-                self.about_window.after(200, lambda: self.about_window.iconbitmap(icon_path))
+                self.about_window.iconbitmap(icon_path)
             except Exception as e:
                 print(f"Failed to set about window icon: {e}")
         
-        # Ensure it stays on top and grabs focus (針對 macOS 特殊處理避免崩潰)
-        if platform.system() == "Darwin":
-            # macOS 下直接呼叫 transient 或 grab_set 極易導致 Tcl/Tk 崩潰
-            self.about_window.after(200, self.about_window.lift)
-        else:
+        if platform.system() != "Darwin":
             self.about_window.transient(self)
-            self.about_window.grab_set()
             
         # Bind local variable for compatibility with the rest of the layout logic
         about_window = self.about_window
@@ -3281,6 +3438,9 @@ class App(BaseClass):
 
         # Close Button
         ctk.CTkButton(about_window, text="關閉 (Close)", command=about_window.destroy, width=100).pack(pady=10)
+        
+        # 後台渲染完成後一次性置中並平滑呈現 (杜絕閃爍)
+        center_and_smooth_show(self.about_window, self, 500, 600, is_modal=True)
 
     def log(self, msg):
         def _update():
@@ -3385,9 +3545,17 @@ class App(BaseClass):
             
             use_zh_tw = self.zh_tw_var.get()
             translate_to_en = self.translate_en_var.get()
+            user_prompt = self.prompt_var.get().strip()
             
             task = "translate" if translate_to_en else "transcribe"
-            initial_prompt = "以下是使用台灣繁體中文撰寫的字幕。" if (use_zh_tw and not translate_to_en) else None
+            if use_zh_tw and not translate_to_en:
+                if user_prompt:
+                    # 智慧融合：繁中前導引導句 + 使用者自訂提示詞
+                    initial_prompt = f"以下是使用台灣繁體中文撰寫的字幕。{user_prompt}"
+                else:
+                    initial_prompt = "以下是使用台灣繁體中文撰寫的字幕。"
+            else:
+                initial_prompt = user_prompt if user_prompt else None
             
             try:
                 user_max_chars = int(self.max_chars_var.get())
@@ -3629,12 +3797,29 @@ class App(BaseClass):
             self.after(0, self.update_download_button_state)
 
     def toggle_advanced_settings(self):
-        if self.adv_settings_frame.winfo_viewable():
+        if self.is_adv_settings_visible:
             self.adv_settings_frame.grid_remove()
             self.btn_toggle_adv.configure(text="顯示進階設定")
+            self.is_adv_settings_visible = False
+            # 收起時復原日誌區最小高度保證
+            try:
+                self.main_frame.grid_rowconfigure(4, weight=1, minsize=80)
+            except Exception:
+                pass
         else:
-            self.adv_settings_frame.grid(row=6, column=0, columnspan=4, sticky="ew", pady=(0, 15), padx=15)
+            # 展開進階設定：由於採 2 行緊湊佈局高度僅約 70px，無須複雜滾動計算
+            try:
+                scale = self._get_window_scaling() if hasattr(self, '_get_window_scaling') else 1.0
+                cur_h = int(self.winfo_height() / scale)
+                # 若處於極矮小視窗 (<640px)，適度讓位給日誌區，保證按鈕與進度條 100% 不被擠出
+                min_log_h = 30 if cur_h < 640 else 80
+                self.main_frame.grid_rowconfigure(4, weight=1, minsize=min_log_h)
+            except Exception:
+                pass
+
+            self.adv_settings_frame.grid(row=6, column=0, columnspan=4, sticky="ew", pady=(0, 8), padx=15)
             self.btn_toggle_adv.configure(text="隱藏進階設定")
+            self.is_adv_settings_visible = True
 
     def open_manual_edit(self):
         file_types = [("字幕與文字檔案", "*.srt *.vtt *.txt"), ("SRT 字幕檔", "*.srt"), ("VTT 字幕檔", "*.vtt"), ("TXT 純文字檔", "*.txt"), ("所有檔案", "*.*")]
@@ -3650,19 +3835,17 @@ class App(BaseClass):
             messagebox.showinfo("任務完成", f"批次處理結束！\n共成功轉錄 0 個檔案。")
             return
             
-        dialog = ctk.CTkToplevel(self)
+        dialog = create_smooth_toplevel(self)
         dialog.title("轉錄任務完成")
-        dialog.geometry("680x420")
         
         if platform.system() != "Darwin":
             dialog.transient(self)
-            dialog.grab_set()
             
-        # 套用 APP 圖標
+        # 套用 APP 圖標 (直接套用，消除 200ms 延遲標題列抖動)
         icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_icon.ico")
         if os.path.exists(icon_path):
             try:
-                dialog.after(200, lambda: dialog.iconbitmap(icon_path))
+                dialog.iconbitmap(icon_path)
             except Exception as e:
                 print(f"Failed to set dialog icon: {e}")
             
@@ -3746,6 +3929,9 @@ class App(BaseClass):
         # 確定按鈕
         btn_close = ctk.CTkButton(dialog, text="確定", command=dialog.destroy, width=120)
         btn_close.pack(pady=15)
+        
+        # 後台渲染完成後一次性置中並平滑呈現 (杜絕閃爍)
+        center_and_smooth_show(dialog, self, 680, 420, is_modal=True)
 
 if __name__ == "__main__":
     import multiprocessing
