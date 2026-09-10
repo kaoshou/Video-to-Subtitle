@@ -38,7 +38,7 @@ jobs:
       run: |
         pyinstaller VideoToSubtitle.spec
 
-    - name: 建立 Mac DMG 安裝檔
+    - name: 建立 Mac DMG 安裝檔 (含極限壓縮優化)
       if: matrix.os == 'macos-latest'
       run: |
         brew install create-dmg
@@ -52,8 +52,19 @@ jobs:
           --icon "VideoToSubtitle.app" 150 190 \
           --hide-extension "VideoToSubtitle.app" \
           --app-drop-link 450 185 \
-          "dist/VideoToSubtitle.dmg" \
+          "dist/VideoToSubtitle_raw.dmg" \
           "dist/dmg/"
+        
+        echo "=== 正在執行 DMG 系統級極限壓縮 (剔除空白磁區與二進位壓縮) ==="
+        if hdiutil convert "dist/VideoToSubtitle_raw.dmg" -format ULMO -o "dist/VideoToSubtitle.dmg"; then
+          echo "ULMO (LZMA) 壓縮完成！"
+        else
+          echo "降級至 UDZO (zlib level 9) 壓縮..."
+          hdiutil convert "dist/VideoToSubtitle_raw.dmg" -format UDZO -imagekey zlib-level=9 -o "dist/VideoToSubtitle.dmg"
+        fi
+        rm -f "dist/VideoToSubtitle_raw.dmg"
+        echo "=== 壓縮後最終 DMG 檔案清單與大小 ==="
+        ls -lh "dist/VideoToSubtitle.dmg"
 
     - name: 上傳 Windows 成品 (Artifact)
       if: matrix.os == 'windows-latest'
