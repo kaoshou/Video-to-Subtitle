@@ -2154,7 +2154,7 @@ class App(BaseClass):
         scale = self._get_window_scaling() if hasattr(self, '_get_window_scaling') else 1.0
         screen_h = int(self.winfo_screenheight() / scale)
         init_h = min(700, max(580, screen_h - 70))
-        self.title("Video to Subtitle - 本地語音轉字幕工具")
+        self.title(f"Video to Subtitle (v{get_version()}) - 本地語音轉字幕工具")
         self.geometry(f"800x{init_h}")
         self.minsize(760, 500)
         self.is_adv_settings_visible = False
@@ -2372,7 +2372,7 @@ class App(BaseClass):
         self.logo_label = ctk.CTkLabel(self.header_frame, text="Video to Subtitle", font=ctk.CTkFont(size=24, weight="bold"))
         self.logo_label.pack(side="left")
         
-        self.subtitle_label = ctk.CTkLabel(self.header_frame, text="本地語音轉字幕工具", font=ctk.CTkFont(size=14), text_color="gray")
+        self.subtitle_label = ctk.CTkLabel(self.header_frame, text=f"本地語音轉字幕工具  v{get_version()}", font=ctk.CTkFont(size=14), text_color="gray")
         self.subtitle_label.pack(side="left", padx=(10, 0), pady=(5, 0))
 
         # --- 2. Main Content Area (Middle) ---
@@ -3713,12 +3713,31 @@ class App(BaseClass):
             except Exception as e:
                 error_str = str(e).lower()
 
+                # 若為 Apple MLX 模組在當前 macOS 環境下載入異常，自動無縫切換至 CPU 模式繼續轉錄！
+                # 徹底消滅要求使用者打開終端機執行 pip 的冷冰冰彈窗，真正實現「簡單使用，不需額外安裝任何東西」！
+                if device in ["mps", "mlx"] and ("mlx" in error_str or "apple mlx" in error_str or "dylib" in error_str or "metal" in error_str):
+                    self.log(f"\n⚠️ 提示: 本機系統環境載入 Apple MLX 模組遇到限制: {e}")
+                    self.log("💡 系統已自動為您無縫切換至內建高效 CPU 核心進行轉錄，無需任何手動安裝！")
+                    device = "cpu"
+                    compute_type = "int8"
+                    self.after(0, lambda: self.device_var.set("cpu"))
+                    try:
+                        self.transcriber = SubtitleTranscriber(model_size, device, compute_type, download_root=current_download_root)
+                        self.transcriber.load_model(
+                            log_callback=self.log,
+                            progress_callback=on_download_progress,
+                            cancel_check_callback=lambda: self.cancel_flag
+                        )
+                        self.current_downloading_model = None
+                        self.after(0, self.refresh_model_menu)
+                    except Exception as retry_e:
+                        raise retry_e
+
                 # 檢查是否為權限或存取相關錯誤 (排除網路/模型下載失敗的相關錯誤)
-                is_permission = (
+                elif (
                     ("permission denied" in error_str or "access is denied" in error_str or "read-only file system" in error_str)
                     and not ("模型下載" in str(e) or "網路" in str(e) or "connection" in error_str or "huggingface" in error_str)
-                )
-                if is_permission:
+                ):
                     self.log(f"⚠️ 預設路徑存取失敗: {e}")
                     
                     # 詢問使用者

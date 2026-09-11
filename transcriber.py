@@ -589,7 +589,7 @@ class SubtitleTranscriber:
                     import traceback
                     tb_str = traceback.format_exc()
                     print(f"DEBUG: Error importing mlx_whisper: {tb_str}")
-                    msg = f"要啟用 Apple MLX 框架加速 (Mac GPU)，請確認已安裝 mlx-whisper 套件。\n\n詳細錯誤原因：{e}"
+                    msg = f"Apple MLX 框架加速模組初始化失敗：{e}"
                     if log_callback:
                         log_callback(f"錯誤: {msg}\n{tb_str}")
                     raise RuntimeError(msg)
