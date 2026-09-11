@@ -146,7 +146,7 @@ def get_version():
     except Exception as e:
         print(f"DEBUG: Failed to load version from pyproject.toml: {e}")
     
-    return "2.7.3" # Fallback
+    return "2.7.7" # Fallback
 
 # --- 設定外觀 ---
 ctk.set_appearance_mode("System")  # Modes: "System" (standard), "Dark", "Light"
@@ -4186,14 +4186,54 @@ if __name__ == "__main__":
     # Enable multiprocessing support for frozen executables
     multiprocessing.freeze_support()
 
-    # 確保 macOS 下動態庫搜尋路徑包含 App Bundle 內部與 Frameworks 目錄
+    # 確保 macOS 下動態庫搜尋路徑包含 App Bundle 內部與 Frameworks 目錄，並自動同調部署 MLX metallib
     if sys.platform == 'darwin' and getattr(sys, 'frozen', False):
+        import shutil
         app_dir = os.path.dirname(os.path.abspath(sys.executable))
         fw_dir = os.path.abspath(os.path.join(app_dir, "..", "Frameworks"))
+        res_dir = os.path.abspath(os.path.join(app_dir, "..", "Resources"))
         mlx_lib = os.path.join(app_dir, "mlx", "lib")
         fw_mlx_lib = os.path.join(fw_dir, "mlx", "lib")
         existing_dyld = os.environ.get('DYLD_LIBRARY_PATH', '')
         os.environ['DYLD_LIBRARY_PATH'] = f"{app_dir}:{fw_dir}:{mlx_lib}:{fw_mlx_lib}:{existing_dyld}".rstrip(':')
+
+        # 自動尋找任何存在的 metallib 並同步分發至 MLX 所有潛在尋訪路徑 (MacOS/Resources/Frameworks/mlx/lib)
+        cand_metallibs = [
+            os.path.join(app_dir, "mlx.metallib"),
+            os.path.join(app_dir, "default.metallib"),
+            os.path.join(app_dir, "Resources", "mlx.metallib"),
+            os.path.join(app_dir, "Resources", "default.metallib"),
+            os.path.join(fw_dir, "mlx.metallib"),
+            os.path.join(fw_dir, "default.metallib"),
+            os.path.join(res_dir, "mlx.metallib"),
+            os.path.join(res_dir, "default.metallib"),
+            os.path.join(fw_mlx_lib, "mlx.metallib"),
+            os.path.join(fw_mlx_lib, "default.metallib"),
+            os.path.join(res_dir, "mlx", "lib", "mlx.metallib"),
+            os.path.join(app_dir, "mlx", "lib", "mlx.metallib"),
+            os.path.join(app_dir, "mlx", "mlx.metallib"),
+        ]
+        found_lib = next((p for p in cand_metallibs if os.path.isfile(p)), None)
+        if found_lib:
+            target_folders = [
+                app_dir,
+                os.path.join(app_dir, "Resources"),
+                os.path.join(app_dir, "mlx"),
+                mlx_lib,
+                fw_dir,
+                os.path.join(fw_dir, "Resources"),
+                fw_mlx_lib,
+                res_dir,
+            ]
+            for target_folder in target_folders:
+                try:
+                    os.makedirs(target_folder, exist_ok=True)
+                    for alias in ["mlx.metallib", "default.metallib"]:
+                        dest = os.path.join(target_folder, alias)
+                        if not os.path.exists(dest):
+                            shutil.copy2(found_lib, dest)
+                except Exception:
+                    pass
 
     # CI/CD 或打包後 Smoke Test 支援
     if "--test-import-mlx" in sys.argv:

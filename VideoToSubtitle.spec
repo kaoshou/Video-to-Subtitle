@@ -36,6 +36,32 @@ try:
                     print(f"Successfully collected full directory for {pkg_name}: {pkg_dir}")
             except Exception as pkg_e:
                 print(f"Notice: failed to collect full directory for {pkg_name}: {pkg_e}")
+
+        # 關鍵著色器多重同調收錄：保證在 Contents/MacOS/ 與 Resources/ 等所有搜尋點均存在
+        try:
+            import mlx
+            mlx_root = os.path.dirname(os.path.abspath(mlx.__file__))
+            cand_files = [
+                os.path.join(mlx_root, "lib", "mlx.metallib"),
+                os.path.join(mlx_root, "mlx.metallib"),
+            ]
+            metallib_path = next((p for p in cand_files if os.path.isfile(p)), None)
+            if metallib_path:
+                print(f"Found MLX metallib at: {metallib_path}")
+                # 同調分發至根目錄 (Contents/MacOS) 與 Resources 等目標
+                for dest in ['.', 'Resources', 'mlx', 'mlx/lib']:
+                    datas.append((metallib_path, dest))
+                    
+                # 建立臨時 default.metallib 鏡像並加入打包
+                import tempfile, shutil
+                tmp_dir = tempfile.mkdtemp()
+                default_meta_path = os.path.join(tmp_dir, "default.metallib")
+                shutil.copy2(metallib_path, default_meta_path)
+                for dest in ['.', 'Resources', 'mlx', 'mlx/lib']:
+                    datas.append((default_meta_path, dest))
+                print(f"Successfully staged mlx.metallib and default.metallib across all bundle target dirs")
+        except Exception as meta_e:
+            print(f"Notice: failed to stage metallib: {meta_e}")
 except Exception as e:
     print(f"Error collecting macOS dependencies: {e}")
 tmp_ret = collect_all('opencc')

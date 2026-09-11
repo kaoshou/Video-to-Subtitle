@@ -38,12 +38,56 @@ jobs:
       run: |
         pyinstaller VideoToSubtitle.spec
 
-    - name: 驗證 Mac App 與 MLX 模組完整性 (Smoke Test)
+    - name: 注入與修補 MLX Metal Shader 函式庫 (macOS App Bundle)
       if: matrix.os == 'macos-latest'
       run: |
-        echo "=== 正在測試 App Bundle 內部 Python 與 MLX 模組導入 ==="
+        echo "=== 正在定位 host Python 環境中的 mlx.metallib ==="
+        METALLIB=$(python -c "import mlx, os; p = os.path.join(os.path.dirname(mlx.__file__), 'lib', 'mlx.metallib'); print(p if os.path.exists(p) else '')")
+        if [ -z "$METALLIB" ]; then
+          METALLIB=$(find $(python -c "import site; print(site.getsitepackages()[0])") -name "mlx.metallib" | head -n 1)
+        fi
+        echo "找到 mlx.metallib 來源路徑: $METALLIB"
+
+        APP_DIR="dist/VideoToSubtitle.app/Contents/MacOS"
+        FW_DIR="dist/VideoToSubtitle.app/Contents/Frameworks"
+        RES_DIR="dist/VideoToSubtitle.app/Contents/Resources"
+
+        target_dirs=(
+          "$APP_DIR"
+          "$APP_DIR/Resources"
+          "$APP_DIR/mlx"
+          "$APP_DIR/mlx/lib"
+          "$FW_DIR"
+          "$FW_DIR/Resources"
+          "$FW_DIR/mlx"
+          "$FW_DIR/mlx/lib"
+          "$RES_DIR"
+        )
+
+        for d in "${target_dirs[@]}"; do
+          mkdir -p "$d"
+          cp -f "$METALLIB" "$d/mlx.metallib"
+          cp -f "$METALLIB" "$d/default.metallib"
+          echo "已部署 metallib 至: $d"
+        done
+
+        echo "=== 驗證 App Bundle 內部 metallib 佈局 ==="
+        find dist/VideoToSubtitle.app -name "*metallib"
+
+    - name: 驗證 Mac App 與 MLX 模組完整性 (Smoke Test - 隔離主機環境測試)
+      if: matrix.os == 'macos-latest'
+      run: |
+        echo "=== 正在隔離 host Python 環境中的 mlx 模組，模擬純淨 Mac 使用者系統 ==="
+        HOST_MLX_DIR=$(python -c "import mlx, os; print(os.path.dirname(mlx.__file__))")
+        echo "Host MLX 目錄: $HOST_MLX_DIR"
+        mv "$HOST_MLX_DIR" "${HOST_MLX_DIR}_backup"
+
+        echo "=== 正在執行獨立 App Bundle 的 MLX Metal GPU 煙霧測試 ==="
         chmod +x dist/VideoToSubtitle.app/Contents/MacOS/VideoToSubtitle
         ./dist/VideoToSubtitle.app/Contents/MacOS/VideoToSubtitle --test-import-mlx
+
+        echo "=== 測試通過！恢復 host Python 環境 ==="
+        mv "${HOST_MLX_DIR}_backup" "$HOST_MLX_DIR"
 
     - name: 建立 Mac DMG 安裝檔 (含極限壓縮優化)
       if: matrix.os == 'macos-latest'

@@ -584,11 +584,17 @@ class SubtitleTranscriber:
             if self.device in ["mps", "mlx"]:
                 print("DEBUG: Initializing MLX Whisper for Apple Silicon...")
                 try:
+                    import mlx
+                    import mlx.core as mx
                     import mlx_whisper
+                    # 執行輕量 Metal GPU 運算，確認 Metal Shader (metallib) 與加速運算完整就緒
+                    _t = mx.array([1.0, 2.0]) + 1.0
+                    mx.eval(_t)
+                    print(f"DEBUG: MLX Metal GPU core verified successfully.")
                 except Exception as e:
                     import traceback
                     tb_str = traceback.format_exc()
-                    print(f"DEBUG: Error importing mlx_whisper: {tb_str}")
+                    print(f"DEBUG: Error importing or initializing MLX: {tb_str}")
                     msg = f"Apple MLX 框架加速模組初始化失敗：{e}"
                     if log_callback:
                         log_callback(f"錯誤: {msg}\n{tb_str}")
