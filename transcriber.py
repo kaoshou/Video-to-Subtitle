@@ -745,16 +745,30 @@ class SubtitleTranscriber:
         # 執行轉錄
         try:
             if getattr(self, "model_type", "faster-whisper") == "mlx-whisper":
-                print("DEBUG: checking ffmpeg for MLX Whisper...")
-                avail, ffmpeg_path, err_msg = check_ffmpeg_available()
-                if not avail:
+                print("DEBUG: Preparing audio input for MLX Whisper...")
+                import mlx_whisper
+                
+                # 優先使用內建 PyAV (faster-whisper.audio) 原生解碼音訊為 16kHz mono float32 陣列
+                # 徹底解除對系統外部 FFmpeg 命令列的強制依賴
+                audio_input = file_path
+                try:
+                    from faster_whisper.audio import decode_audio
                     if log_callback:
-                        log_callback(f"❌ {err_msg}")
-                    raise RuntimeError(err_msg)
+                        log_callback("提示: 正在使用內建 PyAV 核心進行高品質音訊解碼...")
+                    audio_input = decode_audio(file_path)
+                    print(f"DEBUG: Audio decoded successfully via PyAV, shape={getattr(audio_input, 'shape', None)}")
+                except Exception as av_err:
+                    print(f"DEBUG: PyAV decode failed or skipped, falling back to file path: {av_err}")
+                    # 若 PyAV 解碼失敗，則檢查系統外部 FFmpeg
+                    avail, ffmpeg_path, err_msg = check_ffmpeg_available()
+                    if not avail:
+                        if log_callback:
+                            log_callback(f"❌ 影音解碼失敗且未安裝 FFmpeg: {av_err}")
+                        raise RuntimeError(f"影音解碼失敗: {av_err}\n\n系統亦找不到 FFmpeg 工具。\n{err_msg}")
 
                 print("DEBUG: calling MLX whisper transcribe...")
                 if log_callback:
-                    log_callback("提示: 使用 Apple MLX 框架進行超高速轉錄...\n(註: 此套件轉換時將無法回報即時段落進度，請耐心等候)")
+                    log_callback("提示: 使用 Apple MLX 框架進行 Metal GPU 加速轉錄...\n(註: 此套件轉換時將無法回報即時段落進度，請耐心等候)")
                 
                 native_options = {
                     "task": task,
@@ -762,11 +776,25 @@ class SubtitleTranscriber:
                 }
                 if initial_prompt:
                     native_options["initial_prompt"] = initial_prompt
-                    
-                import mlx_whisper
+                
+                # 優先使用本地快取之絕對路徑，確保離線環境與自訂目錄下 100% 穩定讀取
+                target_model = self.mlx_model_path
+                try:
+                    import huggingface_hub
+                    cached_dir = huggingface_hub.snapshot_download(
+                        repo_id=self.mlx_model_path,
+                        local_files_only=True,
+                        cache_dir=self.download_root
+                    )
+                    if cached_dir and os.path.isdir(cached_dir):
+                        target_model = cached_dir
+                        print(f"DEBUG: Using local MLX model snapshot: {target_model}")
+                except Exception as cache_e:
+                    print(f"DEBUG: Local snapshot lookup notice: {cache_e}")
+
                 result = mlx_whisper.transcribe(
-                    file_path, 
-                    path_or_hf_repo=self.mlx_model_path,
+                    audio_input, 
+                    path_or_hf_repo=target_model,
                     **native_options
                 )
                 

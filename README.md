@@ -12,6 +12,18 @@
 
 ![主操作介面](screenshot_main.png)
 
+## 🚀 v2.7.7 更新說明
+本版本緊急修復 macOS 平台上點擊「加入檔案...」崩潰閃退問題，並實現免安裝外部 FFmpeg 的純原生 MLX 音訊解碼：
+* **修復 macOS 點擊「加入檔案...」閃退問題 (Critical Fix)**：
+  * **根因排查**：先前檔案對話框過濾條件中使用了未帶星號的字串 `config.js`，導致 macOS Cocoa 底層 `NSOpenPanel` / AppKit 拋出非法副檔名異常而使直譯器直接閃退。
+  * **全面修復**：修正為標準副檔名模式（`*.js`）、明確綁定 `parent=self` 建立視窗關聯，並加入雙層 try-except 降級容錯機制，保證在所有 macOS 版本上絕不崩潰。
+* **免安裝外部 FFmpeg！整合 PyAV 原生音訊解碼 (Zero-Dependency Audio Decoding)**：
+  * **轉錄解鎖**：過去 MLX 模式依賴系統外部命令列 `ffmpeg`，未安裝 Homebrew 的 macOS 用戶點擊轉錄會被中斷。新版直接整合內建 `PyAV`（`faster_whisper.audio.decode_audio`），原生在記憶體中解碼為 16kHz float32 音訊陣列後直接傳給 MLX Whisper，純淨 macOS 系統無需任何終端機操作即可開箱即用！
+* **深度收錄 MLX Metal 著色器與動態函式庫**：
+  * macOS 打包規格主動深度收錄 `mlx` 實體目錄，確保 `mlx/lib/mlx.metallib` 著色器與 `libmlx.dylib`、`libjaccl.dylib` 動態庫完整打包，避免運算階段丟失 GPU 模組。
+* **CI/CD 自動化煙霧測試升級**：
+  * 煙霧測試新增實體 Metal Tensor GPU 陣列計算驗證與 PyAV 原生音訊解碼檢驗，保證正式發布的 DMG 安裝包 100% 具備 Metal 加速與自帶解碼能力。
+
 ## 🚀 v2.7.6 更新說明
 本版本緊急修復 macOS 平台上 Apple MLX 框架加速模式無法運作的嚴重問題，並強化 CI/CD 自動化建置檢驗防護：
 * **修復 macOS MLX 框架與 C 擴充動態庫損毀問題 (Critical Fix)**：

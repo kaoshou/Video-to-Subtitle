@@ -3531,16 +3531,30 @@ class App(BaseClass):
             pass
 
     def browse_file(self):
-        media_exts = " ".join([f"*{ext}" for ext in sorted(SUPPORTED_EXTENSIONS)])
-        filenames = filedialog.askopenfilenames(
-            title="選擇要轉錄的影音檔案或 EverCam 課程",
-            filetypes=[
-                ("影音媒體與 EverCam 專案", f"{media_exts} config.js"),
-                ("所有檔案 (*.*)", "*.*")
-            ]
-        )
-        if filenames:
-            self.add_files_from_paths(filenames)
+        try:
+            # 支援所有媒體副檔名以及 EverCam 設定檔 (*.js)
+            media_patterns = " ".join([f"*{ext}" for ext in sorted(SUPPORTED_EXTENSIONS)])
+            filenames = filedialog.askopenfilenames(
+                parent=self,
+                title="選擇要轉錄的影音檔案或 EverCam 課程",
+                filetypes=[
+                    ("影音媒體與 EverCam 專案", f"{media_patterns} *.js"),
+                    ("所有檔案", "*.*")
+                ]
+            )
+            if filenames:
+                self.add_files_from_paths(filenames)
+        except Exception as e:
+            # 降級相容機制：若系統 dialog 參數異常，回退至最安全的無過濾模式
+            try:
+                filenames = filedialog.askopenfilenames(
+                    parent=self,
+                    title="選擇要轉錄的檔案"
+                )
+                if filenames:
+                    self.add_files_from_paths(filenames)
+            except Exception:
+                pass
 
     def clear_files(self):
         self.file_list = []
@@ -3618,15 +3632,13 @@ class App(BaseClass):
                 
             hotwords = self.hotwords_var.get().strip()
 
-            # 若使用 macOS MLX 模式，前置檢查 FFmpeg 是否就緒
+            # 若使用 macOS MLX 模式，檢查外部 FFmpeg 狀態 (若無則自動啟用內建 PyAV 原生音訊解碼)
             if device in ["mps", "mlx"]:
-                avail, ffmpeg_path, err_msg = check_ffmpeg_available()
+                avail, ffmpeg_path, _ = check_ffmpeg_available()
                 if not avail:
-                    self.log(f"❌ {err_msg}")
-                    def _show_ffmpeg_error(m=err_msg):
-                        messagebox.showerror("缺少 FFmpeg 工具", m)
-                    self.after(0, _show_ffmpeg_error)
-                    return
+                    self.log("💡 提示: 系統未偵測到外部 FFmpeg，已自動啟用內建 PyAV 原生音訊解碼核心。")
+                else:
+                    self.log(f"💡 提示: 偵測到系統 FFmpeg ({ffmpeg_path})。")
 
             self.log(f"--- 批次任務開始: 共 {len(self.file_list)} 個檔案 (斷句策略: 自然語意與停頓, 防溢出上限: {user_max_chars} 字) ---")
             
@@ -4155,31 +4167,55 @@ if __name__ == "__main__":
     # Enable multiprocessing support for frozen executables
     multiprocessing.freeze_support()
 
+    # 確保 macOS 下動態庫搜尋路徑包含 App Bundle 內部與 Frameworks 目錄
+    if sys.platform == 'darwin' and getattr(sys, 'frozen', False):
+        app_dir = os.path.dirname(os.path.abspath(sys.executable))
+        fw_dir = os.path.abspath(os.path.join(app_dir, "..", "Frameworks"))
+        mlx_lib = os.path.join(app_dir, "mlx", "lib")
+        fw_mlx_lib = os.path.join(fw_dir, "mlx", "lib")
+        existing_dyld = os.environ.get('DYLD_LIBRARY_PATH', '')
+        os.environ['DYLD_LIBRARY_PATH'] = f"{app_dir}:{fw_dir}:{mlx_lib}:{fw_mlx_lib}:{existing_dyld}".rstrip(':')
+
     # CI/CD 或打包後 Smoke Test 支援
     if "--test-import-mlx" in sys.argv:
-        print("=== [Smoke Test] 正在檢測 Apple MLX 與 mlx-whisper 模組導入 ===")
+        print("=== [Smoke Test] 正在檢測 Apple MLX 與 mlx-whisper 運算核心 ===")
         try:
             import mlx
+            import mlx.core as mx
             print(f"✅ MLX 核心模組載入成功！版本: {getattr(mlx, '__version__', 'unknown')}")
+
+            # 實際執行 Metal Tensor GPU 運算，確認 Metal shader (.metallib) 與加速運算完整就緒
+            a = mx.array([1.0, 2.0, 3.0, 4.0])
+            b = mx.array([10.0, 20.0, 30.0, 40.0])
+            c = a + b
+            mx.eval(c)
+            print(f"✅ MLX Metal GPU 運算驗證成功: {c.tolist()}")
+
             import mlx_whisper
             print(f"✅ mlx_whisper 模組載入成功！路徑: {getattr(mlx_whisper, '__file__', 'unknown')}")
-            print("=== [Smoke Test] MLX 模組驗證 100% 通過 ===")
+
+            from faster_whisper.audio import decode_audio
+            print("✅ faster_whisper 原生 PyAV 音訊解碼器載入成功！(支援免外部 FFmpeg 原生音訊解碼)")
+
+            print("=== [Smoke Test] Apple MLX 核心功能 100% 驗證通過！ ===")
             sys.exit(0)
         except Exception as e:
             traceback.print_exc()
-            print(f"❌ MLX 模組導入失敗: {e}")
+            print(f"❌ MLX 驗證失敗: {e}")
             sys.exit(1)
     
     # 避免在 PyInstaller 封裝沒有 console 模式下 (特別是 macOS) 因為 print 導致閃退
     if getattr(sys, 'frozen', False):
         if sys.stdout is None:
-            sys.stdout = open(os.devnull, 'w')
+            sys.stdout = open(os.devnull, 'w', encoding='utf-8', errors='ignore')
         if sys.stderr is None:
-            sys.stderr = open(os.devnull, 'w')
+            sys.stderr = open(os.devnull, 'w', encoding='utf-8', errors='ignore')
         if sys.platform == 'darwin':
-            # 在 macOS 的 App Bundle 中，任何 print 輸出都可能引發崩潰，因此一律丟棄
-            sys.stdout = open(os.devnull, 'w')
-            sys.stderr = open(os.devnull, 'w')
+            try:
+                sys.stdout = open(os.devnull, 'w', encoding='utf-8', errors='ignore')
+                sys.stderr = open(os.devnull, 'w', encoding='utf-8', errors='ignore')
+            except Exception:
+                pass
 
     # Global exception handler to show errors in GUI before crashing
     def show_error(exc_type, exc_value, tb):

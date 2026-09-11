@@ -18,12 +18,24 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 hiddenimports += ['tomli', 'evercam_integration']
 try:
     if sys.platform == 'darwin':
-        for mod in ['mlx_whisper', 'mlx', 'mlx_metal', 'tiktoken', 'scipy', 'torch']:
+        import importlib
+        for mod in ['mlx_whisper', 'mlx', 'mlx_metal', 'tiktoken', 'scipy', 'torch', 'numba']:
             try:
                 tmp_ret = collect_all(mod)
                 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
             except Exception as e:
                 print(f"Notice: collect_all({mod}) warning: {e}")
+                
+        # 實體目錄深度收錄：保證 mlx/lib/mlx.metallib 與所有 .dylib 無一遺漏
+        for pkg_name in ['mlx', 'mlx_whisper']:
+            try:
+                m = importlib.import_module(pkg_name)
+                if hasattr(m, '__file__') and m.__file__:
+                    pkg_dir = os.path.dirname(os.path.abspath(m.__file__))
+                    datas += [(pkg_dir, pkg_name)]
+                    print(f"Successfully collected full directory for {pkg_name}: {pkg_dir}")
+            except Exception as pkg_e:
+                print(f"Notice: failed to collect full directory for {pkg_name}: {pkg_e}")
 except Exception as e:
     print(f"Error collecting macOS dependencies: {e}")
 tmp_ret = collect_all('opencc')
