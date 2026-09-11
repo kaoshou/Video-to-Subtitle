@@ -18,12 +18,14 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 hiddenimports += ['tomli', 'evercam_integration']
 try:
     if sys.platform == 'darwin':
-        tmp_ret = collect_all('mlx_whisper')
-        datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-        tmp_ret = collect_all('mlx')
-        datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-except Exception:
-    pass
+        for mod in ['mlx_whisper', 'mlx', 'mlx_metal', 'tiktoken', 'scipy', 'torch']:
+            try:
+                tmp_ret = collect_all(mod)
+                datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+            except Exception as e:
+                print(f"Notice: collect_all({mod}) warning: {e}")
+except Exception as e:
+    print(f"Error collecting macOS dependencies: {e}")
 tmp_ret = collect_all('opencc')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('av')
@@ -63,7 +65,7 @@ if sys.platform == 'darwin':
         name='VideoToSubtitle',
         debug=False,
         bootloader_ignore_signals=False,
-        strip=True,
+        strip=False,
         upx=True,
         console=False,
         disable_windowed_traceback=False,
@@ -76,7 +78,7 @@ if sys.platform == 'darwin':
         exe,
         a.binaries,
         a.datas,
-        strip=True,
+        strip=False,
         upx=True,
         upx_exclude=[],
         name='VideoToSubtitle',

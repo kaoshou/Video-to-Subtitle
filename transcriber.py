@@ -585,10 +585,13 @@ class SubtitleTranscriber:
                 print("DEBUG: Initializing MLX Whisper for Apple Silicon...")
                 try:
                     import mlx_whisper
-                except ImportError:
-                    msg = "要啟用 Apple MLX 框架加速 (Mac GPU)，請先安裝 mlx-whisper 套件：\n請執行 `pip install mlx-whisper`"
+                except Exception as e:
+                    import traceback
+                    tb_str = traceback.format_exc()
+                    print(f"DEBUG: Error importing mlx_whisper: {tb_str}")
+                    msg = f"要啟用 Apple MLX 框架加速 (Mac GPU)，請確認已安裝 mlx-whisper 套件。\n\n詳細錯誤原因：{e}"
                     if log_callback:
-                        log_callback("錯誤: " + msg)
+                        log_callback(f"錯誤: {msg}\n{tb_str}")
                     raise RuntimeError(msg)
                 
                 self.model_type = "mlx-whisper"

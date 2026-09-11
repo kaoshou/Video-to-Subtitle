@@ -12,6 +12,16 @@
 
 ![主操作介面](screenshot_main.png)
 
+## 🚀 v2.7.6 更新說明
+本版本緊急修復 macOS 平台上 Apple MLX 框架加速模式無法運作的嚴重問題，並強化 CI/CD 自動化建置檢驗防護：
+* **修復 macOS MLX 框架與 C 擴充動態庫損毀問題 (Critical Fix)**：
+  * **根因排查**：先前版本為了精簡 DMG 體積在打包配置中啟用了二進位剝除（`strip=True`），導致系統 `strip` 工具意外抹除 `mlx`、`mlx_metal`、`tiktoken` 等 C/Metal 擴充模組之動態符號表（Dynamic Symbols），使 macOS 在動態載入時發生 `dlopen` 符號丟失崩潰，進而被捕捉誤判為「未安裝 mlx-whisper」。
+  * **全面修復**：macOS 打包配置正式停用危險的 `strip=True`（維持依賴 Apple 原生 `hdiutil convert -format ULMO` 系統級壓縮即可兼顧極致輕量）；並在 PyInstaller spec 中完整補齊 `mlx_metal`、`tiktoken`、`scipy`、`torch` 等全套 MLX 關鍵相依模組。
+* **CI/CD 打包流水線新增原生 Smoke Test 自動化防護**：
+  * 在 GitHub Actions 的 macOS 打包流水線中加入原生 App Bundle 模組導入煙霧測試（`--test-import-mlx`），在封裝成 DMG 之前自動驗證 `mlx` 與 `mlx_whisper` 模組的完整性，杜絕任何受損組件外流。
+* **增強轉錄核心 MLX 錯誤日誌回報**：
+  * 重構 `transcriber.py` 中的 MLX 導入例外處理，完整輸出 Traceback 與底層真實錯誤原因至日誌區，不再因籠統攔截而隱蔽真實問題。
+
 ## 🚀 v2.7.5 更新說明
 本版本帶來重磅的 **EverCam 數位課程字幕無縫整合** 與轉錄完成對話框的深度 UI/UX 重構，全面提升教師教材製作與播放體驗：
 * **EverCam 數位課程現代化轉換（深度整合 [evercam-subtitle-player](https://github.com/kaoshou/evercam-subtitle-player)）**：

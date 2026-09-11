@@ -38,6 +38,13 @@ jobs:
       run: |
         pyinstaller VideoToSubtitle.spec
 
+    - name: 驗證 Mac App 與 MLX 模組完整性 (Smoke Test)
+      if: matrix.os == 'macos-latest'
+      run: |
+        echo "=== 正在測試 App Bundle 內部 Python 與 MLX 模組導入 ==="
+        chmod +x dist/VideoToSubtitle.app/Contents/MacOS/VideoToSubtitle
+        ./dist/VideoToSubtitle.app/Contents/MacOS/VideoToSubtitle --test-import-mlx
+
     - name: 建立 Mac DMG 安裝檔 (含極限壓縮優化)
       if: matrix.os == 'macos-latest'
       run: |

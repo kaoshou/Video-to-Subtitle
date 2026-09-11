@@ -4154,6 +4154,21 @@ if __name__ == "__main__":
     
     # Enable multiprocessing support for frozen executables
     multiprocessing.freeze_support()
+
+    # CI/CD 或打包後 Smoke Test 支援
+    if "--test-import-mlx" in sys.argv:
+        print("=== [Smoke Test] 正在檢測 Apple MLX 與 mlx-whisper 模組導入 ===")
+        try:
+            import mlx
+            print(f"✅ MLX 核心模組載入成功！版本: {getattr(mlx, '__version__', 'unknown')}")
+            import mlx_whisper
+            print(f"✅ mlx_whisper 模組載入成功！路徑: {getattr(mlx_whisper, '__file__', 'unknown')}")
+            print("=== [Smoke Test] MLX 模組驗證 100% 通過 ===")
+            sys.exit(0)
+        except Exception as e:
+            traceback.print_exc()
+            print(f"❌ MLX 模組導入失敗: {e}")
+            sys.exit(1)
     
     # 避免在 PyInstaller 封裝沒有 console 模式下 (特別是 macOS) 因為 print 導致閃退
     if getattr(sys, 'frozen', False):
