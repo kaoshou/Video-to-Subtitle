@@ -2057,6 +2057,479 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         super().destroy()
 
 
+class EverCamConverterDialog:
+    """
+    EverCam 數位課程網頁轉換獨立工具對話框
+    支援單一或批次轉換 EverCam 課程為現代化 HTML5 字幕播放器。
+    可隨時開啟、支援拖曳、目錄瀏覽、子課程遞迴掃描、字幕解析與一鍵預覽。
+    """
+    def __init__(self, parent, initial_courses=None):
+        self.parent = parent
+        self.top = create_smooth_toplevel(parent)
+        self.top.title("EverCam 課程網頁轉換工具")
+        
+        # 視窗圖示
+        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_icon.ico")
+        if os.path.exists(icon_path):
+            try:
+                self.top.iconbitmap(icon_path)
+            except Exception:
+                pass
+                
+        if platform.system() != "Darwin":
+            self.top.transient(parent)
+
+        self.courses = []
+        
+        # 彙整初始課程路徑
+        self._collect_initial_courses(initial_courses)
+
+        # 建立 UI
+        self._build_ui()
+
+        # 支援拖曳
+        if DND_AVAILABLE:
+            try:
+                self.top.drop_target_register(DND_FILES)
+                self.top.dnd_bind('<<Drop>>', self.on_drop)
+            except Exception as e:
+                print(f"DEBUG: EverCamConverterDialog DND error: {e}")
+
+        # 平滑置中呈現
+        center_and_smooth_show(self.top, parent, width=780, height=530, is_modal=False)
+        self.top.minsize(680, 420)
+        self.refresh_list()
+
+    def _collect_initial_courses(self, initial_courses):
+        if initial_courses:
+            for c in initial_courses:
+                c_abs = os.path.abspath(c) if c else ""
+                if c_abs and c_abs not in self.courses and evercam.is_evercam_folder(c_abs):
+                    self.courses.append(c_abs)
+
+        # 自動載入上一次轉錄成功的 EverCam 專案 (即使關閉了完成彈窗，也能在此一鍵轉換)
+        if hasattr(self.parent, "last_completed_files") and self.parent.last_completed_files:
+            for f in self.parent.last_completed_files:
+                is_ec, c_dir = evercam.detect_evercam_project(f)
+                if is_ec and c_dir:
+                    c_abs = os.path.abspath(c_dir)
+                    if c_abs not in self.courses:
+                        self.courses.append(c_abs)
+
+        # 若清單仍為空，自動載入當前主畫面待處理清單中的 EverCam 專案
+        if not self.courses and hasattr(self.parent, "file_list") and self.parent.file_list:
+            for f in self.parent.file_list:
+                is_ec, c_dir = evercam.detect_evercam_project(f)
+                if is_ec and c_dir:
+                    c_abs = os.path.abspath(c_dir)
+                    if c_abs not in self.courses:
+                        self.courses.append(c_abs)
+
+    def _build_ui(self):
+        # 1. 頂部工具列
+        header_frame = ctk.CTkFrame(self.top, fg_color="transparent")
+        header_frame.pack(fill="x", padx=20, pady=(16, 8))
+
+        title_box = ctk.CTkFrame(header_frame, fg_color="transparent")
+        title_box.pack(side="left", fill="y")
+        
+        lbl_title = ctk.CTkLabel(
+            title_box, text="🌐 EverCam 課程網頁轉換工具",
+            font=ctk.CTkFont(size=18, weight="bold")
+        )
+        lbl_title.pack(anchor="w")
+
+        lbl_desc = ctk.CTkLabel(
+            title_box, text="一鍵將 EverCam 課程目錄整合為現代化 HTML5 字幕播放器，支援繁中/雙語切換與關鍵字搜尋",
+            font=ctk.CTkFont(size=12), text_color="gray"
+        )
+        lbl_desc.pack(anchor="w", pady=(2, 0))
+
+        action_box = ctk.CTkFrame(header_frame, fg_color="transparent")
+        action_box.pack(side="right", fill="y")
+
+        btn_add_folder = ctk.CTkButton(
+            action_box, text="📁 選擇課程資料夾...",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            height=30, width=130, corner_radius=6,
+            command=self.browse_single_course
+        )
+        btn_add_folder.pack(side="left", padx=(0, 6))
+
+        btn_scan_batch = ctk.CTkButton(
+            action_box, text="🔍 批次掃描母目錄...",
+            font=ctk.CTkFont(size=12),
+            height=30, width=130, corner_radius=6,
+            fg_color=("gray75", "gray35"), hover_color=("gray65", "gray45"),
+            text_color=("gray10", "gray95"),
+            command=self.browse_batch_scan
+        )
+        btn_scan_batch.pack(side="left", padx=(0, 6))
+
+        btn_clear = ctk.CTkButton(
+            action_box, text="清空",
+            font=ctk.CTkFont(size=12),
+            height=30, width=55, corner_radius=6,
+            fg_color="transparent", border_width=1,
+            text_color=("gray10", "#DCE4EE"),
+            command=self.clear_courses
+        )
+        btn_clear.pack(side="left")
+
+        # 2. 中間課程列表可滾動區
+        list_container = ctk.CTkFrame(self.top, fg_color="transparent")
+        list_container.pack(fill="both", expand=True, padx=20, pady=(0, 10))
+
+        self.scroll_frame = ctk.CTkScrollableFrame(list_container, fg_color="transparent")
+        self.scroll_frame.pack(fill="both", expand=True)
+
+        # 3. 底部控制列
+        bottom_frame = ctk.CTkFrame(self.top, fg_color=("gray92", "gray18"), height=52, corner_radius=0)
+        bottom_frame.pack(fill="x", side="bottom")
+
+        self.lbl_status_summary = ctk.CTkLabel(
+            bottom_frame, text="準備就緒",
+            font=ctk.CTkFont(size=12), text_color=("gray20", "gray80")
+        )
+        self.lbl_status_summary.pack(side="left", padx=20, pady=12)
+
+        btn_box = ctk.CTkFrame(bottom_frame, fg_color="transparent")
+        btn_box.pack(side="right", padx=16, pady=8)
+
+        self.btn_convert_all = ctk.CTkButton(
+            btn_box, text="🚀 一鍵轉換全部的 EverCam 網頁",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            height=34, corner_radius=8,
+            fg_color=("#1f8b4c", "#2ecc71"), hover_color=("#18703d", "#27ae60"),
+            text_color="white",
+            command=self.convert_all_courses
+        )
+        self.btn_convert_all.pack(side="left", padx=(0, 10))
+
+        btn_close = ctk.CTkButton(
+            btn_box, text="關閉",
+            font=ctk.CTkFont(size=13),
+            width=75, height=34, corner_radius=8,
+            fg_color=("gray75", "gray35"), hover_color=("gray65", "gray45"),
+            text_color=("gray10", "gray95"),
+            command=self.top.destroy
+        )
+        btn_close.pack(side="left")
+
+    def on_drop(self, event):
+        paths = self.parent.parse_dnd_files(event.data)
+        added_count = 0
+        for p in paths:
+            if not p or not os.path.exists(p):
+                continue
+            if os.path.isdir(p):
+                if evercam.is_evercam_folder(p):
+                    c_abs = os.path.abspath(p)
+                    if c_abs not in self.courses:
+                        self.courses.append(c_abs)
+                        added_count += 1
+                else:
+                    sub_cs = evercam.scan_evercam_courses(p)
+                    for sc in sub_cs:
+                        if sc not in self.courses:
+                            self.courses.append(sc)
+                            added_count += 1
+            elif os.path.isfile(p):
+                is_ec, c_dir = evercam.detect_evercam_project(p)
+                if is_ec and c_dir:
+                    c_abs = os.path.abspath(c_dir)
+                    if c_abs not in self.courses:
+                        self.courses.append(c_abs)
+                        added_count += 1
+        if added_count > 0:
+            self.refresh_list()
+
+    def browse_single_course(self):
+        target_dir = filedialog.askdirectory(title="選擇 EverCam 課程資料夾", parent=self.top)
+        if not target_dir:
+            return
+        if evercam.is_evercam_folder(target_dir):
+            c_abs = os.path.abspath(target_dir)
+            if c_abs not in self.courses:
+                self.courses.append(c_abs)
+                self.refresh_list()
+            else:
+                messagebox.showinfo("提示", "此 EverCam 課程已在清單中。", parent=self.top)
+        else:
+            subs = evercam.scan_evercam_courses(target_dir)
+            if subs:
+                added = 0
+                for s in subs:
+                    if s not in self.courses:
+                        self.courses.append(s)
+                        added += 1
+                self.refresh_list()
+                messagebox.showinfo("掃描完成", f"於該目錄及其子目錄中找到並載入 {len(subs)} 個 EverCam 課程！", parent=self.top)
+            else:
+                messagebox.showwarning("非 EverCam 課程", "所選目錄未包含 EverCam 課程特徵 (未偵測到 config.js 或影音檔案)。", parent=self.top)
+
+    def browse_batch_scan(self):
+        base_dir = filedialog.askdirectory(title="選擇包含多個 EverCam 課程的母目錄", parent=self.top)
+        if not base_dir:
+            return
+        subs = evercam.scan_evercam_courses(base_dir)
+        if subs:
+            added = 0
+            for s in subs:
+                if s not in self.courses:
+                    self.courses.append(s)
+                    added += 1
+            self.refresh_list()
+            messagebox.showinfo("批次掃描完成", f"共成功找到 {len(subs)} 個 EverCam 課程 (新加入 {added} 個)！", parent=self.top)
+        else:
+            messagebox.showinfo("掃描結果", "在該目錄中未搜尋到任何符合特徵的 EverCam 課程目錄。", parent=self.top)
+
+    def clear_courses(self):
+        self.courses.clear()
+        self.refresh_list()
+
+    def remove_course(self, c_path):
+        if c_path in self.courses:
+            self.courses.remove(c_path)
+            self.refresh_list()
+
+    def convert_single(self, c_path):
+        target_l = "en" if getattr(self.parent, "translate_en_var", None) and self.parent.translate_en_var.get() else "zh-TW"
+        ok, msg, idx_p = evercam.deploy_evercam_player(c_path, target_lang=target_l)
+        if ok:
+            c_name = os.path.basename(c_path)
+            if hasattr(self.parent, "log"):
+                self.parent.log(f"✅ [EverCam] {msg} ({c_name})")
+            ans = messagebox.askyesno(
+                "轉換完成",
+                f"【{c_name}】\n{msg}\n\n已成功建立現代化字幕播放器！\n是否立即於瀏覽器中開啟預覽？",
+                parent=self.top
+            )
+            if ans and idx_p:
+                web_url = f"file:///{os.path.abspath(idx_p).replace(os.sep, '/')}"
+                webbrowser.open_new(web_url)
+            self.refresh_list()
+        else:
+            messagebox.showerror("轉換失敗", msg, parent=self.top)
+
+    def preview_course(self, c_path):
+        idx_p = os.path.join(c_path, "index.html")
+        if os.path.isfile(idx_p):
+            web_url = f"file:///{os.path.abspath(idx_p).replace(os.sep, '/')}"
+            webbrowser.open_new(web_url)
+        else:
+            messagebox.showinfo("提示", "此課程尚未建立網頁播放器首頁 (index.html)，請先點擊「轉換網頁」。", parent=self.top)
+
+    def open_folder(self, c_path):
+        if os.path.exists(c_path):
+            if platform.system() == "Windows":
+                os.startfile(c_path)
+            elif platform.system() == "Darwin":
+                subprocess.Popen(["open", c_path])
+            else:
+                subprocess.Popen(["xdg-open", c_path])
+
+    def convert_all_courses(self):
+        if not self.courses:
+            messagebox.showinfo("提示", "目前清單中尚無任何 EverCam 課程可供轉換。", parent=self.top)
+            return
+        target_l = "en" if getattr(self.parent, "translate_en_var", None) and self.parent.translate_en_var.get() else "zh-TW"
+        success_count = 0
+        first_preview = None
+
+        for c_path in self.courses:
+            ok, msg, idx_p = evercam.deploy_evercam_player(c_path, target_lang=target_l)
+            if ok:
+                success_count += 1
+                if first_preview is None and idx_p:
+                    first_preview = f"file:///{os.path.abspath(idx_p).replace(os.sep, '/')}"
+                if hasattr(self.parent, "log"):
+                    self.parent.log(f"✅ [EverCam] {msg} ({os.path.basename(c_path)})")
+            else:
+                if hasattr(self.parent, "log"):
+                    self.parent.log(f"❌ [EverCam] 轉換失敗: {msg} ({os.path.basename(c_path)})")
+
+        self.refresh_list()
+        if success_count > 0:
+            ans = messagebox.askyesno(
+                "批次轉換完成",
+                f"共成功轉換 {success_count} 個 EverCam 課程！\n\n已成功建立並更新現代化字幕播放器。\n是否立即於瀏覽器中開啟第一個課程預覽？",
+                parent=self.top
+            )
+            if ans and first_preview:
+                webbrowser.open_new(first_preview)
+        else:
+            messagebox.showerror("轉換失敗", "未能成功轉換任何課程，請檢查檔案權限。", parent=self.top)
+
+    def refresh_list(self):
+        for w in self.scroll_frame.winfo_children():
+            w.destroy()
+
+        total = len(self.courses)
+        sub_count = 0
+        deployed_count = 0
+
+        if total == 0:
+            self.btn_convert_all.configure(state="disabled")
+            self.lbl_status_summary.configure(text="目前尚未載入任何 EverCam 課程")
+
+            empty_frame = ctk.CTkFrame(self.scroll_frame, fg_color=("gray95", "gray22"), corner_radius=12)
+            empty_frame.pack(fill="x", pady=40, padx=20)
+
+            lbl_icon = ctk.CTkLabel(empty_frame, text="📁", font=ctk.CTkFont(size=36))
+            lbl_icon.pack(pady=(25, 5))
+
+            lbl_empty_t = ctk.CTkLabel(
+                empty_frame, text="目前尚未加入任何 EverCam 課程",
+                font=ctk.CTkFont(size=15, weight="bold")
+            )
+            lbl_empty_t.pack(pady=(0, 6))
+
+            lbl_empty_d = ctk.CTkLabel(
+                empty_frame,
+                text="您可點擊右上角「選擇課程資料夾」或「批次掃描母目錄」\n亦可直接將 EverCam 課程資料夾拖曳進此視窗中進行轉換與字幕整合",
+                font=ctk.CTkFont(size=12), text_color="gray", justify="center"
+            )
+            lbl_empty_d.pack(pady=(0, 25))
+            return
+
+        self.btn_convert_all.configure(state="normal")
+
+        for idx, c_path in enumerate(self.courses):
+            status = evercam.get_course_status(c_path)
+            if status.get("has_subtitles"):
+                sub_count += 1
+            if status.get("is_deployed"):
+                deployed_count += 1
+
+            card = ctk.CTkFrame(
+                self.scroll_frame,
+                fg_color=("white", "gray20"),
+                corner_radius=8,
+                border_width=1,
+                border_color=("gray85", "gray30")
+            )
+            card.pack(fill="x", pady=4, padx=2)
+
+            # 左側資訊區
+            left_info = ctk.CTkFrame(card, fg_color="transparent")
+            left_info.pack(side="left", fill="both", expand=True, padx=12, pady=8)
+
+            # 標題列 (序號 + 課程名 + 標籤)
+            title_line = ctk.CTkFrame(left_info, fg_color="transparent")
+            title_line.pack(fill="x", anchor="w")
+
+            lbl_idx = ctk.CTkLabel(
+                title_line, text=f"[{idx+1:02d}]",
+                font=ctk.CTkFont(family="Consolas", size=12, weight="bold"),
+                text_color=("#1f538d", "#5dade2"), width=32
+            )
+            lbl_idx.pack(side="left")
+
+            display_name = status.get("folder_name") or os.path.basename(c_path)
+            lbl_cname = ctk.CTkLabel(
+                title_line, text=display_name,
+                font=ctk.CTkFont(size=13, weight="bold")
+            )
+            lbl_cname.pack(side="left", padx=(4, 8))
+
+            # 播放器狀態徽章
+            if status.get("is_deployed"):
+                badge_p = ctk.CTkLabel(
+                    title_line, text="已就緒播放器",
+                    font=ctk.CTkFont(size=10, weight="bold"),
+                    fg_color=("#e8f5e9", "#1b3820"), text_color=("#2e7d32", "#81c784"),
+                    corner_radius=4, padx=5, pady=1
+                )
+            else:
+                badge_p = ctk.CTkLabel(
+                    title_line, text="原始 EverCam 課程",
+                    font=ctk.CTkFont(size=10),
+                    fg_color=("gray88", "gray28"), text_color=("gray30", "gray80"),
+                    corner_radius=4, padx=5, pady=1
+                )
+            badge_p.pack(side="left", padx=(0, 6))
+
+            # 字幕狀態徽章
+            subs = status.get("subtitles", [])
+            if subs:
+                for sub_info in subs[:2]:  # 最多顯示 2 個代表性字幕
+                    sub_text = f"字幕: {sub_info['file']} ({sub_info['count']}條)"
+                    badge_s = ctk.CTkLabel(
+                        title_line, text=sub_text,
+                        font=ctk.CTkFont(size=10, weight="bold"),
+                        fg_color=("#e3f2fd", "#152836"), text_color=("#1976d2", "#64b5f6"),
+                        corner_radius=4, padx=5, pady=1
+                    )
+                    badge_s.pack(side="left", padx=(0, 4))
+                if len(subs) > 2:
+                    lbl_more = ctk.CTkLabel(title_line, text=f"+{len(subs)-2}", font=ctk.CTkFont(size=10), text_color="gray")
+                    lbl_more.pack(side="left")
+            else:
+                badge_s = ctk.CTkLabel(
+                    title_line, text="⚠️ 尚未偵測到字幕檔",
+                    font=ctk.CTkFont(size=10),
+                    fg_color=("#fff3e0", "#332512"), text_color=("#e65100", "#ffb74d"),
+                    corner_radius=4, padx=5, pady=1
+                )
+                badge_s.pack(side="left")
+
+            # 第二行：路徑
+            lbl_path = ctk.CTkLabel(
+                left_info, text=c_path,
+                font=ctk.CTkFont(size=11), text_color="gray", anchor="w"
+            )
+            lbl_path.pack(fill="x", anchor="w", pady=(3, 0))
+
+            # 右側操作按鈕區
+            right_btns = ctk.CTkFrame(card, fg_color="transparent")
+            right_btns.pack(side="right", padx=(6, 12), pady=8)
+
+            btn_cvt = ctk.CTkButton(
+                right_btns, text="轉換網頁",
+                font=ctk.CTkFont(size=11, weight="bold"),
+                width=72, height=28, corner_radius=6,
+                fg_color=("#1f8b4c", "#2ecc71"), hover_color=("#18703d", "#27ae60"),
+                text_color="white",
+                command=lambda p=c_path: self.convert_single(p)
+            )
+            btn_cvt.pack(side="left", padx=(0, 4))
+
+            btn_prev = ctk.CTkButton(
+                right_btns, text="預覽",
+                font=ctk.CTkFont(size=11),
+                width=52, height=28, corner_radius=6,
+                fg_color=("gray82", "gray32"), hover_color=("gray72", "gray42"),
+                text_color=("gray10", "gray95"),
+                state="normal" if status.get("is_deployed") else "disabled",
+                command=lambda p=c_path: self.preview_course(p)
+            )
+            btn_prev.pack(side="left", padx=(0, 4))
+
+            btn_folder = ctk.CTkButton(
+                right_btns, text="目錄",
+                font=ctk.CTkFont(size=11),
+                width=52, height=28, corner_radius=6,
+                fg_color="transparent", border_width=1,
+                text_color=("gray10", "#DCE4EE"),
+                command=lambda p=c_path: self.open_folder(p)
+            )
+            btn_folder.pack(side="left", padx=(0, 4))
+
+            btn_del = ctk.CTkButton(
+                right_btns, text="✕",
+                font=ctk.CTkFont(size=12),
+                width=28, height=28, corner_radius=6,
+                fg_color="transparent", text_color=("gray40", "gray70"),
+                hover_color=("gray90", "gray25"),
+                command=lambda p=c_path: self.remove_course(p)
+            )
+            btn_del.pack(side="left")
+
+        summary_text = f"共載入 {total} 個 EverCam 課程  (已偵測字幕: {sub_count} 個 | 已就緒播放器: {deployed_count} 個)"
+        self.lbl_status_summary.configure(text=summary_text)
+
+
 class SmoothProgressBar(ctk.CTkProgressBar):
     """
     符合現代 UI 規範的極速響應平滑進度條：
@@ -2206,6 +2679,9 @@ class App(BaseClass):
             "space": "標點轉空格 (space)"
         }
         self.clean_punc_mapping_rev = {v: k for k, v in self.clean_punc_mapping.items()}
+
+        # 記錄最近一次批次轉錄完成之檔案清單 (供關閉完成視窗後隨時呼叫 EverCam 轉換工具)
+        self.last_completed_files = []
 
         # 讀取設定檔 (持久化)
         self.config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
@@ -2390,7 +2866,7 @@ class App(BaseClass):
         self.label_file.grid(row=0, column=0, columnspan=2, padx=15, pady=(8, 2), sticky="w")
 
         # File List Textbox
-        self.textbox_files = ctk.CTkTextbox(self.file_frame, height=75)
+        self.textbox_files = ctk.CTkTextbox(self.file_frame, height=110)
         self.textbox_files.grid(row=1, column=0, padx=(15, 10), pady=(2, 8), sticky="ew")
         self.textbox_files.configure(state="disabled") # Read-only
         
@@ -2406,7 +2882,12 @@ class App(BaseClass):
         
         self.btn_edit_manual = ctk.CTkButton(self.btns_file_frame, text="編輯現有字幕檔", command=self.open_manual_edit, width=115, height=26,
                                              fg_color="transparent", border_width=1, text_color=("gray10", "#DCE4EE"))
-        self.btn_edit_manual.pack(fill="x")
+        self.btn_edit_manual.pack(fill="x", pady=(0, 4))
+
+        self.btn_evercam_tool = ctk.CTkButton(self.btns_file_frame, text="EverCam 網頁轉換", command=self.open_evercam_tool, width=115, height=26,
+                                              fg_color=("#1f8b4c", "#2ecc71"), hover_color=("#18703d", "#27ae60"),
+                                              text_color="white", font=ctk.CTkFont(size=12, weight="bold"))
+        self.btn_evercam_tool.pack(fill="x")
 
         # Settings Frame
         self.settings_frame = ctk.CTkFrame(self.main_frame, corner_radius=8)
@@ -3914,7 +4395,12 @@ class App(BaseClass):
         if selected_file:
             SubtitleEditorWindow(self, selected_file)
 
+    def open_evercam_tool(self, initial_courses=None):
+        """開啟獨立的 EverCam 課程網頁轉換工具視窗"""
+        EverCamConverterDialog(self, initial_courses=initial_courses)
+
     def show_completion_dialog(self, count, files):
+        self.last_completed_files = list(files) if files else []
         if not files:
             messagebox.showinfo("任務完成", f"批次處理結束！\n共成功轉錄 0 個檔案。")
             return

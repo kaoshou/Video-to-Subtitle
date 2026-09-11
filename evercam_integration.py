@@ -325,3 +325,113 @@ def deploy_evercam_player(course_folder, source_srt=None, target_lang="zh-TW"):
         return False, f"部署成功但產生字幕資料時發生錯誤: {msg}", original_index
         
     return True, "EverCam 字幕播放器部署成功！", original_index
+
+
+def scan_evercam_courses(base_folder, max_depth=3):
+    """
+    掃描指定目錄下所有的 EverCam 課程目錄 (支援遞迴搜尋多層子目錄)
+    回傳: list[str] 所有符合特徵的 EverCam 課程絕對路徑清單 (排序去重)
+    """
+    if not base_folder or not os.path.isdir(base_folder):
+        return []
+        
+    abs_base = os.path.abspath(base_folder)
+    if is_evercam_folder(abs_base):
+        return [abs_base]
+        
+    found_courses = []
+    base_depth = abs_base.rstrip(os.sep).count(os.sep)
+    
+    for root, dirs, files in os.walk(abs_base):
+        cur_depth = root.rstrip(os.sep).count(os.sep) - base_depth
+        if cur_depth > max_depth:
+            dirs.clear()
+            continue
+            
+        if is_evercam_folder(root):
+            found_courses.append(os.path.abspath(root))
+            dirs.clear()  # 既已確認為 EverCam 課程目錄，不再深入其內部子資料夾
+            
+    return sorted(found_courses)
+
+
+def get_course_status(course_folder):
+    """
+    取得 EverCam 課程的詳細狀態 (含字幕、影片與播放器就緒情況)
+    回傳: dict
+      {
+        "is_valid": bool,
+        "folder_name": str,
+        "folder_path": str,
+        "video_files": list[str],
+        "subtitles": list[dict]: [{"file": str, "lang": str, "count": int}],
+        "is_deployed": bool,
+        "has_subtitles": bool,
+        "preview_url": str
+      }
+    """
+    if not is_evercam_folder(course_folder):
+        return {
+            "is_valid": False,
+            "folder_name": os.path.basename(course_folder) if course_folder else "",
+            "folder_path": course_folder,
+            "video_files": [],
+            "subtitles": [],
+            "is_deployed": False,
+            "has_subtitles": False,
+            "preview_url": ""
+        }
+        
+    folder_name = os.path.basename(course_folder)
+    video_files = []
+    subtitles = []
+    
+    subtitle_pattern = re.compile(r"^media(?:\.([A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*))?\.(srt|vtt)$", re.IGNORECASE)
+    
+    for item in sorted(os.listdir(course_folder)):
+        fpath = os.path.join(course_folder, item)
+        if not os.path.isfile(fpath):
+            continue
+            
+        ext = os.path.splitext(item)[1].lower()
+        if ext in SUPPORTED_VIDEO_EXTENSIONS:
+            video_files.append(item)
+            
+        m = subtitle_pattern.match(item)
+        if m:
+            lang_part = m.group(1)
+            canon_lang = _canonical_language(lang_part) if lang_part else "zh-TW (預設)"
+            try:
+                cues = parse_subtitles_to_cues(fpath)
+                cue_count = len(cues)
+            except Exception:
+                cue_count = 0
+            subtitles.append({
+                "file": item,
+                "lang": canon_lang,
+                "count": cue_count
+            })
+            
+    index_file = os.path.join(course_folder, "index.html")
+    is_deployed = False
+    if os.path.isfile(index_file):
+        try:
+            with open(index_file, "r", encoding="utf-8", errors="ignore") as f:
+                head_content = f.read(2048)
+            if "evercam-subtitle-player" in head_content or "EVERCAM_SUBTITLES" in head_content:
+                is_deployed = True
+        except Exception:
+            pass
+            
+    preview_url = f"file:///{os.path.abspath(index_file).replace(os.sep, '/')}" if os.path.isfile(index_file) else ""
+    
+    return {
+        "is_valid": True,
+        "folder_name": folder_name,
+        "folder_path": os.path.abspath(course_folder),
+        "video_files": video_files,
+        "subtitles": subtitles,
+        "is_deployed": is_deployed,
+        "has_subtitles": len(subtitles) > 0,
+        "preview_url": preview_url
+    }

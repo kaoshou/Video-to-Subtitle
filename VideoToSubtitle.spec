@@ -39,12 +39,30 @@ try:
 
         # 關鍵著色器多重同調收錄：保證在 Contents/MacOS/ 與 Resources/ 等所有搜尋點均存在
         try:
-            import mlx
-            mlx_root = os.path.dirname(os.path.abspath(mlx.__file__))
-            cand_files = [
-                os.path.join(mlx_root, "lib", "mlx.metallib"),
-                os.path.join(mlx_root, "mlx.metallib"),
-            ]
+            cand_files = []
+            try:
+                import mlx.core
+                cand_files.append(os.path.join(os.path.dirname(os.path.abspath(mlx.core.__file__)), "lib", "mlx.metallib"))
+                cand_files.append(os.path.join(os.path.dirname(os.path.abspath(mlx.core.__file__)), "mlx.metallib"))
+            except Exception:
+                pass
+            try:
+                import mlx
+                mlx_root = os.path.dirname(os.path.abspath(mlx.__file__)) if (hasattr(mlx, "__file__") and mlx.__file__) else (list(mlx.__path__)[0] if hasattr(mlx, "__path__") else "")
+                if mlx_root:
+                    cand_files.append(os.path.join(mlx_root, "lib", "mlx.metallib"))
+                    cand_files.append(os.path.join(mlx_root, "mlx.metallib"))
+            except Exception:
+                pass
+            try:
+                import site
+                for sp in site.getsitepackages():
+                    for root, _, files in os.walk(sp):
+                        if "mlx.metallib" in files:
+                            cand_files.append(os.path.join(root, "mlx.metallib"))
+            except Exception:
+                pass
+
             metallib_path = next((p for p in cand_files if os.path.isfile(p)), None)
             if metallib_path:
                 print(f"Found MLX metallib at: {metallib_path}")

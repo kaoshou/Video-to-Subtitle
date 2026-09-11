@@ -42,11 +42,43 @@ jobs:
       if: matrix.os == 'macos-latest'
       run: |
         echo "=== 正在定位 host Python 環境中的 mlx.metallib ==="
-        METALLIB=$(python -c "import mlx, os; p = os.path.join(os.path.dirname(mlx.__file__), 'lib', 'mlx.metallib'); print(p if os.path.exists(p) else '')")
-        if [ -z "$METALLIB" ]; then
-          METALLIB=$(find $(python -c "import site; print(site.getsitepackages()[0])") -name "mlx.metallib" | head -n 1)
+        METALLIB=$(python -c "
+import os, sys, site
+def find_lib():
+    try:
+        import mlx.core
+        for cand in [os.path.join(os.path.dirname(os.path.abspath(mlx.core.__file__)), 'lib', 'mlx.metallib'),
+                     os.path.join(os.path.dirname(os.path.abspath(mlx.core.__file__)), 'mlx.metallib')]:
+            if os.path.exists(cand): return cand
+    except Exception: pass
+    try:
+        import mlx
+        d = os.path.dirname(os.path.abspath(mlx.__file__)) if (hasattr(mlx, '__file__') and mlx.__file__) else (list(mlx.__path__)[0] if hasattr(mlx, '__path__') else '')
+        if d:
+            for cand in [os.path.join(d, 'lib', 'mlx.metallib'), os.path.join(d, 'mlx.metallib')]:
+                if os.path.exists(cand): return cand
+    except Exception: pass
+    for sp in site.getsitepackages():
+        for root, _, files in os.walk(sp):
+            if 'mlx.metallib' in files:
+                return os.path.join(root, 'mlx.metallib')
+    return ''
+print(find_lib())
+")
+        echo "Python 模組搜尋 mlx.metallib 結果: $METALLIB"
+
+        if [ -z "$METALLIB" ] || [ ! -f "$METALLIB" ]; then
+          echo "⚠️ 嘗試透過系統全域 find 命令搜尋 mlx.metallib..."
+          METALLIB=$(find /Users/runner -name "mlx.metallib" 2>/dev/null | head -n 1)
+          echo "全域 find 結果: $METALLIB"
         fi
-        echo "找到 mlx.metallib 來源路徑: $METALLIB"
+
+        if [ -z "$METALLIB" ] || [ ! -f "$METALLIB" ]; then
+          echo "❌ 嚴重錯誤: 未能找到 mlx.metallib 實體檔案！"
+          exit 1
+        fi
+
+        echo "✅ 成功鎖定 mlx.metallib 來源路徑: $METALLIB"
 
         APP_DIR="dist/VideoToSubtitle.app/Contents/MacOS"
         FW_DIR="dist/VideoToSubtitle.app/Contents/Frameworks"
@@ -78,16 +110,31 @@ jobs:
       if: matrix.os == 'macos-latest'
       run: |
         echo "=== 正在隔離 host Python 環境中的 mlx 模組，模擬純淨 Mac 使用者系統 ==="
-        HOST_MLX_DIR=$(python -c "import mlx, os; print(os.path.dirname(mlx.__file__))")
+        HOST_MLX_DIR=$(python -c "
+import os
+try:
+    import mlx.core
+    print(os.path.dirname(os.path.abspath(mlx.core.__file__)))
+except Exception:
+    try:
+        import mlx
+        print(os.path.dirname(os.path.abspath(mlx.__file__)) if (hasattr(mlx, '__file__') and mlx.__file__) else (list(mlx.__path__)[0] if hasattr(mlx, '__path__') else ''))
+    except Exception:
+        print('')
+")
         echo "Host MLX 目錄: $HOST_MLX_DIR"
-        mv "$HOST_MLX_DIR" "${HOST_MLX_DIR}_backup"
+        if [ -n "$HOST_MLX_DIR" ] && [ -d "$HOST_MLX_DIR" ]; then
+          mv "$HOST_MLX_DIR" "${HOST_MLX_DIR}_backup"
+        fi
 
         echo "=== 正在執行獨立 App Bundle 的 MLX Metal GPU 煙霧測試 ==="
         chmod +x dist/VideoToSubtitle.app/Contents/MacOS/VideoToSubtitle
         ./dist/VideoToSubtitle.app/Contents/MacOS/VideoToSubtitle --test-import-mlx
 
         echo "=== 測試通過！恢復 host Python 環境 ==="
-        mv "${HOST_MLX_DIR}_backup" "$HOST_MLX_DIR"
+        if [ -n "$HOST_MLX_DIR" ] && [ -d "${HOST_MLX_DIR}_backup" ]; then
+          mv "${HOST_MLX_DIR}_backup" "$HOST_MLX_DIR"
+        fi
 
     - name: 建立 Mac DMG 安裝檔 (含極限壓縮優化)
       if: matrix.os == 'macos-latest'
