@@ -4,6 +4,8 @@
 **開發者**: 崑山科技大學 鄭郁翰 (Yu-Han Cheng) | kaoshou@gmail.com 
 
 # Video to Subtitle (本地語音轉字幕工具)
+
+🌐 [官方網站](https://kaoshou.github.io/Video-to-Subtitle/) ｜ 📖 [完整使用手冊（繁體中文）](docs/USER_GUIDE.zh-TW.md) ｜ 📥 [下載最新版](https://github.com/kaoshou/Video-to-Subtitle/releases/latest)
 本工具是考量了教育部將於 115 學年度起推動之政策要求，針對遠距數位課程須提供完整字幕內容，或建置合理之輔助資源配套措施，以落實保障學生平等受教權而生的解決方案。工具開發初期主要源自個人實際使用需求，考量許多教師在製作數位教材時亦面臨相同挑戰，所以將本工具整理並分享給大家使用。
 
 基於 faster-whisper (OpenAI Whisper 的高效能實作) 模型的本地端桌面應用程式，幫它套上一層圖形介面，簡化 Whisper 的操作流程，使用者僅需進行簡單設定，即可完成影片轉換為字幕檔案（SRT、VTT）的作業，讓大家都可以簡易使用。由於程式於本機端執行，無須將影音檔案上傳至雲端，可充分利用使用者電腦算力生成影片字幕，兼具安全、免費與隱私保障，是一項可以安心的語音轉字幕解決方案。
@@ -153,7 +155,7 @@
   3. **選擇運算單元與格式**：
       - **運算單元**：Windows 可選 cpu / cuda；macOS 上可選 cpu / mlx (Apple Silicon GPU，將自動啟用 MLX 框架加速)。
           - 若要在 Windows 使用 CUDA 加速，需安裝對應版本的 [cuDNN](https://developer.nvidia.com/cudnn) 。詳情請參閱 [CTranslate2 文件](https://opennmt.net/CTranslate2/installation.html)。
-          - 若要在 Mac 使用 MLX 加速，請確保已安裝 FFmpeg（執行 `brew install ffmpeg`）與 `mlx-whisper` 套件（執行 `pip install mlx-whisper`）。
+          - v2.7.7 的 macOS DMG 已包含執行所需的 PyAV 與 MLX；一般使用者不需另行安裝 Python、FFmpeg 或 mlx-whisper。完整步驟請參閱[繁體中文使用手冊](docs/USER_GUIDE.zh-TW.md)。
       - **輸出格式**：可選擇 SRT, VTT, TXT, TSV 或 JSON。
       - **進階功能**：可視需求勾選「強制繁體中文」(自動轉台灣繁體)或「翻譯成英文」。
   4. **開始生成**：點選「開始轉錄」按鈕，程式將自動處理清單中的所有檔案。底部進度條會顯示當前檔案的處理進度。
