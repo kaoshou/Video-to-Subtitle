@@ -17,6 +17,7 @@ test('homepage gives a concise first-run path and uses genuine screenshots', asy
     for (const step of ['加入影音', '選擇模型與輸出', '產生並校對']) assert.ok(html.includes(step), step);
     for (const feature of ['本機執行', '多檔案批次', '字幕校對', '模型管理', 'EverCam']) assert.ok(html.includes(feature), feature);
     assert.doesNotMatch(html, /fonts\.googleapis|google-analytics|gtag\(/);
+    assert.doesNotMatch(html, /主操作介面 · v2\.7\.7/);
   } finally {
     await rm(out, { recursive: true, force: true });
   }

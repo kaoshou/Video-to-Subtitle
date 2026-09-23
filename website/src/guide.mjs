@@ -18,16 +18,17 @@ function slugFor(text) {
 
 export function renderGuide(source) {
   const tokens = markdown.parse(source, {});
-  const counts = new Map();
+  const usedIds = new Set();
   const toc = [];
   for (let index = 0; index < tokens.length; index++) {
     const token = tokens[index];
     if (token.type === 'heading_open') {
       const label = plainText(tokens[index + 1]);
       const base = slugFor(label);
-      const count = (counts.get(base) || 0) + 1;
-      counts.set(base, count);
-      const id = count === 1 ? base : `${base}-${count}`;
+      let id = base;
+      let suffix = 2;
+      while (usedIds.has(id)) id = `${base}-${suffix++}`;
+      usedIds.add(id);
       token.attrSet('id', id);
       const level = Number(token.tag.slice(1));
       if (level === 2 || level === 3) toc.push({ level, id, label });

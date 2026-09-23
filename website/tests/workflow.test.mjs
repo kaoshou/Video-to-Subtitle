@@ -13,10 +13,10 @@ test('Pages workflow builds and deploys only the generated site', async () => {
 
 test('desktop release workflow ignores pure website and documentation changes', async () => {
   const yaml = await readFile(resolve(import.meta.dirname, '../../.github/workflows/python-app.yml'), 'utf8');
-  for (const productPath of ["'SubtitleTranscriber.py'", "'transcriber.py'", "'evercam_integration.py'", "'assets/evercam_player/**'", "'VideoToSubtitle.spec'", "'app_icon.*'", "'pyproject.toml'", "'.github/workflows/python-app.yml'"]) {
+  for (const productPath of ["'SubtitleTranscriber.py'", "'transcriber.py'", "'evercam_integration.py'", "'assets/evercam_player/**'", "'VideoToSubtitle.spec'", "'app_icon.*'", "'pyproject.toml'"]) {
     assert.ok(yaml.includes(productPath), productPath);
   }
-  assert.doesNotMatch(yaml, /'website\/\*\*'|'docs\/\*\*'|'README\.md'/);
+  assert.doesNotMatch(yaml, /'website\/\*\*'|'docs\/\*\*'|'README\.md'|'\.github\/workflows\/python-app\.yml'/);
 });
 
 test('README links the official site and canonical guide and drops stale packaged-app advice', async () => {

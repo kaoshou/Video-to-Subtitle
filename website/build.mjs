@@ -36,12 +36,20 @@ export async function validateOutput(outputRoot) {
     const html = await readFile(join(root, route), 'utf8');
     if ((html.match(/<main\b/g) || []).length !== 1) throw new Error(`Expected one main landmark: ${route}`);
     if (route === 'guide/index.html' && !/<nav class="guide-toc"(?:\s|>)/.test(html)) throw new Error(`Missing guide contents: ${route}`);
+    const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]);
+    const uniqueIds = new Set(ids);
+    if (uniqueIds.size !== ids.length) throw new Error(`Duplicate page id: ${route}`);
     for (const match of html.matchAll(/<img\b[^>]*>/g)) {
       if (!/\balt="[^"]+"/.test(match[0])) throw new Error(`Missing image alternative: ${route}`);
     }
     for (const match of html.matchAll(/\b(?:href|src)="([^"]+)"/g)) {
       const href = match[1];
-      if (/^(https?:|mailto:|#)/i.test(href)) continue;
+      if (href.startsWith('#')) {
+        const fragment = decodeURIComponent(href.slice(1));
+        if (!uniqueIds.has(fragment)) throw new Error(`Unresolved page fragment: ${route}: ${href}`);
+        continue;
+      }
+      if (/^(https?:|mailto:)/i.test(href)) continue;
       if (!href.startsWith('/Video-to-Subtitle/')) throw new Error(`Invalid project-site path: ${route}: ${href}`);
       const relative = decodeURIComponent(href.slice('/Video-to-Subtitle/'.length).split('#')[0].split('?')[0]);
       const target = resolve(root, relative);

@@ -14,7 +14,6 @@ on:
       - 'VideoToSubtitle.spec'
       - 'app_icon.*'
       - 'pyproject.toml'
-      - '.github/workflows/python-app.yml'
   workflow_dispatch:      # 允許手動點擊按鈕觸發
 
 jobs:

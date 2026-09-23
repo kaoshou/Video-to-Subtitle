@@ -25,6 +25,11 @@ test('layout exposes Traditional Chinese navigation without JavaScript', () => {
   assert.doesNotMatch(html, /English|選擇語言/);
 });
 
+test('desktop guide table of contents has a full-height sticky container', async () => {
+  const css = await readFile(resolve(import.meta.dirname, '../src/site.css'), 'utf8');
+  assert.match(css, /\.guide-sidebar\s*\{[^}]*align-self:\s*stretch/s);
+});
+
 test('build emits homepage and guide deep links', async () => {
   const out = await mkdtemp(join(tmpdir(), 'video-subtitle-routes-'));
   try {

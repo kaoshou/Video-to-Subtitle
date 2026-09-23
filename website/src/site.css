@@ -88,6 +88,7 @@ figure, h1, h2, h3, p { margin-top: 0; }
 .site-footer span:last-child { margin-left: auto; }
 
 .guide-shell { display: grid; grid-template-columns: 250px minmax(0, 760px); gap: 64px; align-items: start; padding-block: 64px 100px; }
+.guide-sidebar { align-self: stretch; }
 .guide-toc { position: sticky; top: 96px; max-height: calc(100vh - 124px); overflow: auto; padding: 20px; border: 1px solid var(--line); border-radius: 15px; background: var(--soft); }
 .guide-toc strong { display: block; margin-bottom: 10px; }
 .guide-toc ol { margin: 0; padding-left: 18px; }
