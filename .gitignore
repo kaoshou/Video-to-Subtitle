@@ -1,6 +1,7 @@
 __pycache__/
 build/
 dist/
+node_modules/
 .venv/
 
 *.exe
@@ -8,4 +9,6 @@ dist/
 *.vtt
 *.txt
 *.json
+!website/package.json
+!website/package-lock.json
 scratch/
