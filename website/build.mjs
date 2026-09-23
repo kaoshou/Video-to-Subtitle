@@ -1,10 +1,17 @@
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { escapeHtml, renderLayout } from './src/layout.mjs';
 import { renderGuide } from './src/guide.mjs';
+import { content, renderHome } from './src/content.mjs';
 
 const websiteRoot = fileURLToPath(new URL('.', import.meta.url));
+const requiredAssets = [
+  ['app_icon.png', 'app_icon.png'],
+  ['screenshot_main.png', 'screenshot_main.png'],
+  ['screenshot_editor.png', 'screenshot_editor.png'],
+  ['screenshot_models.png', 'screenshot_models.png']
+];
 
 async function writePage(outputRoot, path, html) {
   const directory = join(outputRoot, path);
@@ -32,7 +39,12 @@ export async function validateOutput(outputRoot) {
 export async function buildSite({ repositoryRoot = resolve(websiteRoot, '..'), outputRoot = join(websiteRoot, 'dist') } = {}) {
   const guidePath = join(repositoryRoot, 'docs/USER_GUIDE.zh-TW.md');
   await required(guidePath);
-  await writePage(outputRoot, '', renderLayout({ title: '本地語音轉字幕工具', description: '本機執行的影音轉字幕工具', page: 'home', body: '<section><h1>Video to Subtitle</h1></section>' }));
+  await mkdir(join(outputRoot, 'assets'), { recursive: true });
+  for (const [source, target] of requiredAssets) {
+    await required(join(repositoryRoot, source));
+    await copyFile(join(repositoryRoot, source), join(outputRoot, 'assets', target));
+  }
+  await writePage(outputRoot, '', renderLayout({ title: '本地語音轉字幕工具', description: content.heroText, page: 'home', body: renderHome() }));
   const source = await readFile(guidePath, 'utf8');
   const guide = renderGuide(source);
   const toc = guide.toc.map(item => `<li class="toc-level-${item.level}"><a href="#${escapeHtml(item.id)}">${escapeHtml(item.label)}</a></li>`).join('');
