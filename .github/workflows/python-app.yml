@@ -6,6 +6,14 @@ env:
 on:
   push:
     branches: [ "main" ]  # 當 main 分支有更新時觸發
+    paths:
+      - 'SubtitleTranscriber.py'
+      - 'transcriber.py'
+      - 'evercam_integration.py'
+      - 'assets/evercam_player/**'
+      - 'VideoToSubtitle.spec'
+      - 'app_icon.*'
+      - 'pyproject.toml'
   workflow_dispatch:      # 允許手動點擊按鈕觸發
 
 jobs:
