@@ -43,7 +43,7 @@ class SecurityRegression(unittest.TestCase):
         for suffix in ('.tmp_save', '.tmp_preview'):
             self.link(Path(str(target) + suffix))
         atomic_write_text(target, SRT + '新增\n')
-        self.assertEqual(target.read_text(), SRT + '新增\n')
+        self.assertEqual(target.read_text(encoding='utf-8'), SRT + '新增\n')
         self.assertVictim()
         self.assertFalse(list(self.course.glob('.vts-*')))
 
@@ -61,7 +61,7 @@ class SecurityRegression(unittest.TestCase):
         with patch('safe_files.os.replace', side_effect=PermissionError('locked')):
             with self.assertRaises(PermissionError):
                 atomic_write_text(self.course / 'media.srt', 'new')
-        self.assertEqual((self.course / 'media.srt').read_text(), SRT)
+        self.assertEqual((self.course / 'media.srt').read_text(encoding='utf-8'), SRT)
         self.assertFalse(list(self.course.glob('.vts-*')))
 
     def test_root_exchanged_after_metadata_check(self):
@@ -165,7 +165,7 @@ class SecurityRegression(unittest.TestCase):
         target = self.course / 'media.zh-TW.srt'
         target.write_text(SRT, encoding='utf-8')
         self.assertTrue(evercam.deploy_evercam_player(str(self.course), str(target))[0])
-        self.assertEqual(target.read_text(), SRT)
+        self.assertEqual(target.read_text(encoding='utf-8'), SRT)
 
     def test_external_subtitle_and_named_vtt_precedence(self):
         source = self.base / 'external.srt'
