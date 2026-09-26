@@ -10,7 +10,7 @@ import sys
 import re
 import json
 import html
-import shutil
+from safe_files import SafeDirectory
 from datetime import datetime, timezone
 
 SUPPORTED_VIDEO_EXTENSIONS = {".mp4", ".m4v", ".webm", ".mov", ".mkv", ".mp3", ".wav"}
@@ -129,6 +129,10 @@ def parse_subtitles_to_cues(subtitle_path):
     with open(subtitle_path, "r", encoding="utf-8-sig", errors="replace") as f:
         content = f.read()
         
+    return _parse_subtitle_text(content)
+
+
+def _parse_subtitle_text(content):
     content = content.replace("\r\n", "\n").replace("\r", "\n")
     lines = content.split("\n")
     cues = []
@@ -176,6 +180,14 @@ def parse_subtitles_to_cues(subtitle_path):
 
 
 def generate_subtitles_data_js(course_folder):
+    try:
+        with SafeDirectory(course_folder) as directory:
+            return _generate_subtitles_data_js(course_folder, directory)
+    except (OSError, ValueError) as exc:
+        return False, f"字幕資料更新失敗：{exc}", {}
+
+
+def _generate_subtitles_data_js(course_folder, directory):
     """
     掃描 EverCam 課程目錄中的所有字幕檔，編譯生成標準 subtitles-data.js
     支援 media.<lang>.srt, media.<lang>.vtt 以及通用 media.srt / media.vtt
@@ -187,15 +199,11 @@ def generate_subtitles_data_js(course_folder):
     subtitle_pattern = re.compile(r"^media\.([A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)\.(srt|vtt)$", re.IGNORECASE)
     generic_pattern = re.compile(r"^media\.(srt|vtt)$", re.IGNORECASE)
     
-    all_files = sorted(os.listdir(course_folder))
+    all_files = sorted(directory.names())
     named_subs = []
     generic_subs = []
     
     for fname in all_files:
-        fpath = os.path.join(course_folder, fname)
-        if not os.path.isfile(fpath):
-            continue
-            
         m = subtitle_pattern.match(fname)
         if m:
             named_subs.append((fname, _canonical_language(m.group(1))))
@@ -221,8 +229,7 @@ def generate_subtitles_data_js(course_folder):
         if lang_key in used_languages:
             continue  # 同一語言只保留一個
             
-        sub_path = os.path.join(course_folder, fname)
-        cues = parse_subtitles_to_cues(sub_path)
+        cues = _parse_subtitle_text(directory.read_bytes(fname).decode('utf-8-sig', errors='replace'))
         
         used_languages.add(lang_key)
         tracks.append({
@@ -249,9 +256,7 @@ def generate_subtitles_data_js(course_folder):
         f"window.EVERCAM_SUBTITLES = {json.dumps(payload, ensure_ascii=False, indent=2)};\n"
     )
     
-    out_path = os.path.join(course_folder, "subtitles-data.js")
-    with open(out_path, "w", encoding="utf-8") as f:
-        f.write(js_content)
+    directory.write_bytes("subtitles-data.js", js_content.encode('utf-8'))
         
     track_summary = ", ".join([f"{t['language']}({len(t['cues'])}條)" for t in tracks]) if tracks else "無字幕軌"
     return True, f"成功編譯字幕資料 ({track_summary})", payload
@@ -273,58 +278,59 @@ def deploy_evercam_player(course_folder, source_srt=None, target_lang="zh-TW"):
     if not os.path.isdir(assets_dir):
         return False, f"未找到播放器內建資產目錄: {assets_dir}", ""
         
-    # 步驟 1: 處理傳入的新字幕
-    if source_srt and os.path.isfile(source_srt):
-        canon_lang = _canonical_language(target_lang)
-        target_name = f"media.{canon_lang}.srt"
-        dest_srt_path = os.path.join(course_folder, target_name)
-        
-        # 若來源檔案不在課程目錄下，或檔名非標準格式，複製並規範化
-        if os.path.abspath(source_srt) != os.path.abspath(dest_srt_path):
-            try:
-                shutil.copy2(source_srt, dest_srt_path)
-            except Exception as e:
-                return False, f"複製字幕檔案失敗: {e}", ""
-                
-    # 步驟 2: 安全備份原始首頁
-    original_index = os.path.join(course_folder, "index.html")
-    backup_index = os.path.join(course_folder, "index.evercam-original.html")
-    
-    if os.path.isfile(original_index) and not os.path.isfile(backup_index):
-        try:
-            # 檢查原始首頁是否已經是新版播放器
-            with open(original_index, "r", encoding="utf-8", errors="ignore") as f:
-                content_sample = f.read(2048)
-            if "evercam-subtitle-player" not in content_sample and "EVERCAM_SUBTITLES" not in content_sample:
-                shutil.copy2(original_index, backup_index)
-        except Exception as e:
-            print(f"DEBUG: 備份原始首頁時發生非致命錯誤: {e}")
-            
-    # 步驟 3: 部署播放器靜態檔案
     try:
-        for item in os.listdir(assets_dir):
-            s_item = os.path.join(assets_dir, item)
-            d_item = os.path.join(course_folder, item)
-            
-            # 若為 subtitles-data.js，由下一步驟動態生成，此處不覆蓋既有字幕
-            if item == "subtitles-data.js":
+        with SafeDirectory(course_folder) as directory:
+            directory.check_file("config.js")
+            directory.check_file("index.html")
+            backup = directory.check_file("index.evercam-original.html")
+            directory.check_file("subtitles-data.js")
+            # Validate every owned destination before the first write.
+            _deploy_assets(assets_dir, directory, check_only=True)
+            for name in directory.names():
+                if re.fullmatch(r"media(?:\.[A-Za-z0-9-]+)?\.(?:srt|vtt)", name, re.I):
+                    directory.check_file(name)
+            subtitle = None
+            if source_srt:
+                canon_lang = _canonical_language(target_lang)
+                if not re.fullmatch(r"[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*", canon_lang):
+                    raise ValueError("不合法的字幕語言")
+                target_name = f"media.{canon_lang}.srt"
+                directory.check_file(target_name)
+                source = os.path.abspath(source_srt)
+                with SafeDirectory(os.path.dirname(source)) as source_dir:
+                    subtitle = source_dir.read_bytes(os.path.basename(source))
+            if directory.check_file("index.html") is not None and backup is None:
+                original = directory.read_bytes("index.html")
+                sample = original.decode("utf-8", errors="ignore")[:2048]
+                if "evercam-subtitle-player" not in sample and "EVERCAM_SUBTITLES" not in sample:
+                    directory.write_bytes("index.evercam-original.html", original, exclusive=True)
+            if subtitle is not None:
+                directory.write_bytes(target_name, subtitle)
+            _deploy_assets(assets_dir, directory)
+            ok, msg, _ = _generate_subtitles_data_js(course_folder, directory)
+            if not ok:
+                return False, msg, ""
+    except (OSError, ValueError) as exc:
+        return False, f"部署中止，請檢查檔案權限及符號連結：{exc}", ""
+    return True, "EverCam 字幕播放器部署成功！", os.path.join(course_folder, "index.html")
+
+
+def _deploy_assets(source, destination, check_only=False):
+    """Merge owned assets; never recursively delete user directories."""
+    for name in os.listdir(source):
+        if name == "subtitles-data.js":
+            continue
+        path = os.path.join(source, name)
+        if os.path.isdir(path):
+            if check_only and destination.info(name) is None:
                 continue
-                
-            if os.path.isdir(s_item):
-                if os.path.exists(d_item):
-                    shutil.rmtree(d_item)
-                shutil.copytree(s_item, d_item)
-            else:
-                shutil.copy2(s_item, d_item)
-    except Exception as e:
-        return False, f"部署播放器資源失敗: {e}", ""
-        
-    # 步驟 4: 原生生成 subtitles-data.js
-    ok, msg, _ = generate_subtitles_data_js(course_folder)
-    if not ok:
-        return False, f"部署成功但產生字幕資料時發生錯誤: {msg}", original_index
-        
-    return True, "EverCam 字幕播放器部署成功！", original_index
+            with destination.child(name, create=not check_only) as child:
+                _deploy_assets(path, child, check_only)
+        else:
+            destination.check_file(name)
+            if not check_only:
+                with open(path, "rb") as stream:
+                    destination.write_bytes(name, stream.read())
 
 
 def scan_evercam_courses(base_folder, max_depth=3):

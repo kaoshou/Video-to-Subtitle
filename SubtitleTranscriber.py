@@ -9,6 +9,7 @@ import webbrowser
 import platform
 import time
 import json
+from safe_files import atomic_write_text
 
 # Import core logic from transcriber.py
 from transcriber import (
@@ -146,7 +147,7 @@ def get_version():
     except Exception as e:
         print(f"DEBUG: Failed to load version from pyproject.toml: {e}")
     
-    return "2.7.7" # Fallback
+    return "2.7.8" # Fallback
 
 # --- 設定外觀 ---
 ctk.set_appearance_mode("System")  # Modes: "System" (standard), "Dark", "Light"
@@ -1204,8 +1205,10 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             return ""
 
     def _parse_subtitle(self, file_path):
+        return self._parse_subtitle_text(self._load_file_text(file_path))
+
+    def _parse_subtitle_text(self, raw_text):
         items = []
-        raw_text = self._load_file_text(file_path)
         if not raw_text:
             return items
             
@@ -1933,15 +1936,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         if self.is_raw_mode:
             # 切回結構化表格模式：先讀取 raw_editor 的內容並重新解析
             new_raw = self.raw_editor.get("0.0", "end")
-            temp_path = self.file_path + ".tmp_preview"
-            try:
-                with open(temp_path, "w", encoding="utf-8") as f:
-                    f.write(new_raw)
-                self.items = self._parse_subtitle(temp_path)
-            finally:
-                if os.path.exists(temp_path):
-                    try: os.remove(temp_path)
-                    except: pass
+            self.items = self._parse_subtitle_text(new_raw)
                     
             self.raw_frame.pack_forget()
             self.structured_frame.pack(fill="both", expand=True)
@@ -1987,16 +1982,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             else:
                 content = self._generate_subtitle_string(self.items)
 
-            # 先寫入暫存檔以確保安全
-            tmp_file = self.file_path + ".tmp_save"
-            with open(tmp_file, "w", encoding="utf-8") as f:
-                f.write(content)
-                
-            # 安全覆蓋
-            if os.path.exists(self.file_path):
-                os.replace(tmp_file, self.file_path)
-            else:
-                os.rename(tmp_file, self.file_path)
+            atomic_write_text(self.file_path, content)
                 
             messagebox.showinfo("儲存成功", f"字幕檔案已成功儲存！\n檔名: {os.path.basename(self.file_path)}", parent=self)
             self.destroy()
