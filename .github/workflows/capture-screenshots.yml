@@ -1,0 +1,48 @@
+name: Capture documentation screenshots
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/update-screenshots]
+    paths:
+      - 'scripts/capture_screenshots.py'
+      - '.github/workflows/capture-screenshots.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      HF_HUB_OFFLINE: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install virtual-display and Traditional Chinese font dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y xvfb xauth fonts-noto-cjk libportaudio2 ffmpeg
+          python -m pip install customtkinter tkinterdnd2 faster-whisper opencc-python-reimplemented av pillow sounddevice
+      - name: Capture the real application with synthetic teaching material
+        run: xvfb-run -a -s '-screen 0 1920x1440x24' python scripts/capture_screenshots.py
+      - name: Check image provenance and website compatibility
+        run: |
+          cp screenshot-artifacts/screenshot_main.png screenshot_main.png
+          cp screenshot-artifacts/screenshot_editor.png screenshot_editor.png
+          cp screenshot-artifacts/screenshot_models.png screenshot_models.png
+          npm ci --prefix website
+          npm test --prefix website
+          npm run build --prefix website
+      - uses: actions/upload-artifact@v4
+        with:
+          name: documentation-screenshots
+          path: screenshot-artifacts/
+          if-no-files-found: error

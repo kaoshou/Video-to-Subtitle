@@ -1,0 +1,28 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+
+// Stale screenshots must not silently ship with a newer application version.
+test('published screenshots identify the current version and actual capture platform', async () => {
+  const root = new URL('../../', import.meta.url);
+  const project = await readFile(new URL('pyproject.toml', root), 'utf8');
+  const version = project.match(/^version = "([^"]+)"/m)[1];
+  for (const name of ['screenshot_main.png', 'screenshot_editor.png', 'screenshot_models.png']) {
+    const png = await readFile(new URL(name, root));
+    const metadata = {};
+    for (let offset = 8; offset + 12 <= png.length;) {
+      const length = png.readUInt32BE(offset);
+      const type = png.toString('ascii', offset + 4, offset + 8);
+      const data = png.subarray(offset + 8, offset + 8 + length);
+      if (type === 'tEXt') {
+        const separator = data.indexOf(0);
+        metadata[data.subarray(0, separator).toString('latin1')] = data.subarray(separator + 1).toString('latin1');
+      }
+      offset += length + 12;
+    }
+    assert.equal(metadata.Software, `Video to Subtitle ${version}`, `${name}: stale or unverified capture`);
+    assert.match(metadata.SourceCommit ?? '', /^[0-9a-f]{40}$/);
+    assert.ok(['Linux', 'Windows', 'Darwin'].includes(metadata.Platform), `${name}: missing actual platform`);
+    assert.equal(metadata.Content, 'Synthetic demonstration; no personal data');
+  }
+});
