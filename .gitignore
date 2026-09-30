@@ -9,6 +9,7 @@ node_modules/
 *.vtt
 *.txt
 *.json
+!docs/screenshots.json
 !website/package.json
 !website/package-lock.json
 scratch/

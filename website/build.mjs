@@ -82,7 +82,7 @@ export async function buildSite({ repositoryRoot = resolve(websiteRoot, '..'), o
   const guide = renderGuide(source);
   const toc = guide.toc.map(item => `<li class="toc-level-${item.level}"><a href="#${escapeHtml(item.id)}">${escapeHtml(item.label)}</a></li>`).join('');
   const guideBody = `<div class="container guide-shell"><aside class="guide-sidebar"><nav class="guide-toc" aria-label="本頁目錄"><strong>本頁目錄</strong><ol>${toc}</ol></nav></aside><article class="guide-article">${guide.html}</article></div>`;
-  await writePage(outputRoot, 'guide', renderLayout({ title: '完整使用手冊', description: 'Video to Subtitle v2.7.7 完整繁體中文使用手冊', page: 'guide', body: guideBody }));
+  await writePage(outputRoot, 'guide', renderLayout({ title: '完整使用手冊', description: 'Video to Subtitle v2.7.8 完整繁體中文使用手冊', page: 'guide', body: guideBody }));
   await validateOutput(outputRoot);
   return outputRoot;
 }
