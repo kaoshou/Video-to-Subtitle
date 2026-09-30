@@ -30,7 +30,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y xvfb xauth fonts-noto-cjk libportaudio2 ffmpeg
-          python -m pip install customtkinter tkinterdnd2 faster-whisper opencc-python-reimplemented av pillow sounddevice
+          python -m pip install customtkinter tkinterdnd2 faster-whisper opencc av pillow sounddevice
       - name: Capture the real application with synthetic teaching material
         run: xvfb-run -a -s '-screen 0 1920x1440x24' python scripts/capture_screenshots.py
       - name: Check image provenance and website compatibility
