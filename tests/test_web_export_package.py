@@ -59,6 +59,22 @@ class Packages(unittest.TestCase):
         self.assertFalse((self.root / '影片-web').exists())
         self.assertFalse(list(self.root.glob('.vts-export-*')))
 
+    def test_repeated_exports_release_input_and_output_handles(self):
+        api = self.api()
+        before = self.request.video.read_bytes()
+        for index in range(5):
+            result = self.export(api, replace(self.request, folder_name=f'export-{index}'))
+            self.assertEqual(api.load_package(result.folder).issues, [])
+            moved = self.root / f'moved-{index}'
+            result.folder.rename(moved)
+            resource = moved / 'index.html'
+            resource.rename(moved / 'renamed.html')
+            self.assertTrue((moved / 'renamed.html').is_file())
+            self.assertFalse(list(self.root.glob('.vts-export-*')))
+        moved_source = self.root / 'renamed-source.mp4'
+        self.request.video.rename(moved_source)
+        self.assertEqual(moved_source.read_bytes(), before)
+
     def test_auto_discovered_plain_subtitle_exports_and_reloads_without_user_language(self):
         from web_export_form import ExportFormState, find_subtitle_candidates
         state = ExportFormState(); state.select_video(self.request.video)

@@ -299,6 +299,8 @@ class DesktopUI(unittest.TestCase):
         dialog = self.export_dialog()
         error = PermissionError('very long locked path ' + '中文路徑' * 400)
         error.winerror = 32
+        error.export_stage = '寫入網頁資源'
+        error.export_resource = 'index.html'
         error.staging_path = Path(self.temp.name) / ('暫存' * 60)
         def fail(progress, cancelled):
             raise error
@@ -307,12 +309,16 @@ class DesktopUI(unittest.TestCase):
         dialog.poll()
         self.root.update()
         self.assertIn('占用', dialog.notice)
+        self.assertNotIn('被其他程式', dialog.notice)
         self.assertLess(len(dialog.notice), 180)
         self.assertNotIn('very long', dialog.notice)
         self.assertFalse(dialog.error_details.winfo_manager())
         dialog.details_button.invoke()
         self.root.update()
         self.assertIn(str(error.staging_path), dialog.error_details.get('1.0', 'end'))
+        self.assertIn('寫入網頁資源', dialog.error_details.get('1.0', 'end'))
+        self.assertIn('index.html', dialog.error_details.get('1.0', 'end'))
+        self.assertIn('程式版本：test', dialog.error_details.get('1.0', 'end'))
         self.assertEqual(dialog.error_details.cget('state'), 'disabled')
         self.assert_buttons_visible(dialog.top, [dialog.create_button.cget('text'), '關閉'])
 
