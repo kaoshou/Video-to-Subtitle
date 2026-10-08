@@ -1,5 +1,27 @@
 # Windows 檔案占用與原生介面改善：驗證紀錄
 
+## v2.7.10 後續：移除未發布資源的多餘改名（2026-10-08）
+
+狀態：修正提交 `2b91a51` 位於 `codex/staged-resource-write` 測試分支；本輪未更新 main、版本號、安裝檔或 Release。
+
+- 使用者再次回報 `.vts-export-*/.vts-*/content → .vts-export-*/index.html` 的 WinError 32。程式本身會在改名前關閉寫入 stream，但僅由錯誤訊息不能判定占用 handle 的持有者；「被其他程式占用」的介面措辭過於武斷。
+- 原流程在已經隔離、尚未發布的整包暫存內，仍逐一建立內層暫存檔並改名。新檔案若被不允許 delete sharing 的 reader 持續開啟，4.55 秒重試不能解除衝突。
+- 修正僅調整 `StagedDirectory.write_bytes`：在釘選的暫存資料夾內以 `O_CREAT | O_EXCL`（POSIX 加 `O_NOFOLLOW`）直接建立資源，寫入、flush、fsync、關閉後，由既有整包排他發布流程完成匯出。不允許覆寫既有檔案／hardlink、不跟隨符號連結；呼叫端寫入失敗即離開交易，不發布不完整包。一般既有檔案更新及 EverCam 的原子替換流程沒有移除。
+- 錯誤資訊新增程式版本、資源寫入階段與資源名稱；WinError 32／33 提示改為來源尚未判定的檔案占用／共享衝突，不要求使用者停用安全防護。
+
+### 修正前後證據
+
+1. [修正前 Windows／macOS 測試 37746569698](https://github.com/kaoshou/Video-to-Subtitle/actions/runs/37746569698)，提交 `83013e8`：測試在真正 fsync 後，使用同一個 Windows 程序的原生 `CreateFileW` 開啟 reader，允許讀寫共享、不允許刪除共享，保留至資源寫入返回。舊流程在 `content → index.html` 出現真實 WinError 32，並保留未完成暫存，與使用者訊息的失敗位置一致。這是受控重現，不是辨識使用者機器上的實際占用來源。
+2. [修正後跨平台測試 37746929855](https://github.com/kaoshou/Video-to-Subtitle/actions/runs/37746929855)，提交 `2b91a51`：相同原生 reader 測試通過；Windows 100 項中 98 通過、2 項平台限定略過；macOS 100 項中 96 通過、4 項略過。播放器 4 項及網站 13 項皆通過。
+3. 新增連續五次真實 MP4／字幕匯出、重新載入與輸出檔案／資料夾改名，最後將來源影片改名並比對內容；Windows 測試通過，沒有殘留 `.vts-export-*`。
+4. 既有檔案／hardlink 保護、符號連結拒絕、磁碟 flush 失敗時保留原始錯誤及未發布資料包、取消及安全回歸測試通過。本機原生測試 96 通過、4 略過；非 GUI 測試 82 通過、18 略過。獨立唯讀審查未發現阻擋問題。
+
+### 本次修正的界線
+
+原生 reader 測試在資源寫入完成後釋放 reader，再發布整包；不宣稱整包發布能忽略任意持續鎖定。此次移除的是特定的逐檔改名衝突路徑，不代表所有 WinError 32、權限、磁碟或同步軟體問題均已排除。尚未在使用者原機重試，亦未重新打包或發布本修正。
+
+## v2.7.10 發布前紀錄
+
 日期：2026-10-08。基準：v2.7.9（`2527d1e`）。本次在 `codex/windows-sharing-ui` 測試分支實作，未更新 main、版本號或公開 Release。
 
 ## 修正與回歸範圍
