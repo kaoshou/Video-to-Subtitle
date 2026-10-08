@@ -2,7 +2,7 @@
 
 ## v2.7.10 後續：移除未發布資源的多餘改名（2026-10-08）
 
-狀態：修正提交 `2b91a51` 位於 `codex/staged-resource-write` 測試分支；本輪未更新 main、版本號、安裝檔或 Release。
+以下為開發驗證時的紀錄：修正提交 `2b91a51` 當時位於 `codex/staged-resource-write` 測試分支，未更新 main、版本號、安裝檔或 Release。此修正後續納入 v2.7.11，正式打包與發布結果以該版本的 GitHub Actions／Release 為準。
 
 - 使用者再次回報 `.vts-export-*/.vts-*/content → .vts-export-*/index.html` 的 WinError 32。程式本身會在改名前關閉寫入 stream，但僅由錯誤訊息不能判定占用 handle 的持有者；「被其他程式占用」的介面措辭過於武斷。
 - 原流程在已經隔離、尚未發布的整包暫存內，仍逐一建立內層暫存檔並改名。新檔案若被不允許 delete sharing 的 reader 持續開啟，4.55 秒重試不能解除衝突。
