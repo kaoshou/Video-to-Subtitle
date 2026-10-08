@@ -17,13 +17,20 @@ class NativeExportDialog(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = ctk.CTk()
-        self.addCleanup(self.root.destroy)
+        self.addCleanup(self.close_root)
         self.errors = []
         self.root.report_callback_exception = lambda *error: self.errors.append(error)
         self.dialog = WebExportDialog(self.root, app_version='test')
         self.folder = Path(self.temp.name)
         self.video = self.folder / '課程.mp4'
         make_video(self.video)
+
+    def close_root(self):
+        # CTk registers interpreter-wide timers. Cancel them before destroying
+        # this test's root so the next root cannot run orphaned Tcl callbacks.
+        for timer in self.root.tk.call('after', 'info'):
+            self.root.after_cancel(timer)
+        self.root.destroy()
 
     def settle(self):
         deadline = time.monotonic() + 30

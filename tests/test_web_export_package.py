@@ -41,8 +41,8 @@ class Packages(unittest.TestCase):
         self.assertFalse((result.folder / 'config.js').exists())
         self.assertTrue((result.folder / 'css/evercam-modern.css').is_file())
         self.assertTrue((result.folder / 'js/evercam-modern.js').is_file())
-        self.assertNotIn(str(self.root), (result.folder / 'web-export.json').read_text())
-        self.assertIn('&lt;script&gt;', result.index_path.read_text())
+        self.assertNotIn(str(self.root), (result.folder / 'web-export.json').read_text(encoding='utf-8'))
+        self.assertIn('&lt;script&gt;', result.index_path.read_text(encoding='utf-8'))
         before = self.hashes(result.folder)
         moved = self.root / 'moved'; result.folder.rename(moved)
         loaded = api.load_package(moved)
@@ -70,7 +70,7 @@ class Packages(unittest.TestCase):
         self.assertEqual(loaded.issues, [])
         self.assertEqual(loaded.request.default_subtitle, 'und')
         self.assertEqual(loaded.request.subtitles[0].language, 'und')
-        raw = (result.folder / 'subtitles-data.js').read_text()
+        raw = (result.folder / 'subtitles-data.js').read_text(encoding='utf-8')
         payload = json.loads(raw.split(' = ',1)[1].rstrip(';\n'))
         self.assertEqual(payload['tracks'][0]['label'], '預設字幕')
 
@@ -101,7 +101,7 @@ class Packages(unittest.TestCase):
         loaded = api.load_package(first.folder)
         second = self.export(api, loaded.request)
         self.assertFalse((second.folder / 'custom.js').exists())
-        self.assertNotIn('throw new Error("untrusted")', (second.folder / 'js/evercam-modern.js').read_text())
+        self.assertNotIn('throw new Error("untrusted")', (second.folder / 'js/evercam-modern.js').read_text(encoding='utf-8'))
         self.assertTrue(custom.exists())
 
 

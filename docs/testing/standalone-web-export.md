@@ -8,6 +8,7 @@
 - 本機 Python 3.12／Tk 9／CustomTkinter 6：另行啟用 `VTS_RUN_GUI_TESTS=1`，兩項真實介面整合測試皆通過，涵蓋缺字幕後恢復、進階欄位、自動配對、按鈕匯出與重新載入；沒有使用假控制項。
 - 播放器 4 項及網站 13 項測試通過；網站建置成功。修正手冊連結，舊截圖仍明確標示其實際 v2.7.8 來源，截圖中繼資料檢查保留。
 - CI 已加入 Windows／macOS 原生介面測試，以及完整執行檔 `--test-web-export` 合成影片匯出／重讀驗證。發布工作必須等待跨平台建置及安全測試通過。
+- 首次 Windows CI 抓到 handle rename 路徑缺少 NUL 結尾，造成回報完成卻未輸出至預期名稱。補足結尾後，Windows 的 GUI 匯出、資料夾碰撞、分塊複製、取消與合成影片 smoke 已通過；餘下兩項失敗是測試讀取 UTF-8 HTML／JS 時誤用系統 cp1252，已改為明確指定 UTF-8 待完整重跑。初次失敗紀錄：[37720674613](https://github.com/kaoshou/Video-to-Subtitle/actions/runs/37720674613)；修正驗證：[37720877757](https://github.com/kaoshou/Video-to-Subtitle/actions/runs/37720877757)。
 
 ## 已取得的本機證據
 
