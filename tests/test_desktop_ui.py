@@ -71,6 +71,91 @@ class DesktopUI(unittest.TestCase):
             self.root.update()
             time.sleep(0.01)
 
+    def test_main_content_surfaces_remain_distinct_in_both_themes(self):
+        # Break caught: the file list or settings inputs disappear into a
+        # same-colored parent surface after a palette/layout change.
+        app = self.main_app()
+        for mode in ('Light', 'Dark'):
+            self.ctk.set_appearance_mode(mode)
+            self.root.update()
+            color = app._apply_appearance_mode
+            self.assertNotEqual(color(app.textbox_files.cget('fg_color')),
+                                color(app.file_frame.cget('fg_color')))
+            self.assertGreaterEqual(app.textbox_files.cget('border_width'), 1)
+            for entry in (app.entry_prompt, app.entry_hotwords):
+                self.assertNotEqual(color(entry.cget('fg_color')),
+                                    color(app.settings_frame.cget('fg_color')))
+        self.ctk.set_appearance_mode('Light')
+
+    def test_about_and_update_check_use_the_launched_version(self):
+        # Break caught: late dialogs/reporting read updated metadata, while
+        # the title and main header still describe the original running app.
+        import io
+        from unittest.mock import patch
+        import SubtitleTranscriber as desktop
+        check_updates = desktop.App.check_for_updates
+        metadata = Path(self.temp.name) / 'pyproject.toml'
+        metadata.write_text('[project]\nversion = "9.8.0"\n', encoding='utf-8')
+        reset = getattr(desktop.get_version, 'cache_clear', lambda: None)
+        reset()
+        self.addCleanup(reset)
+        with patch.object(desktop, '__file__', str(metadata.with_name('SubtitleTranscriber.py'))):
+            app = self.main_app()
+            self.assertIn('v9.8.0', app.title())
+            self.assertIn('v9.8.0', app.subtitle_label.cget('text'))
+            metadata.write_text('[project]\nversion = "9.8.1"\n', encoding='utf-8')
+            app.show_about()
+            self.root.update()
+            labels = [w.cget('text') for w in self.widgets(app.about_window)
+                      if isinstance(w, self.ctk.CTkLabel)]
+            self.assertIn('Version 9.8.0', labels)
+            shown = []
+            with patch.object(desktop, 'safe_urlopen',
+                              return_value=io.BytesIO(b'{"tag_name":"v9.8.0"}')), \
+                 patch.object(desktop.messagebox, 'showinfo',
+                              side_effect=lambda title, message, **kwargs: shown.append(message)):
+                check_updates(app, manual=True)
+            self.assertEqual(len(shown), 1)
+            self.assertIn('v9.8.0', shown[0])
+            with patch.object(desktop.messagebox, 'askyesno',
+                              side_effect=lambda title, message, **kwargs: shown.append(message) or False):
+                app.show_update_dialog('9.8.1', 'https://example.invalid', '更新說明')
+            self.assertIn('目前版本：v9.8.0', shown[-1])
+            self.assertIn('v9.8.0', app.title())
+        self.assertFalse(self.errors, repr(self.errors))
+
+    def test_main_list_and_settings_keep_values_and_actions_at_small_size(self):
+        app = self.main_app()
+        video = Path(self.temp.name) / '課程.mp4'
+        video.touch()
+        app.add_files_from_paths([str(video)])
+        app.prompt_var.set('資料庫課程')
+        app.hotwords_var.set('索引, B-tree')
+        for scale in (1, 1.25, 1.5, 2):
+            with self.subTest(scale=scale):
+                self.ctk.set_widget_scaling(scale)
+                self.ctk.set_window_scaling(scale)
+                self.settle_scaling()
+                app.geometry('760x500')
+                self.root.update()
+                self.assertIn(str(video), app.textbox_files.get('1.0', 'end'))
+                self.assertEqual(app.textbox_files.cget('state'), 'disabled')
+                self.assert_buttons_visible(app, ['加入檔案...', '清除清單',
+                    '網頁播放器', '開始轉錄 (Start)', '取消 (Cancel)'])
+                app.settings_frame._parent_canvas.yview_moveto(1)
+                self.root.update()
+                app.btn_toggle_adv.invoke()
+                self.root.update()
+                self.assertTrue(app.is_adv_settings_visible)
+                app.btn_toggle_adv.invoke()
+                self.root.update()
+                self.assertEqual(app.prompt_var.get(), '資料庫課程')
+                self.assertEqual(app.hotwords_var.get(), '索引, B-tree')
+        app.btn_clear.invoke()
+        self.assertEqual(app.file_list, [])
+        self.assertEqual(app.textbox_files.get('1.0', 'end').strip(), '')
+        self.assertFalse(self.errors, repr(self.errors))
+
     def test_video_selection_does_not_show_or_register_hidden_dropdown_menus(self):
         # Break caught: recursive DnD registration maps macOS Menu windows.
         import tkinter as tk

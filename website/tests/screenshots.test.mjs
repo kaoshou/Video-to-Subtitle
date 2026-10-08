@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 // Keep labels tied to verified capture metadata; never relabel old pixels.
 test('published screenshots identify their actual capture version and platform', async () => {
   const root = new URL('../../', import.meta.url);
-  const version = '2.7.11';
+  const version = '2.7.12';
   const readme = await readFile(new URL('README.md', root), 'utf8');
   const { renderHome } = await import('../src/content.mjs');
   assert.ok(readme.includes(`截圖均擷取自 **v${version}**`));

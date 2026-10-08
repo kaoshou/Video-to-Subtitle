@@ -9,6 +9,7 @@ import webbrowser
 import platform
 import time
 import json
+from functools import lru_cache
 from pathlib import Path
 from web_export_dialog import WebExportDialog, completion_video
 from web_export_model import SubtitleSource
@@ -133,8 +134,13 @@ def ensure_sd():
     return SD_AVAILABLE
 
 # --- 版本資訊讀取 ---
+@lru_cache(maxsize=1)
 def get_version():
-    """從 pyproject.toml 讀取版本號"""
+    """啟動時讀取一次，所有視窗與更新檢查共用本次執行版本。
+
+    原始碼模式下，執行期間更新 pyproject.toml 並不會更新已載入的
+    Python 程式；重新啟動後才應採用新版號。
+    """
     try:
         # 優先嘗試 Python 3.11+ 內建的 tomllib
         try:
@@ -153,7 +159,7 @@ def get_version():
     except Exception as e:
         print(f"DEBUG: Failed to load version from pyproject.toml: {e}")
     
-    return "2.7.11" # Fallback
+    return "2.7.12" # Fallback
 
 # --- 設定外觀 ---
 ctk.set_appearance_mode("System")  # Modes: "System" (standard), "Dark", "Light"
@@ -2898,21 +2904,23 @@ class App(BaseClass):
         self.main_frame.grid_rowconfigure(4, weight=1, minsize=80) # 訊息日誌區隨著視窗高度自動展延
 
         # File Selection Frame (Batch Processing)
-        self.file_frame = ctk.CTkFrame(self.main_frame, corner_radius=12, border_width=1, border_color=BORDER)
+        self.file_frame = ctk.CTkFrame(self.main_frame, fg_color=CARD, corner_radius=12,
+                                     border_width=1, border_color=BORDER)
         self.file_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
         self.file_frame.grid_columnconfigure(0, weight=1) # Textbox expands
         
-        self.label_file = ctk.CTkLabel(self.file_frame, text="1. 待處理清單 (支援拖曳多個檔案)", font=ui_font(size=13, weight="bold"))
-        self.label_file.grid(row=0, column=0, columnspan=2, padx=15, pady=(8, 2), sticky="w")
+        self.label_file = ctk.CTkLabel(self.file_frame, text="1. 待處理清單 (支援拖曳多個檔案)", font=ui_font(size=14, weight="bold"))
+        self.label_file.grid(row=0, column=0, columnspan=2, padx=15, pady=(10, 6), sticky="w")
 
         # File List Textbox
-        self.textbox_files = ctk.CTkTextbox(self.file_frame, height=110)
-        self.textbox_files.grid(row=1, column=0, padx=(15, 10), pady=(2, 8), sticky="ew")
+        self.textbox_files = ctk.CTkTextbox(self.file_frame, height=116, fg_color=SURFACE,
+                                          border_width=1, border_color=BORDER, corner_radius=8)
+        self.textbox_files.grid(row=1, column=0, padx=(15, 10), pady=(2, 12), sticky="ew")
         self.textbox_files.configure(state="disabled") # Read-only
         
         # Buttons Frame within File Frame (Right side)
         self.btns_file_frame = ctk.CTkFrame(self.file_frame, fg_color="transparent")
-        self.btns_file_frame.grid(row=1, column=1, padx=(0, 15), pady=(2, 8), sticky="n")
+        self.btns_file_frame.grid(row=1, column=1, padx=(0, 15), pady=(2, 12), sticky="n")
         
         self.btn_add = ctk.CTkButton(self.btns_file_frame, text="加入檔案...", command=self.browse_file, width=115, height=26)
         self.btn_add.pack(fill="x", pady=(0, 4))
@@ -2930,14 +2938,17 @@ class App(BaseClass):
         self.btn_evercam_tool.pack(fill="x")
 
         # Settings Frame
-        self.settings_frame = ctk.CTkScrollableFrame(self.main_frame, height=240, corner_radius=12, border_width=1, border_color=BORDER)
+        # Keep the section heading outside the scrollable body. A distinct
+        # surface makes white input fields visible without changing the palette.
+        self.settings_frame = ctk.CTkScrollableFrame(
+            self.main_frame, height=240, corner_radius=12, border_width=1,
+            border_color=BORDER, fg_color=SURFACE, label_text="2. 轉換設定",
+            label_fg_color=CARD, label_text_color=TEXT, label_anchor="w",
+            label_font=ui_font(size=14, weight="bold"))
         self.settings_frame.grid(row=1, column=0, sticky="nsew", pady=(0, 10))
         self.settings_frame.grid_columnconfigure(1, weight=1)
         self.settings_frame.grid_columnconfigure(3, weight=1)
         
-        self.label_settings = ctk.CTkLabel(self.settings_frame, text="2. 轉換設定", font=ui_font(size=13, weight="bold"))
-        self.label_settings.grid(row=0, column=0, columnspan=4, padx=15, pady=(8, 4), sticky="w")
-
         # Row 1: Comboboxes
         self.label_model = ctk.CTkLabel(self.settings_frame, text="準確度 (Model):")
         self.label_model.grid(row=1, column=0, padx=15, pady=(2, 4), sticky="e")
@@ -3028,8 +3039,17 @@ class App(BaseClass):
                                            command=self.toggle_advanced_settings, height=26)
         self.btn_toggle_adv.grid(row=5, column=0, columnspan=4, sticky="w", padx=15, pady=(2, 8))
 
+        # Give each settings row the same breathing room while preserving
+        # the existing controls, order, variables and callbacks.
+        for control in (self.label_model, self.model_frame, self.label_device, self.combo_device,
+                        self.label_fmt, self.combo_fmt, self.chk_frame,
+                        self.label_prompt, self.prompt_container,
+                        self.label_hotwords, self.hotwords_container):
+            control.grid_configure(pady=(4, 6))
+
         # 進階設定面板：兩欄呈現，沿用設定卡片的捲動區，避免窄視窗截斷。
-        self.adv_settings_frame = ctk.CTkFrame(self.settings_frame, fg_color=SURFACE, corner_radius=6)
+        self.adv_settings_frame = ctk.CTkFrame(self.settings_frame, fg_color=CARD, corner_radius=8,
+                                            border_width=1, border_color=BORDER)
         self.adv_settings_frame.grid_remove() # 預設隱藏
         self.adv_settings_frame.grid_columnconfigure((0, 1), weight=1)
         
