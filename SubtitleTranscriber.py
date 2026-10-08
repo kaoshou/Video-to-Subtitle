@@ -2938,16 +2938,20 @@ class App(BaseClass):
         self.btn_evercam_tool.pack(fill="x")
 
         # Settings Frame
-        # Keep the section heading outside the scrollable body. A distinct
-        # surface makes white input fields visible without changing the palette.
+        # Keep the heading in the scrollable body so compact/high-DPI
+        # windows retain enough viewport height to reveal advanced controls.
         self.settings_frame = ctk.CTkScrollableFrame(
             self.main_frame, height=240, corner_radius=12, border_width=1,
-            border_color=BORDER, fg_color=SURFACE, label_text="2. 轉換設定",
-            label_fg_color=CARD, label_text_color=TEXT, label_anchor="w",
-            label_font=ui_font(size=14, weight="bold"))
+            border_color=BORDER, fg_color=SURFACE)
         self.settings_frame.grid(row=1, column=0, sticky="nsew", pady=(0, 10))
         self.settings_frame.grid_columnconfigure(1, weight=1)
         self.settings_frame.grid_columnconfigure(3, weight=1)
+
+        self.label_settings = ctk.CTkLabel(
+            self.settings_frame, text="2. 轉換設定", anchor="w",
+            font=ui_font(size=14, weight="bold"), fg_color=CARD, corner_radius=8)
+        self.label_settings.grid(row=0, column=0, columnspan=4,
+                                 padx=15, pady=(8, 6), sticky="ew")
         
         # Row 1: Comboboxes
         self.label_model = ctk.CTkLabel(self.settings_frame, text="準確度 (Model):")
@@ -4471,7 +4475,16 @@ class App(BaseClass):
         if self.is_adv_settings_visible:
             bounds = canvas.bbox('all')
             if bounds and bounds[3] > bounds[1]:
-                top = self.btn_toggle_adv.winfo_y() - 8 * self._get_widget_scaling()
+                # CTk roots track window scaling, not widget scaling. Read it
+                # from the actual control, including before any scale change.
+                margin = 8 * self.btn_toggle_adv._get_widget_scaling()
+                top = self.btn_toggle_adv.winfo_y() - margin
+                first_top = self.adv_settings_frame.winfo_y() + self.chk_word_ts.winfo_y()
+                # Prefer keeping the toggle visible, but prioritize the first
+                # option when a compact viewport cannot show both.
+                top = max(top, first_top + self.chk_word_ts.winfo_height()
+                          + margin - canvas.winfo_height())
+                top = min(top, first_top)
                 canvas.yview_moveto(max(0, top - bounds[1]) / (bounds[3] - bounds[1]))
         else:
             canvas.yview_moveto(getattr(self, '_settings_scroll_before_advanced', 0))

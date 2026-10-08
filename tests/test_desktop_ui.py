@@ -217,6 +217,22 @@ class DesktopUI(unittest.TestCase):
                 self.assert_buttons_visible(app, ['開始轉錄 (Start)', '取消 (Cancel)'])
         self.assertFalse(self.errors, repr(self.errors))
 
+    def test_advanced_first_option_is_visible_at_minimum_window_height(self):
+        # Break caught: a fixed settings header consumes the short viewport,
+        # leaving the first revealed option below its bottom edge.
+        app = self.main_app()
+        app.geometry('800x500')
+        self.settle_scaling()
+        app.btn_toggle_adv.invoke()
+        self.root.update()
+        canvas = app.settings_frame._parent_canvas
+        first = app.chk_word_ts
+        self.assertGreaterEqual(first.winfo_rooty(), canvas.winfo_rooty())
+        self.assertLessEqual(first.winfo_rooty() + first.winfo_height(),
+                             canvas.winfo_rooty() + canvas.winfo_height())
+        self.assert_buttons_visible(app, ['開始轉錄 (Start)', '取消 (Cancel)'])
+        self.assertFalse(self.errors, repr(self.errors))
+
     def test_model_manager_done_button_is_full_height_at_supported_scales(self):
         # Break caught: list/progress consume the fixed window before Close.
         app = self.main_app()
