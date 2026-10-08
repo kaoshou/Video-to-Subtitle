@@ -261,7 +261,10 @@ def _win_rename_directory(handle, destination):
                     ('FileNameLength', wintypes.DWORD),
                     ('FileName', wintypes.WCHAR * 1)]
     encoded = os.path.abspath(destination).encode('utf-16-le')
-    size = max(ctypes.sizeof(RenameInfo), RenameInfo.FileName.offset + len(encoded))
+    # SetFileInformationByHandle expects a NUL-terminated WCHAR path even
+    # though FileNameLength excludes that terminator. Without spare zeroed
+    # storage Windows can rename to trailing heap garbage instead of the path.
+    size = max(ctypes.sizeof(RenameInfo), RenameInfo.FileName.offset + len(encoded) + ctypes.sizeof(wintypes.WCHAR))
     buffer = ctypes.create_string_buffer(size)
     info = RenameInfo.from_buffer(buffer)
     info.ReplaceIfExists = False
