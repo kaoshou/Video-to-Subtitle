@@ -29,7 +29,8 @@ class NativeExportDialog(unittest.TestCase):
         # CTk registers interpreter-wide timers. Cancel them before destroying
         # this test's root so the next root cannot run orphaned Tcl callbacks.
         for timer in self.root.tk.call('after', 'info'):
-            self.root.after_cancel(timer)
+            # Leave command deletion to the child widget that registered it.
+            self.root.tk.call('after', 'cancel', timer)
         self.root.destroy()
 
     def settle(self):
