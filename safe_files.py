@@ -10,11 +10,34 @@ import os
 import secrets
 import stat
 import sys
+import time
 from pathlib import Path
 
 
 class UnsafePathError(OSError):
     pass
+
+
+def _retry_sharing_violation(operation):
+    """Only retry Windows sharing/lock violations; never relax file safety.
+
+    Newly closed files can briefly be held by another reader. Keep the owning
+    directory handles pinned while waiting, and bound the total delay to 4.55s.
+    Access denied, existing destinations and unsafe paths are not transient.
+    """
+    delays = iter((0.05, 0.1, 0.2, 0.4, 0.8, 1.0, 1.0, 1.0))
+    while True:
+        try:
+            return operation()
+        except OSError as error:
+            if getattr(error, 'winerror', None) not in (32, 33):
+                raise
+            delay = next(delays, None)
+            if delay is None:
+                if hasattr(error, 'add_note'):
+                    error.add_note('檔案持續被占用；已有限次重試，未略過安全檢查。')
+                raise
+            time.sleep(delay)
 
 
 def _publish_exclusive(source_fd, destination_fd, name):
@@ -201,6 +224,7 @@ class SafeDirectory:
             os.mkdir(staging, 0o700, dir_fd=self.fd)
         else:
             os.mkdir(self._path(staging), 0o700)
+        failure = None
         try:
             with self.child(staging) as stage:
                 flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0)
@@ -212,29 +236,51 @@ class SafeDirectory:
                         os.fsync(stream.fileno())
                         if old is not None and os.name != 'nt':
                             os.fchmod(stream.fileno(), stat.S_IMODE(old.st_mode) & 0o777)
-                    self.check_file(name)
-                    if self.fd is not None:
-                        if exclusive:
-                            _publish_exclusive(stage.fd, self.fd, name)
+                    def publish_content():
+                        # Recheck the destination on every attempt. The rename
+                        # itself still enforces exclusive publication atomically.
+                        self.check_file(name)
+                        if self.fd is not None:
+                            if exclusive:
+                                _publish_exclusive(stage.fd, self.fd, name)
+                            else:
+                                os.replace('content', name, src_dir_fd=stage.fd, dst_dir_fd=self.fd)
+                        elif exclusive:
+                            os.rename(stage._path('content'), self._path(name))
                         else:
-                            os.replace('content', name, src_dir_fd=stage.fd, dst_dir_fd=self.fd)
-                    elif exclusive:
-                        os.rename(stage._path('content'), self._path(name))
-                    else:
-                        os.replace(stage._path('content'), self._path(name))
+                            os.replace(stage._path('content'), self._path(name))
+                    _retry_sharing_violation(publish_content)
+                except BaseException as error:
+                    failure = error
+                    raise
                 finally:
                     try:
                         if stage.fd is not None:
-                            os.unlink('content', dir_fd=stage.fd)
+                            _retry_sharing_violation(lambda: os.unlink('content', dir_fd=stage.fd))
                         else:
-                            os.unlink(stage._path('content'))
+                            _retry_sharing_violation(lambda: os.unlink(stage._path('content')))
                     except FileNotFoundError:
                         pass
+                    except OSError:
+                        if failure is None:
+                            raise
+                        failure.staging_path = Path(stage.path)
+        except BaseException as error:
+            failure = error
+            raise
         finally:
-            if self.fd is not None:
-                os.rmdir(staging, dir_fd=self.fd)
-            else:
-                os.rmdir(self._path(staging))
+            try:
+                if self.fd is not None:
+                    _retry_sharing_violation(lambda: os.rmdir(staging, dir_fd=self.fd))
+                else:
+                    _retry_sharing_violation(lambda: os.rmdir(self._path(staging)))
+            except OSError as cleanup_error:
+                retained_error = failure if failure is not None else cleanup_error
+                retained_error.staging_path = Path(self._path(staging))
+                if hasattr(retained_error, 'add_note'):
+                    retained_error.add_note(f'未清理暫存：{retained_error.staging_path}（{cleanup_error}）')
+                if failure is None:
+                    raise
 
 
 def atomic_write_text(path, text):

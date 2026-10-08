@@ -87,6 +87,38 @@ class SharingRegression(unittest.TestCase):
         self.assertEqual(len(attempts), 1)
         self.assertFalse((self.root / 'index.html').exists())
 
+    def test_persistent_lock_is_bounded_and_keeps_original_page(self):
+        # Break caught: infinite retries, swallowing failure, or replacing old data.
+        path = self.root / 'index.html'
+        path.write_bytes(b'old page')
+        attempts = []
+        error = sharing_error()
+        def locked(*args, **kwargs):
+            attempts.append(1)
+            raise error
+        with patch('safe_files.os.replace', side_effect=locked), patch('time.sleep'):
+            with safe_files.SafeDirectory(self.root) as directory:
+                with self.assertRaises(OSError) as caught:
+                    directory.write_bytes('index.html', b'new page')
+        self.assertIs(caught.exception, error)
+        self.assertGreater(len(attempts), 1)
+        self.assertLessEqual(len(attempts), 10)
+        self.assertEqual(path.read_bytes(), b'old page')
+
+    def test_cleanup_failure_does_not_hide_original_sharing_error(self):
+        # Break caught: rmdir failure replaces the useful WinError32 diagnosis.
+        error = sharing_error()
+        cleanup_error = OSError('temporary directory still in use')
+        cleanup_error.winerror = 145
+        with patch('safe_files.os.replace', side_effect=error), patch('time.sleep'):
+            with safe_files.SafeDirectory(self.root) as directory:
+                with patch('safe_files.os.rmdir', side_effect=cleanup_error):
+                    with self.assertRaises(OSError) as caught:
+                        directory.write_bytes('index.html', b'new page')
+        self.assertIs(caught.exception, error)
+        self.assertTrue(caught.exception.staging_path.is_dir())
+        self.assertFalse((self.root / 'index.html').exists())
+
     @unittest.skipUnless(os.name == 'nt', 'requires real Windows file sharing')
     def test_real_external_reader_releases_source_before_retry_deadline(self):
         # Break caught: fresh HTML locked by a reader cannot be renamed.
