@@ -495,7 +495,11 @@ class WebExportDialog:
             self.top.destroy(); return
         if kind == 'success': self._success(result)
         else:
-            message = str(result)
+            message = f'程式版本：{self.version}\n' + str(result)
+            if hasattr(result, 'export_stage'):
+                message += '\n失敗階段：' + result.export_stage
+            if hasattr(result, 'export_resource'):
+                message += '\n相關資源：' + result.export_resource
             if hasattr(result,'staging_path'): message += '\n未能安全清理的暫存：' + str(result.staging_path)
             self.error_details.configure(state='normal')
             self.error_details.delete('1.0', 'end')
@@ -503,7 +507,7 @@ class WebExportDialog:
             self.error_details.configure(state='disabled')
             self.details_button.pack(anchor='w', padx=30, pady=(0, 6), before=self.progressbar)
             if getattr(result, 'winerror', None) in (32, 33):
-                self.notice = '檔案仍被其他程式占用，請關閉使用該檔案的程式，稍候再試。'
+                self.notice = '檔案發生占用或共享衝突；尚無法判定來源。請稍候重試，或改選其他輸出資料夾。'
             else:
                 self.notice = str(result)[:150] + ('…' if len(str(result)) > 150 else '')
             if hasattr(result, 'staging_path'):

@@ -427,9 +427,25 @@ class StagedDirectory:
     def write_bytes(self, name, data):
         if self._published:
             raise RuntimeError('資料包已發布')
-        with self._relative_parent(name, create=True) as (parent, leaf):
-            parent.write_bytes(leaf, data, exclusive=True)
-            self._owned[name] = _identity(parent.info(leaf))
+        try:
+            with self._relative_parent(name, create=True) as (parent, leaf):
+                # This entire package is unpublished. Create each resource once
+                # in its final internal location, just like copy_from does for
+                # media. A second per-file rename exposes freshly closed files
+                # to Windows readers that do not grant delete sharing.
+                parent.check_file(leaf)
+                flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0)
+                fd = (os.open(leaf, flags, 0o600, dir_fd=parent.fd) if parent.fd is not None
+                      else os.open(parent._path(leaf), flags | os.O_BINARY, 0o600))
+                with os.fdopen(fd, 'wb') as stream:
+                    self._owned[name] = _identity(os.fstat(stream.fileno()))
+                    stream.write(data)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+        except OSError as error:
+            error.export_stage = '寫入網頁資源'
+            error.export_resource = name
+            raise
 
     def publish(self, name):
         if self._published:
