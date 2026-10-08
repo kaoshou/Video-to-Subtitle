@@ -2,11 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-// Historical captures may stay only with explicit, accurate provenance labels.
-// Screenshot work was paused by the user; never relabel pixels as a new version.
+// Keep labels tied to verified capture metadata; never relabel old pixels.
 test('published screenshots identify their actual capture version and platform', async () => {
   const root = new URL('../../', import.meta.url);
-  const version = '2.7.8';
+  const version = '2.7.11';
   const readme = await readFile(new URL('README.md', root), 'utf8');
   const { renderHome } = await import('../src/content.mjs');
   assert.ok(readme.includes(`截圖均擷取自 **v${version}**`));
