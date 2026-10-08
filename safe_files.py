@@ -10,6 +10,7 @@ import os
 import secrets
 import stat
 import sys
+from pathlib import Path
 
 
 class UnsafePathError(OSError):
@@ -41,7 +42,7 @@ def _regular(info, path, directory=False):
         raise UnsafePathError(f"非一般{'資料夾' if directory else '檔案'}：{path}")
 
 
-def _win_open(path, directory=False):
+def _win_open(path, directory=False, rename_access=False):
     """Open the entry itself, not its reparse target; hold it against renames."""
     import ctypes
     from ctypes import wintypes
@@ -51,7 +52,7 @@ def _win_open(path, directory=False):
                        wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
     create.restype = wintypes.HANDLE
     # No FILE_SHARE_DELETE: prevents replacing the opened directory/file.
-    handle = create(path, 0x80000000, 3 if directory else 1, None, 3,
+    handle = create(path, 0x80000000 | (0x10000 if rename_access else 0), 3 if directory else 1, None, 3,
                     0x00200000 | (0x02000000 if directory else 0), None)
     if handle == wintypes.HANDLE(-1).value:
         raise ctypes.WinError(ctypes.get_last_error())
@@ -167,7 +168,9 @@ class SafeDirectory:
         finally:
             child.__exit__(None, None, None)
 
-    def read_bytes(self, name):
+    @contextlib.contextmanager
+    def open_read(self, name):
+        """Yield a pinned, seekable regular file without following its leaf."""
         self.check_file(name)
         if self.fd is not None:
             fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=self.fd)
@@ -181,6 +184,10 @@ class SafeDirectory:
                 raise
         with os.fdopen(fd, 'rb') as stream:
             _regular(os.fstat(stream.fileno()), name)
+            yield stream
+
+    def read_bytes(self, name):
+        with self.open_read(name) as stream:
             return stream.read()
 
     def write_bytes(self, name, data, exclusive=False):
@@ -234,3 +241,195 @@ def atomic_write_text(path, text):
     path = os.path.abspath(path)
     with SafeDirectory(os.path.dirname(path)) as directory:
         directory.write_bytes(os.path.basename(path), text.encode('utf-8'))
+
+
+class ExportCancelled(InterruptedError):
+    pass
+
+
+def _identity(info):
+    return (info.st_dev, info.st_ino) if info is not None else None
+
+
+def _win_rename_directory(handle, destination):
+    """Rename the open object, never replace an existing destination."""
+    import ctypes
+    from ctypes import wintypes
+    class RenameInfo(ctypes.Structure):
+        _fields_ = [('ReplaceIfExists', wintypes.BOOLEAN),
+                    ('RootDirectory', wintypes.HANDLE),
+                    ('FileNameLength', wintypes.DWORD),
+                    ('FileName', wintypes.WCHAR * 1)]
+    encoded = os.path.abspath(destination).encode('utf-16-le')
+    size = max(ctypes.sizeof(RenameInfo), RenameInfo.FileName.offset + len(encoded))
+    buffer = ctypes.create_string_buffer(size)
+    info = RenameInfo.from_buffer(buffer)
+    info.ReplaceIfExists = False
+    info.FileNameLength = len(encoded)
+    ctypes.memmove(ctypes.addressof(buffer) + RenameInfo.FileName.offset, encoded, len(encoded))
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    setter = kernel.SetFileInformationByHandle
+    setter.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
+    setter.restype = wintypes.BOOL
+    if not setter(handle, 3, buffer, size):
+        raise ctypes.WinError(ctypes.get_last_error())
+
+
+class StagedDirectory:
+    """One private export transaction. Nonempty failed staging is retained safely.
+
+    Caller retains the open parent until exit. No crashed/previous transaction is
+    recovered implicitly. Successful publication is irreversible by this object.
+    """
+    def __init__(self, parent):
+        self.parent = parent
+        self.name = '.vts-export-' + secrets.token_hex(16)
+        self.directory = None
+        self._owned = {}
+        self._directories = {}
+        self._published = False
+
+    def __enter__(self):
+        parent = self.parent
+        if parent.fd is not None:
+            os.mkdir(self.name, 0o700, dir_fd=parent.fd)
+        else:
+            os.mkdir(parent._path(self.name), 0o700)
+        self._root_identity = _identity(parent.info(self.name))
+        directory = object.__new__(SafeDirectory)
+        directory.path = parent._path(self.name)
+        directory.fd, directory.handles = None, []
+        try:
+            if parent.fd is not None:
+                directory.fd = os.open(self.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                                       dir_fd=parent.fd)
+                if _identity(os.fstat(directory.fd)) != self._root_identity:
+                    raise UnsafePathError('暫存資料夾已變更')
+            else:
+                directory.handles.append(_win_open(directory.path, directory=True, rename_access=True))
+            self.directory = directory
+            self._check_root()
+            return self
+        except BaseException as error:
+            directory.__exit__(None, None, None)
+            error.staging_path = Path(directory.path)
+            raise
+
+    def _check_root(self):
+        info = self.parent.info(self.name)
+        if _identity(info) != self._root_identity:
+            raise UnsafePathError('暫存資料夾已變更')
+        _regular(info, self.name, directory=True)
+
+    def copy_from(self, source, name, *, progress, cancelled):
+        if self._published:
+            raise RuntimeError('資料包已發布')
+        directory = self.directory
+        directory._name(name)
+        before = os.fstat(source.fileno())
+        _regular(before, name)
+        if cancelled():
+            raise ExportCancelled('已取消匯出')
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0)
+        fd = (os.open(name, flags, 0o600, dir_fd=directory.fd) if directory.fd is not None
+              else os.open(directory._path(name), flags | os.O_BINARY, 0o600))
+        self._owned[name] = _identity(os.fstat(fd))
+        count = 0
+        with os.fdopen(fd, 'wb') as output:
+            while True:
+                if cancelled():
+                    raise ExportCancelled('已取消匯出')
+                chunk = source.read(4 * 1024 * 1024)
+                if not chunk:
+                    break
+                output.write(chunk)
+                count += len(chunk)
+                progress(count)
+                # Bound a concurrently growing source instead of reading forever.
+                if count > before.st_size:
+                    raise OSError('來源檔案在複製期間變更')
+            output.flush()
+            os.fsync(output.fileno())
+        after = os.fstat(source.fileno())
+        if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns) or count != before.st_size:
+            raise OSError('來源檔案在複製期間變更')
+        return count
+
+    @contextlib.contextmanager
+    def _relative_parent(self, name, create=False):
+        parts = name.split('/')
+        for part in parts:
+            self.directory._name(part)
+        with contextlib.ExitStack() as stack:
+            current = self.directory
+            for index, part in enumerate(parts[:-1]):
+                key = '/'.join(parts[:index + 1])
+                if create and key not in self._directories:
+                    if current.fd is not None:
+                        os.mkdir(part, 0o700, dir_fd=current.fd)
+                    else:
+                        os.mkdir(current._path(part), 0o700)
+                    self._directories[key] = _identity(current.info(part))
+                if key not in self._directories or _identity(current.info(part)) != self._directories[key]:
+                    raise UnsafePathError('暫存子資料夾已变更')
+                current = stack.enter_context(current.child(part))
+            yield current, parts[-1]
+
+    def write_bytes(self, name, data):
+        if self._published:
+            raise RuntimeError('資料包已發布')
+        with self._relative_parent(name, create=True) as (parent, leaf):
+            parent.write_bytes(leaf, data, exclusive=True)
+            self._owned[name] = _identity(parent.info(leaf))
+
+    def publish(self, name):
+        if self._published:
+            raise RuntimeError('資料包已發布')
+        self.parent._name(name)
+        self._check_root()
+        if self.parent.fd is None:
+            _win_rename_directory(self.directory.handles[0][0], self.parent._path(name))
+        else:
+            import ctypes
+            libc = ctypes.CDLL(None, use_errno=True)
+            if sys.platform == 'darwin':
+                rename, flag = libc.renameatx_np, 4
+            elif sys.platform.startswith('linux') and hasattr(libc, 'renameat2'):
+                rename, flag = libc.renameat2, 1
+            else:
+                raise OSError('此平台不支援安全排他發布')
+            rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int,
+                               ctypes.c_char_p, ctypes.c_uint]
+            rename.restype = ctypes.c_int
+            if rename(self.parent.fd, os.fsencode(self.name), self.parent.fd, os.fsencode(name), flag):
+                error = ctypes.get_errno()
+                raise OSError(error, os.strerror(error), name)
+        self._published = True
+        return Path(self.parent._path(name))
+
+    def __exit__(self, kind, error, traceback):
+        try:
+            if not self._published:
+                self._check_root()
+                # No portable unlink-by-open-handle primitive proves the identity
+                # through deletion on every supported OS. A same-user actor can
+                # exchange a checked name immediately before unlink. Fail closed:
+                # retain nonempty failed packages and report their exact location.
+                # rmdir below can only remove an empty directory, never its contents.
+                if self._owned or self._directories or self.directory.names():
+                    raise UnsafePathError('無法原子確認刪除對象，已保留未完成資料包')
+                self.directory.__exit__(None, None, None)
+                self._check_root()
+                if self.parent.fd is not None:
+                    os.rmdir(self.name, dir_fd=self.parent.fd)
+                else:
+                    os.rmdir(self.parent._path(self.name))
+        except OSError as cleanup_error:
+            failure = error if error is not None else cleanup_error
+            failure.staging_path = Path(self.parent._path(self.name))
+            failure.add_note(f'未清理暫存：{failure.staging_path}（{cleanup_error}）')
+            if error is None:
+                raise
+        finally:
+            if self.directory is not None:
+                self.directory.__exit__(None, None, None)

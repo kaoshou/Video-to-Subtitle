@@ -23,7 +23,8 @@
     };
     var speedOptions = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 5];
 
-    var courseConfig = window.config || {};
+    var courseConfig = window.VTS_PLAYER_CONFIG || window.config || {};
+    var standalone = courseConfig.mode === "standalone";
     var subtitleData = window.EVERCAM_SUBTITLES || { tracks: [] };
     var chapters = Array.isArray(courseConfig.index) ? courseConfig.index : [];
     var chapterTitleLines = Math.max(1, Math.floor(Number(CHAPTER_TITLE_LINES) || 1));
@@ -62,7 +63,9 @@
     var preparingPictureInPicture = false;
     var activeChapterIndex = -1;
     var controlsTimer = null;
-    var subtitleStorageKey = "evercam.subtitle." + String(courseConfig.title || "course");
+    var subtitleStorageKey = standalone
+        ? "vts.subtitle." + String(courseConfig.packageId)
+        : "evercam.subtitle." + String(courseConfig.title || "course");
     var captionAppearanceStorageKey = "evercam.captionAppearance";
     var captionAppearance = loadCaptionAppearance();
     var captionAppearanceStyle = document.createElement("style");
@@ -142,6 +145,20 @@
 
         courseAuthor.hidden = !author;
         courseAuthor.textContent = author ? "作者：" + author : "";
+        var organization = document.getElementById("course-organization");
+        var description = document.getElementById("course-description");
+        if (organization) {
+            organization.textContent = String(courseConfig.organization || "");
+            organization.hidden = !organization.textContent;
+        }
+        if (description) {
+            description.textContent = String(courseConfig.description || "");
+            description.hidden = !description.textContent;
+        }
+        if (standalone) {
+            document.body.classList.add("standalone-player");
+            chapterCard.hidden = true;
+        }
         setCourseDurationMetadata(duration);
 
         if (courseConfig.poster) {
@@ -160,10 +177,12 @@
         var safeDuration = Number.isFinite(Number(duration)) ? Number(duration) : 0;
         courseDuration.hidden = safeDuration <= 0;
         courseDuration.textContent = safeDuration > 0 ? "影片長度：" + formatTime(safeDuration) : "";
-        courseMeta.hidden = courseAuthor.hidden && courseDuration.hidden;
+        var organization = document.getElementById("course-organization");
+        courseMeta.hidden = courseAuthor.hidden && courseDuration.hidden && (!organization || organization.hidden);
     }
 
     function syncChapterHeight() {
+        if (standalone) { return; }
         if (window.matchMedia("(max-width: 1040px)").matches) {
             chapterCard.style.height = "";
             return;
@@ -497,6 +516,7 @@
 
         nativeTracks.forEach(function (item) {
             var cues = item.track.cues;
+            if (!cues) { return; } // Browsers expose null while the track is disabled.
             for (var index = 0; index < cues.length; index += 1) {
                 if (captionAppearance.position === "bottom") {
                     cues[index].snapToLines = true;
@@ -603,23 +623,23 @@
         captionButton.title = "字幕";
         var languages = nativeTracks.map(function (item) { return item.language; });
         var preferred = readPreference(subtitleStorageKey);
-        var defaultLanguage = preferred && languages.indexOf(preferred) !== -1
+        var defaultLanguage = preferred && (languages.indexOf(preferred) !== -1 || (standalone && preferred === "off"))
             ? preferred
-            : subtitleData.defaultLanguage;
+            : (standalone ? courseConfig.defaultSubtitle : subtitleData.defaultLanguage);
 
-        if (!defaultLanguage || languages.indexOf(defaultLanguage) === -1) {
+        if ((!standalone || defaultLanguage !== "off") && (!defaultLanguage || languages.indexOf(defaultLanguage) === -1)) {
             defaultLanguage = languages.indexOf("zh-TW") !== -1 ? "zh-TW" : languages[0];
         }
-        setSubtitleLanguage(defaultLanguage || "off");
-        applyCaptionAppearance();
+        setSubtitleLanguage(defaultLanguage || "off", !standalone);
     }
 
-    function setSubtitleLanguage(language) {
+    function setSubtitleLanguage(language, persist) {
         activeSubtitleLanguage = language;
         syncSubtitleTrackModes();
+        applyCaptionAppearance();
         captionButton.classList.toggle("is-active", language !== "off");
         markMenuSelection(captionMenu, language);
-        savePreference(subtitleStorageKey, language);
+        if (persist !== false) { savePreference(subtitleStorageKey, language); }
     }
 
     function installSpeedMenu() {

@@ -11,7 +11,9 @@ on:
       - 'transcriber.py'
       - 'evercam_integration.py'
       - 'safe_files.py'
+      - 'web_export*.py'
       - 'assets/evercam_player/**'
+      - 'assets/standalone_player/**'
       - 'VideoToSubtitle.spec'
       - 'app_icon.*'
       - 'pyproject.toml'
@@ -116,6 +118,16 @@ jobs:
         if [ -n "$HOST_MLX_DIR" ] && [ -d "${HOST_MLX_DIR}_backup" ]; then
           mv "${HOST_MLX_DIR}_backup" "$HOST_MLX_DIR"
         fi
+
+    - name: 驗證打包後的一般影片字幕網頁匯出
+      shell: python
+      run: |
+        from pathlib import Path
+        import subprocess
+        import sys
+        executable = Path('dist/VideoToSubtitle.exe' if sys.platform == 'win32' else
+                          'dist/VideoToSubtitle.app/Contents/MacOS/VideoToSubtitle').resolve()
+        subprocess.run([str(executable), '--test-web-export'], check=True, timeout=180)
 
     - name: 建立 Mac DMG 安裝檔 (含極限壓縮優化)
       if: matrix.os == 'macos-latest'

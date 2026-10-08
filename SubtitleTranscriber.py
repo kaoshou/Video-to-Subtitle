@@ -9,6 +9,9 @@ import webbrowser
 import platform
 import time
 import json
+from pathlib import Path
+from web_export_dialog import WebExportDialog, completion_video
+from web_export_model import SubtitleSource
 from safe_files import atomic_write_text
 
 # Import core logic from transcriber.py
@@ -2870,7 +2873,7 @@ class App(BaseClass):
                                              fg_color="transparent", border_width=1, text_color=("gray10", "#DCE4EE"))
         self.btn_edit_manual.pack(fill="x", pady=(0, 4))
 
-        self.btn_evercam_tool = ctk.CTkButton(self.btns_file_frame, text="EverCam 網頁轉換", command=self.open_evercam_tool, width=115, height=26,
+        self.btn_evercam_tool = ctk.CTkButton(self.btns_file_frame, text="網頁播放器", command=self.open_web_player, width=115, height=26,
                                               fg_color=("#1f8b4c", "#2ecc71"), hover_color=("#18703d", "#27ae60"),
                                               text_color="white", font=ctk.CTkFont(size=12, weight="bold"))
         self.btn_evercam_tool.pack(fill="x")
@@ -4247,6 +4250,7 @@ class App(BaseClass):
 
             completed_count = 0
             produced_files = []
+            produced_sources = {}
             
             # 取得執行緒數
             try:
@@ -4299,6 +4303,7 @@ class App(BaseClass):
                     if result:
                         completed_count += 1
                         produced_files.append(result)
+                        produced_sources[str(result)] = str(file_path)
                     else:
                         self.log(f"檔案 {idx+1} 已中止。")
                         
@@ -4316,7 +4321,8 @@ class App(BaseClass):
                 messagebox.showwarning("已取消", "批次轉錄已中止。")
             else:
                 self.log(f"\n--- 批次任務完成: 成功 {completed_count} / {len(self.file_list)} ---")
-                self.after(0, lambda: self.show_completion_dialog(completed_count, produced_files))
+                self.after(0, lambda: self.show_completion_dialog(completed_count, produced_files, produced_sources,
+                                                               'en' if task == 'translate' else ''))
             
         except Exception as e:
             error_msg = str(e)
@@ -4385,7 +4391,22 @@ class App(BaseClass):
         """開啟獨立的 EverCam 課程網頁轉換工具視窗"""
         EverCamConverterDialog(self, initial_courses=initial_courses)
 
-    def show_completion_dialog(self, count, files):
+    def open_web_player(self):
+        choice = create_smooth_toplevel(self)
+        choice.title('網頁播放器')
+        ctk.CTkLabel(choice, text='選擇網頁來源', font=ctk.CTkFont(size=18, weight='bold')).pack(pady=18)
+        def open_mode(standalone):
+            choice.destroy()
+            if standalone:
+                WebExportDialog(self, app_version=get_version())
+            else:
+                self.open_evercam_tool()
+        ctk.CTkButton(choice, text='EverCam 課程轉換', command=lambda: open_mode(False)).pack(pady=8)
+        ctk.CTkButton(choice, text='一般影片＋字幕', command=lambda: open_mode(True)).pack(pady=8)
+        center_and_smooth_show(choice, self, 360, 220)
+
+    def show_completion_dialog(self, count, files, sources=None, subtitle_language=''):
+        sources = sources or {}
         self.last_completed_files = list(files) if files else []
         if not files:
             messagebox.showinfo("任務完成", f"批次處理結束！\n共成功轉錄 0 個檔案。")
@@ -4623,6 +4644,15 @@ class App(BaseClass):
                 )
             btn_edit.pack(side="left", padx=2)
 
+            source_video = completion_video(f_path, sources)
+            if source_video:
+                ctk.CTkButton(
+                    btn_group, text='匯出字幕網頁', width=96, height=26,
+                    command=lambda v=source_video, s=f_path: WebExportDialog(
+                        self, app_version=get_version(), video=v,
+                        subtitles=(SubtitleSource(Path(s), subtitle_language),))
+                ).pack(side='left', padx=2)
+
             # 按鈕 4 (若為 EverCam 專案)：EverCam網頁轉換 (質感翡翠綠特色按鈕)
             if is_ec_row:
                 btn_row_ec = ctk.CTkButton(
@@ -4657,6 +4687,15 @@ if __name__ == "__main__":
     
     # Enable multiprocessing support for frozen executables
     multiprocessing.freeze_support()
+
+    # Exercise the packaged exporter and bundled assets without models or GUI.
+    # Own the temporary directory so this diagnostic never overwrites user files.
+    if "--test-web-export" in sys.argv:
+        import tempfile
+        from scripts.smoke_web_export import run_smoke
+        with tempfile.TemporaryDirectory(prefix='vts-export-smoke-') as smoke_folder:
+            run_smoke(smoke_folder)
+        sys.exit(0)
 
     # 確保 macOS 下動態庫搜尋路徑包含 App Bundle 內部與 Frameworks 目錄，並自動同調部署 MLX metallib
     if sys.platform == 'darwin' and getattr(sys, 'frozen', False):

@@ -1338,3 +1338,17 @@ body.frame-fullscreen-active {
         transition-duration: 0.01ms !important;
     }
 }
+/* Standalone exports share controls, but do not reserve an empty chapter column. */
+.standalone-player .learning-layout {
+    grid-template-columns: minmax(0, 1fr);
+    max-width: 1200px;
+    margin-inline: auto;
+}
+.standalone-player .chapter-card { display: none; }
+.standalone-player .course-description {
+    max-width: 1200px;
+    margin: 24px auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    line-height: 1.7;
+}

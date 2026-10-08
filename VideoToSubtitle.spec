@@ -15,7 +15,7 @@ tmp_ret = collect_all('faster_whisper')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('ctranslate2')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-hiddenimports += ['tomli', 'evercam_integration']
+hiddenimports += ['tomli', 'evercam_integration', 'web_export', 'web_export_model', 'web_export_form', 'web_export_dialog']
 try:
     if sys.platform == 'darwin':
         import importlib
