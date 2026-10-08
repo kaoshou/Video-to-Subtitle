@@ -1,7 +1,7 @@
 {
-  "version": "2.7.8",
-  "source_commit": "d87da81d874188e6970f09cd2ec5cc0aa6dabe57",
-  "capture_run": "https://github.com/kaoshou/Video-to-Subtitle/actions/runs/36652834527",
+  "version": "2.7.11",
+  "source_commit": "65947d5e723418a101e7aec2507a195882f94088",
+  "capture_run": "https://github.com/kaoshou/Video-to-Subtitle/actions/runs/37751346431",
   "platform": "Linux",
   "method": "Real application under Xvfb; window client areas; no UI compositing",
   "fixture": "Synthetic lecture slide, silent video and hand-written sample subtitles",
