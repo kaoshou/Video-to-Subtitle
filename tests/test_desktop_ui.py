@@ -1,8 +1,10 @@
 """Native widget geometry and file-drop integration; no speech models needed."""
 import os
+import gc
 from pathlib import Path
 import tempfile
 import types
+import time
 import unittest
 
 
@@ -15,6 +17,7 @@ class DesktopUI(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = ctk.CTk()
+        self.exports = []
         self.errors = []
         self.root.report_callback_exception = lambda *error: self.errors.append(error)
         self.addCleanup(self.cleanup_root)
@@ -22,11 +25,30 @@ class DesktopUI(unittest.TestCase):
         self.root.update()
 
     def cleanup_root(self):
+        # Native Tk owns interpreter resources on its creating thread. Join
+        # workers and collect destroyed interpreter cycles here, before a
+        # later test's worker can trigger collection on a background thread.
+        for dialog in self.exports:
+            if dialog.job:
+                dialog.job.cancel()
+                dialog.job.thread.join(timeout=5)
+                self.assertFalse(dialog.job.thread.is_alive())
         for timer in self.root.tk.call('after', 'info'):
             self.root.tk.call('after', 'cancel', timer)
         self.root.destroy()
+        self.dialog = None
+        self.root = None
+        self.exports.clear()
+        dialog = None
+        gc.collect()
         self.ctk.set_widget_scaling(1)
         self.ctk.set_window_scaling(1)
+
+    def export_dialog(self):
+        from web_export_dialog import WebExportDialog
+        dialog = WebExportDialog(self.root, app_version='test')
+        self.exports.append(dialog)
+        return dialog
 
     def widgets(self, parent):
         for widget in parent.winfo_children():
@@ -80,7 +102,7 @@ class DesktopUI(unittest.TestCase):
 
     def test_drop_binding_reaches_nested_source_controls(self):
         from web_export_dialog import WebExportDialog
-        dialog = WebExportDialog(self.root, app_version='test')
+        dialog = self.export_dialog()
         self.root.update()
         # This sends a Tcl DnD event through the actual child label binding.
         # It verifies registration/dispatch, not an OS drag gesture.
@@ -102,7 +124,7 @@ class DesktopUI(unittest.TestCase):
     def test_standalone_drop_video_discovers_subtitles_and_rejects_multiple_videos(self):
         from web_export_dialog import WebExportDialog
         from test_web_export_inputs import make_video
-        dialog = WebExportDialog(self.root, app_version='test')
+        dialog = self.export_dialog()
         video = Path(self.temp.name) / '課程 {中文字幕}.mp4'
         make_video(video)
         video.with_suffix('.srt').write_text('1\n00:00:00,000 --> 00:00:00,500\n字幕\n', encoding='utf-8')
@@ -129,7 +151,7 @@ class DesktopUI(unittest.TestCase):
 
     def test_sharing_error_keeps_actions_visible_and_details_copyable(self):
         from web_export_dialog import WebExportDialog
-        dialog = WebExportDialog(self.root, app_version='test')
+        dialog = self.export_dialog()
         error = PermissionError('very long locked path ' + '中文路徑' * 400)
         error.winerror = 32
         error.staging_path = Path(self.temp.name) / ('暫存' * 60)
@@ -151,7 +173,7 @@ class DesktopUI(unittest.TestCase):
 
     def test_standalone_actions_fit_with_long_paths_at_supported_scales(self):
         from web_export_dialog import WebExportDialog
-        dialog = WebExportDialog(self.root, app_version='test')
+        dialog = self.export_dialog()
         dialog.variables['parent'].set('/' + '中文路徑很長/' * 60)
         dialog.target_changed()
         for scale in (1, 1.25, 1.5, 2):
@@ -193,8 +215,35 @@ class DesktopUI(unittest.TestCase):
             editor = desktop.SubtitleEditorWindow(self.root, str(subtitle))
             self.root.update()
             self.assertEqual(len(editor.tree.get_children()), 1)
+            self.ctk.set_widget_scaling(1.25)
+            self.ctk.set_window_scaling(1.25)
+            # CTk restores native min/max constraints one second after a
+            # scaling change. Wait for that real window-manager transition.
+            deadline = time.monotonic() + 1.2
+            while time.monotonic() < deadline:
+                self.root.update()
+                time.sleep(0.01)
+            editor.geometry('920x560')
+            self.root.update()
+            self.assert_buttons_visible(editor, ['儲存並關閉 (Save & Close)', '取消 (Cancel)'])
+            self.ctk.set_widget_scaling(1)
+            self.ctk.set_window_scaling(1)
             style = desktop.ttk.Style(self.root)
             self.assertIn('PingFang' if desktop.platform.system() == 'Darwin' else 'JhengHei' if desktop.platform.system() == 'Windows' else 'Noto', str(style.lookup('Treeview', 'font')))
+            from tkinter import font as tkfont
+            normal_linespace = tkfont.Font(root=self.root, font=style.lookup('Treeview', 'font')).metrics('linespace')
+            self.ctk.set_widget_scaling(2)
+            self.root.update()
+            large_linespace = tkfont.Font(root=self.root, font=style.lookup('Treeview', 'font')).metrics('linespace')
+            self.assertGreaterEqual(large_linespace, normal_linespace * 1.7)
+            self.ctk.set_widget_scaling(1)
+            previous_scaling = self.root.tk.call('tk', 'scaling')
+            for tk_scaling in (1.333, 1.667, 2, 2.667):
+                self.root.tk.call('tk', 'scaling', tk_scaling)
+                editor._apply_treeview_theme()
+                line_height = tkfont.Font(root=self.root, font=style.lookup('Treeview', 'font')).metrics('linespace')
+                self.assertGreaterEqual(int(style.lookup('Treeview', 'rowheight')), line_height + 4)
+            self.root.tk.call('tk', 'scaling', previous_scaling)
             self.ctk.set_appearance_mode('Dark')
             self.root.update()
             self.assertEqual(style.lookup('Treeview', 'background'), '#222D3D')

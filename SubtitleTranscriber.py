@@ -1485,20 +1485,25 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
 
         # 底部控制與提示列
         self.footer_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.footer_frame.pack(fill="x", padx=15, pady=(10, 15))
+        self.footer_frame.pack(side="bottom", fill="x", padx=15, pady=(10, 15), before=self.main_container)
         
         tip_str = "提示：編輯文字或調整時間軸，Alt+↑/↓ 跳轉，Ctrl+K 拆分，Ctrl+J 合併，空白鍵播放預覽。" if not self.is_txt else "提示：直接編輯文字內容，完成後點選儲存。"
-        ctk.CTkLabel(self.footer_frame, text=tip_str, font=ui_font(size=11), text_color=("gray30", "gray70")).pack(side="left")
+        hint = ctk.CTkLabel(self.footer_frame, text=tip_str, font=ui_font(size=12),
+                           text_color=MUTED, anchor="w", justify="left")
+        hint.pack(fill="x", pady=(0, 6))
+        wrap_to_width(hint)
+        footer_actions = ctk.CTkFrame(self.footer_frame, fg_color="transparent")
+        footer_actions.pack(fill="x")
         
         self.btn_save = ctk.CTkButton(
-            self.footer_frame, text="儲存並關閉 (Save & Close)", 
+            footer_actions, text="儲存並關閉 (Save & Close)",
             fg_color="#1f538d", hover_color="#14375e", width=160, height=34,
             font=ui_font(weight="bold"), command=self.save_and_close
         )
         self.btn_save.pack(side="right", padx=(10, 0))
         
         self.btn_cancel = ctk.CTkButton(
-            self.footer_frame, text="取消 (Cancel)", 
+            footer_actions, text="取消 (Cancel)",
             fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
             text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
             width=90, height=34, font=ui_font(size=12),
@@ -1508,8 +1513,15 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
 
     def _apply_treeview_theme(self):
         """為 ttk.Treeview 注入適配深淺色模式的現代風格"""
+        from tkinter import font as tkfont
         style = ttk.Style()
         style.theme_use("clam")
+        scale = ctk.ScalingTracker.get_widget_scaling(self)
+        # ttk positive sizes are points; CTk controls use scaled pixels. Use
+        # the same pixel scaling and measured CJK line height for the table.
+        font_size = -max(14, round(14 * scale))
+        table_font = tkfont.Font(root=self, font=(FONT_FAMILY, font_size))
+        row_height = table_font.metrics('linespace') + max(8, round(8 * scale))
         
         is_dark = ctk.get_appearance_mode().lower() == "dark"
         bg_color = CARD[1 if is_dark else 0]
@@ -1522,15 +1534,15 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             background=bg_color,
             foreground=fg_color,
             fieldbackground=bg_color,
-            rowheight=30,
-            font=(FONT_FAMILY, 12),
+            rowheight=row_height,
+            font=(FONT_FAMILY, font_size),
             borderwidth=0
         )
         style.configure(
             "Treeview.Heading",
             background=header_bg,
             foreground=fg_color,
-            font=(FONT_FAMILY, 12, "bold"),
+            font=(FONT_FAMILY, font_size, "bold"),
             relief="flat",
             borderwidth=1
         )
@@ -1542,6 +1554,11 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
 
     def _set_appearance_mode(self, mode_string):
         super()._set_appearance_mode(mode_string)
+        if hasattr(self, 'tree'):
+            self._apply_treeview_theme()
+
+    def _set_scaling(self, new_widget_scaling, new_window_scaling):
+        super()._set_scaling(new_widget_scaling, new_window_scaling)
         if hasattr(self, 'tree'):
             self._apply_treeview_theme()
 

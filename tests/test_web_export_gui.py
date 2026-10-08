@@ -1,5 +1,6 @@
 """Real Tk integration tests, enabled on native Windows/macOS CI runners."""
 import os
+import gc
 from pathlib import Path
 import tempfile
 import time
@@ -26,12 +27,21 @@ class NativeExportDialog(unittest.TestCase):
         make_video(self.video)
 
     def close_root(self):
+        if self.dialog.job:
+            self.dialog.job.cancel()
+            self.dialog.job.thread.join(timeout=5)
+            self.assertFalse(self.dialog.job.thread.is_alive())
         # CTk registers interpreter-wide timers. Cancel them before destroying
         # this test's root so the next root cannot run orphaned Tcl callbacks.
         for timer in self.root.tk.call('after', 'info'):
             # Leave command deletion to the child widget that registered it.
             self.root.tk.call('after', 'cancel', timer)
         self.root.destroy()
+        # Destroy/collect on the Tk owner thread. Otherwise interpreter cycles
+        # can survive into the next test and be collected by an export worker.
+        self.dialog = None
+        self.root = None
+        gc.collect()
 
     def settle(self):
         deadline = time.monotonic() + 30
