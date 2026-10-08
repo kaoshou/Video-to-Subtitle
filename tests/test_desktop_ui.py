@@ -50,6 +50,116 @@ class DesktopUI(unittest.TestCase):
         self.exports.append(dialog)
         return dialog
 
+    def main_app(self):
+        from unittest.mock import patch
+        import SubtitleTranscriber as desktop
+        self.cleanup_root()
+        # Leave controls and layout real; suppress only user settings/network.
+        for name in ('load_settings', 'save_settings', 'check_for_updates'):
+            guard = patch.object(desktop.App, name)
+            guard.start()
+            self.addCleanup(guard.stop)
+        self.root = desktop.App()
+        self.root.report_callback_exception = lambda *error: self.errors.append(error)
+        self.root.update()
+        return self.root
+
+    def settle_scaling(self):
+        # CTk restores native window-size constraints after one second.
+        deadline = time.monotonic() + 1.2
+        while time.monotonic() < deadline:
+            self.root.update()
+            time.sleep(0.01)
+
+    def test_video_selection_does_not_show_or_register_hidden_dropdown_menus(self):
+        # Break caught: recursive DnD registration maps macOS Menu windows.
+        import tkinter as tk
+        from test_web_export_inputs import make_video
+        dialog = self.export_dialog()
+        video = Path(self.temp.name) / '影片.mp4'
+        make_video(video)
+        video.with_suffix('.srt').write_text('1\n00:00:00,000 --> 00:00:00,500\n字幕\n', encoding='utf-8')
+        dialog.select_video(video)
+        deadline = time.monotonic() + 15
+        while dialog.job and time.monotonic() < deadline:
+            self.root.update()
+            time.sleep(0.01)
+        self.assertIsNone(dialog.job)
+        self.assertFalse(dialog.notice_error, dialog.notice)
+        menus = [w for w in self.widgets(dialog.top) if isinstance(w, tk.Menu)]
+        self.assertGreaterEqual(len(menus), 2)
+        for menu in menus:
+            self.assertFalse(menu.winfo_ismapped(), str(menu))
+            self.assertFalse(menu.tk.call('bind', str(menu), '<<DropTargetTypes>>'), str(menu))
+        combo = next(w for w in self.widgets(dialog.tracks_frame) if isinstance(w, self.ctk.CTkComboBox))
+        # Language selection still executes the real menu command.
+        menu = combo._dropdown_menu
+        index = next(i for i in range(menu.index('end') + 1)
+                     if menu.type(i) == 'command' and menu.entrycget(i, 'label').strip() == '英文')
+        menu.invoke(index)
+        self.root.update()
+        self.assertEqual(dialog.state.tracks[0].language, 'en')
+        self.assertFalse(menu.winfo_ismapped())
+        self.assertFalse(self.errors, repr(self.errors))
+
+    def test_advanced_expansion_reveals_settings_and_collapse_restores_scroll(self):
+        # Break caught: grid() adds controls below the viewport without reveal.
+        app = self.main_app()
+        app.max_chars_var.set('47')
+        for scale in (1, 1.25, 1.5, 2):
+            with self.subTest(scale=scale):
+                self.ctk.set_widget_scaling(scale)
+                self.ctk.set_window_scaling(scale)
+                self.settle_scaling()
+                app.geometry('800x700')
+                self.root.update()
+                if app.is_adv_settings_visible:
+                    app.btn_toggle_adv.invoke()
+                    self.root.update()
+                canvas = app.settings_frame._parent_canvas
+                canvas.yview_moveto(0)
+                app.btn_toggle_adv.invoke()
+                self.root.update()
+                first = app.chk_word_ts
+                self.assertGreaterEqual(first.winfo_rooty(), canvas.winfo_rooty())
+                self.assertLessEqual(first.winfo_rooty() + first.winfo_height(),
+                                     canvas.winfo_rooty() + canvas.winfo_height())
+                app.btn_toggle_adv.invoke()
+                self.root.update()
+                self.assertFalse(app.adv_settings_frame.winfo_manager())
+                self.assertAlmostEqual(canvas.yview()[0], 0, delta=0.02)
+                self.assertEqual(app.max_chars_var.get(), '47')
+                self.assert_buttons_visible(app, ['開始轉錄 (Start)', '取消 (Cancel)'])
+        self.assertFalse(self.errors, repr(self.errors))
+
+    def test_model_manager_done_button_is_full_height_at_supported_scales(self):
+        # Break caught: list/progress consume the fixed window before Close.
+        app = self.main_app()
+        app.show_storage_settings()
+        window = app.storage_window
+        done = next(w for w in self.widgets(window)
+                    if isinstance(w, self.ctk.CTkButton) and w.cget('text') == '完成 (Close)')
+        cancel = next(w for w in self.widgets(window)
+                      if isinstance(w, self.ctk.CTkButton) and w.cget('text') == '取消下載')
+        progress = next(w for w in self.widgets(cancel.master)
+                        if isinstance(w, self.ctk.CTkProgressBar))
+        for scale in (1, 1.25, 1.5, 2):
+            with self.subTest(scale=scale):
+                self.ctk.set_widget_scaling(scale)
+                self.ctk.set_window_scaling(scale)
+                self.settle_scaling()
+                self.assert_buttons_visible(window, ['完成 (Close)', '取消下載'])
+                self.assertGreaterEqual(done.winfo_height(), round(40 * done._get_widget_scaling()) - 2)
+                for control in (cancel, progress):
+                    self.assertTrue(control.winfo_ismapped())
+                    self.assertGreaterEqual(control.winfo_height(), control.winfo_reqheight() - 2)
+                    self.assertLessEqual(control.winfo_rooty() + control.winfo_height(),
+                                         window.winfo_rooty() + window.winfo_height())
+        done.invoke()
+        self.root.update()
+        self.assertFalse(window.winfo_exists())
+        self.assertFalse(self.errors, repr(self.errors))
+
     def widgets(self, parent):
         for widget in parent.winfo_children():
             yield widget

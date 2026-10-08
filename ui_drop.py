@@ -23,6 +23,10 @@ def register_file_drop(surface, callback):
         if not root.tk.call('info', 'commands', 'tkdnd::drop_target'):
             root.TkdndVersion = TkinterDnD._require(root)
         def attach(widget):
+            # Tk menus are hidden popup windows, not file-drop surfaces.
+            # On macOS, registering one maps it as a black native window.
+            if isinstance(widget, tk.Menu):
+                return
             if not getattr(widget, '_vts_file_drop_bound', False):
                 TkinterDnD.DnDWrapper.drop_target_register(widget, DND_FILES)
                 TkinterDnD.DnDWrapper.dnd_bind(widget, '<<Drop>>', callback)

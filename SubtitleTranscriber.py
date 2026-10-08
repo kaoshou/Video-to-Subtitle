@@ -153,7 +153,7 @@ def get_version():
     except Exception as e:
         print(f"DEBUG: Failed to load version from pyproject.toml: {e}")
     
-    return "2.7.9" # Fallback
+    return "2.7.10" # Fallback
 
 # --- 設定外觀 ---
 ctk.set_appearance_mode("System")  # Modes: "System" (standard), "Dark", "Light"
@@ -3452,7 +3452,7 @@ class App(BaseClass):
 
         # 4. 底部下載進度區域
         dl_progress_frame = ctk.CTkFrame(self.storage_window, fg_color="transparent")
-        dl_progress_frame.pack(fill="x", padx=20, pady=(0, 10))
+        dl_progress_frame.pack(side="bottom", fill="x", padx=20, pady=(0, 10), before=list_frame)
         
         dl_status_label = ctk.CTkLabel(dl_progress_frame, text="就緒 - 點擊上方按鈕可預先下載模型", font=ui_font(size=12), anchor="w")
         dl_status_label.pack(fill="x", pady=(0, 4))
@@ -3645,7 +3645,11 @@ class App(BaseClass):
         refresh_models_list()
 
         # 5. 底部關閉按鈕
-        ctk.CTkButton(self.storage_window, text="完成 (Close)", command=self.storage_window.destroy, width=110, height=32).pack(pady=(5, 15))
+        # Reserve the action area before the expanding list can consume it.
+        footer = ctk.CTkFrame(self.storage_window, fg_color="transparent")
+        footer.pack(side="bottom", fill="x", padx=20, pady=(5, 15), before=dl_progress_frame)
+        ctk.CTkButton(footer, text="完成 (Close)", command=self.storage_window.destroy,
+                      width=120, height=40).pack()
         
         # 後台渲染完成後一次性置中並平滑呈現 (杜絕閃爍)
         center_and_smooth_show(self.storage_window, self, 660, 660, is_modal=True)
@@ -4415,7 +4419,9 @@ class App(BaseClass):
                 self.main_frame.grid_rowconfigure(4, weight=1, minsize=80)
             except Exception:
                 pass
+            self.after_idle(self._reveal_settings_toggle)
         else:
+            self._settings_scroll_before_advanced = self.settings_frame._parent_canvas.yview()[0]
             # 設定卡片可捲動；在矮視窗中適度保留日誌與操作區。
             try:
                 scale = self._get_window_scaling() if hasattr(self, '_get_window_scaling') else 1.0
@@ -4429,6 +4435,19 @@ class App(BaseClass):
             self.adv_settings_frame.grid(row=6, column=0, columnspan=4, sticky="ew", pady=(0, 8), padx=15)
             self.btn_toggle_adv.configure(text="隱藏進階設定")
             self.is_adv_settings_visible = True
+            self.after_idle(self._reveal_settings_toggle)
+
+    def _reveal_settings_toggle(self):
+        """Reveal the opened panel after layout; restore the prior view on close."""
+        canvas = self.settings_frame._parent_canvas
+        canvas.update_idletasks()
+        if self.is_adv_settings_visible:
+            bounds = canvas.bbox('all')
+            if bounds and bounds[3] > bounds[1]:
+                top = self.btn_toggle_adv.winfo_y() - 8 * self._get_widget_scaling()
+                canvas.yview_moveto(max(0, top - bounds[1]) / (bounds[3] - bounds[1]))
+        else:
+            canvas.yview_moveto(getattr(self, '_settings_scroll_before_advanced', 0))
 
     def open_manual_edit(self):
         file_types = [("字幕與文字檔案", "*.srt *.vtt *.txt"), ("SRT 字幕檔", "*.srt"), ("VTT 字幕檔", "*.vtt"), ("TXT 純文字檔", "*.txt"), ("所有檔案", "*.*")]
