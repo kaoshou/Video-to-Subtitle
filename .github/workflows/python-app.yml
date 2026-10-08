@@ -12,6 +12,7 @@ on:
       - 'evercam_integration.py'
       - 'safe_files.py'
       - 'web_export*.py'
+      - 'ui_*.py'
       - 'assets/evercam_player/**'
       - 'assets/standalone_player/**'
       - 'VideoToSubtitle.spec'

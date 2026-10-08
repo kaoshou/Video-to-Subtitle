@@ -6,6 +6,8 @@ import subprocess
 import sys
 import threading
 import webbrowser
+from ui_theme import install_theme, ui_font, wrap_to_width
+from ui_drop import dropped_paths, register_file_drop
 
 from web_export_model import ExportRequest, Metadata, SubtitleSource, canonical_language
 from web_export import export_package, inspect_inputs, load_package, probe_video
@@ -49,6 +51,7 @@ class WebExportDialog:
         import tkinter as tk
         import customtkinter as ctk
         from tkinter import filedialog, messagebox
+        install_theme()
         self.ctk, self.tk, self.filedialog, self.messagebox = ctk, tk, filedialog, messagebox
         self.version = app_version
         self.top = ctk.CTkToplevel(parent)
@@ -75,10 +78,10 @@ class WebExportDialog:
         header = ctk.CTkFrame(self.top, fg_color='transparent')
         header.pack(fill='x', padx=32, pady=(26, 10))
         self.state_badge = ctk.CTkLabel(header, text='等待選擇影片', corner_radius=12, fg_color=('#E6EDF7','#28354B'),
-                                      text_color=('#365575','#B9D2ED'), padx=14, height=28, font=ctk.CTkFont(size=12))
+                                      text_color=('#365575','#B9D2ED'), padx=14, height=28, font=ui_font(size=12))
         self.state_badge.pack(side='right',anchor='n',pady=4)
-        ctk.CTkLabel(header, text='建立字幕網頁', font=ctk.CTkFont(size=27, weight='bold'), text_color=('#172C46','#E6EDF7')).pack(anchor='w')
-        ctk.CTkLabel(header, text='影片選好，字幕就位。', font=ctk.CTkFont(size=14), text_color=('#65748A','#A5B2C5')).pack(anchor='w', pady=(4,0))
+        ctk.CTkLabel(header, text='建立字幕網頁', font=ui_font(size=27, weight='bold'), text_color=('#172C46','#E6EDF7')).pack(anchor='w')
+        ctk.CTkLabel(header, text='影片選好，字幕就位。', font=ui_font(size=14), text_color=('#65748A','#A5B2C5')).pack(anchor='w', pady=(4,0))
         self.form = ctk.CTkScrollableFrame(self.top, fg_color='transparent')
         self.form.pack(fill='both', expand=True, padx=24, pady=8)
         self.form.grid_columnconfigure(1, weight=1)
@@ -96,16 +99,17 @@ class WebExportDialog:
         def card(row, title, hint):
             host = ctk.CTkFrame(self.form, corner_radius=16, fg_color=('#FFFFFF','#222D3D'), border_width=1, border_color=('#E4EAF2','#344257'))
             host.grid(row=row, column=0, columnspan=3, sticky='ew', pady=(0,12))
-            ctk.CTkLabel(host, text=title, font=ctk.CTkFont(size=16,weight='bold'), text_color=('#243C59','#DFE9F7')).pack(anchor='w', padx=22, pady=(18,2))
+            ctk.CTkLabel(host, text=title, font=ui_font(size=16,weight='bold'), text_color=('#243C59','#DFE9F7')).pack(anchor='w', padx=22, pady=(18,2))
             ctk.CTkLabel(host, text=hint, text_color=('#718096','#A5B2C5'), wraplength=620, justify='left').pack(anchor='w', padx=22, pady=(0,12))
             return host
 
         video_card = card(0, '01   影片來源', '選擇 MP4，自動尋找同資料夾內的同檔名與語系字幕。')
-        self.video_button = self.button(video_card, '選擇 MP4 影片…', self.choose_video)
-        self.video_button.configure(height=44, font=ctk.CTkFont(size=15, weight='bold'), fg_color=('#EAF2FD','#293F5C'), hover_color=('#DCEAFF','#344E70'), text_color=('#2363AD','#C5DEFF'))
+        self.video_button = self.button(video_card, '選擇或拖入 MP4 影片…', self.choose_video)
+        self.video_button.configure(height=44, font=ui_font(size=15, weight='bold'), fg_color=('#EAF2FD','#293F5C'), hover_color=('#DCEAFF','#344E70'), text_color=('#2363AD','#C5DEFF'))
         self.video_button.pack(fill='x', padx=22, pady=(0,10))
         self.media_info = ctk.CTkLabel(video_card, text='支援 .mp4  ·  不修改原始檔案', wraplength=620, anchor='w', justify='left', text_color=('#65748A','#A5B2C5'))
         self.media_info.pack(fill='x', padx=22, pady=(0,18))
+        wrap_to_width(self.media_info)
 
         subtitle_card = card(1, '02   字幕', '自動配對、多語一起加入；同語系優先使用 VTT。')
         self.candidate_info = ctk.CTkLabel(subtitle_card, text='選好影片後，字幕會自動顯示於此。', wraplength=610, anchor='w', justify='left', text_color=('#65748A','#A5B2C5'))
@@ -141,18 +145,25 @@ class WebExportDialog:
         self.button(self.more, '＋ 加入／更換字幕檔…', self.choose_subtitles).grid(row=9,column=0,columnspan=3,sticky='w',padx=12,pady=(0,6))
         self.tracks_frame = ctk.CTkFrame(self.more, fg_color='transparent')
         self.tracks_frame.grid(row=10,column=0,columnspan=3,sticky='ew',padx=6,pady=(0,10))
+        self.error_details = ctk.CTkTextbox(self.form, height=140, wrap='word')
+        self.error_details.configure(state='disabled')
         self.footer = ctk.CTkFrame(self.top, fg_color=('#FFFFFF','#202B3B'), corner_radius=0)
         self.footer.pack(fill='x')
-        self.target = ctk.CTkLabel(self.footer, text='儲存位置會自動設在影片旁的新資料夾', wraplength=690, anchor='w', justify='left', text_color=('#6B7A90','#ADBCD0'), font=ctk.CTkFont(size=12))
+        self.target = ctk.CTkLabel(self.footer, text='儲存位置會自動設在影片旁的新資料夾', wraplength=690, anchor='w', justify='left', text_color=('#6B7A90','#ADBCD0'), font=ui_font(size=12))
         self.target.pack(fill='x', padx=30, pady=(14,0))
-        self.status = ctk.CTkLabel(self.footer, text='', wraplength=690, anchor='w', justify='left', font=ctk.CTkFont(size=13))
+        wrap_to_width(self.target)
+        self.status = ctk.CTkLabel(self.footer, text='', wraplength=690, anchor='w', justify='left', font=ui_font(size=13))
         self.status.pack(fill='x', padx=30, pady=(2,4))
+        wrap_to_width(self.status)
+        self.details_button = ctk.CTkButton(self.footer, text='查看錯誤詳細資訊',
+            command=self.toggle_details, height=26, width=150, fg_color='transparent',
+            text_color=('#405570','#CBDAED'))
         self.progressbar = ctk.CTkProgressBar(self.footer, height=3, corner_radius=0, progress_color=('#2873C6','#5CA3EE'), fg_color=('#EAF0F7','#354256'))
         self.progressbar.set(0); self.progressbar.pack(fill='x', padx=30, pady=(0,12))
         actions = ctk.CTkFrame(self.footer, fg_color='transparent'); actions.pack(fill='x', padx=26, pady=(0,18))
         self.button(actions, '編輯既有網頁…', self.choose_package).pack(side='left', padx=4)
         self.create_button = self.button(actions, '建立網頁 →', self.start)
-        self.create_button.configure(height=42, width=154, font=ctk.CTkFont(size=15,weight='bold'),
+        self.create_button.configure(height=42, width=154, font=ui_font(size=15,weight='bold'),
                                      fg_color=('#2468B4','#367FCB'), hover_color=('#1C5697','#438DD9'), text_color='white', text_color_disabled=('#A5B5C8','#8195AD'))
         self.create_button.pack(side='right', padx=4)
         self.close_button = ctk.CTkButton(actions, text='關閉', width=86, height=36, command=self.close,
@@ -162,7 +173,44 @@ class WebExportDialog:
         for track in subtitles: self.add_track(track.path, track.language)
         if video: self.select_video(Path(video))
         self.update_flow()
+        self.drop_available = register_file_drop(self.top, self.on_drop)
+        if not self.drop_available:
+            self.video_button.configure(text='選擇 MP4 影片…（此環境未啟用拖放）')
         self.top.after(100, self.top.lift)
+
+    def on_drop(self, event):
+        if self.job:
+            self.notice = '正在處理，請完成或取消目前作業後再拖入檔案。'
+            self.notice_error = True
+            self.update_flow()
+            return 'break'
+        paths = [Path(p) for p in dropped_paths(self.top, event.data)]
+        videos = [p for p in paths if p.suffix.lower() == '.mp4']
+        if len(videos) > 1:
+            message = '一次只能拖入一個 MP4 影片；可一起加入 SRT／VTT 字幕。'
+        elif not paths or any(not p.is_file() or p.suffix.lower() not in ('.mp4', '.srt', '.vtt') for p in paths):
+            message = '請拖入可讀取的 MP4 影片或 SRT／VTT 字幕檔，不支援資料夾或其他格式。'
+        elif not videos and not self.state.video:
+            message = '請先選擇或拖入一個 MP4 影片，再加入字幕。'
+        else:
+            if videos:
+                self.select_video(videos[0])
+            for path in paths:
+                if path.suffix.lower() in ('.srt', '.vtt'):
+                    language = ''
+                    parts = path.stem.rsplit('.', 1)
+                    if len(parts) == 2:
+                        try: language = canonical_language(parts[-1])
+                        except ValueError: pass
+                    self.add_track(path, language)
+            # New subtitle controls must retain the in-progress lock too.
+            if self.job:
+                for widget in self.editable:
+                    if widget.winfo_exists(): widget.configure(state='disabled')
+            return 'break'
+        self.notice, self.notice_error = message, True
+        self.update_flow()
+        return 'break'
 
     def button(self, host, text, command):
         widget = self.ctk.CTkButton(host, text=text, command=command, width=120, height=34, corner_radius=8,
@@ -225,7 +273,9 @@ class WebExportDialog:
 
     def target_changed(self, *args):
         if hasattr(self, 'target'):
-            self.target.configure(text='儲存位置  ' + str(Path(self.variables['parent'].get()) / self.variables['folder'].get()))
+            path = str(Path(self.variables['parent'].get()) / self.variables['folder'].get())
+            display = path if len(path) <= 150 else path[:45] + '…' + path[-100:]
+            self.target.configure(text='儲存位置  ' + display)
         self.update_flow(clear_notice=True)
 
     def choose_video(self):
@@ -316,9 +366,11 @@ class WebExportDialog:
             row = self.ctk.CTkFrame(self.summary_tracks, fg_color='transparent')
             row.pack(fill='x',pady=4)
             self.ctk.CTkLabel(row, text=language_label(track.language) or '待修正', width=94, height=28, corner_radius=7,
-                             fg_color=('#EAF2FD','#2B4260'),text_color=('#2E659D','#C2DFFF'),font=self.ctk.CTkFont(size=12)).pack(side='left')
+                             fg_color=('#EAF2FD','#2B4260'),text_color=('#2E659D','#C2DFFF'),font=ui_font(size=12)).pack(side='left')
             self.ctk.CTkLabel(row,text=track.path.name,anchor='w',wraplength=420,justify='left',text_color=('#3C506B','#CFDBEB')).pack(side='left',fill='x',expand=True,padx=(12,0))
         self.update_flow(clear_notice=True)
+
+        register_file_drop(self.top, self.on_drop)
 
     def update_flow(self, *, clear_notice=False):
         if not hasattr(self, 'create_button'): return
@@ -405,6 +457,8 @@ class WebExportDialog:
         self.phase = phase
         self.notice = ''
         self.notice_error = False
+        self.details_button.pack_forget()
+        self.error_details.grid_remove()
         for widget in self.editable:
             if widget.winfo_exists(): widget.configure(state='disabled')
         self.close_button.configure(text='取消並關閉')
@@ -443,9 +497,28 @@ class WebExportDialog:
         else:
             message = str(result)
             if hasattr(result,'staging_path'): message += '\n未能安全清理的暫存：' + str(result.staging_path)
-            self.notice = message
+            self.error_details.configure(state='normal')
+            self.error_details.delete('1.0', 'end')
+            self.error_details.insert('1.0', message)
+            self.error_details.configure(state='disabled')
+            self.details_button.pack(anchor='w', padx=30, pady=(0, 6), before=self.progressbar)
+            if getattr(result, 'winerror', None) in (32, 33):
+                self.notice = '檔案仍被其他程式占用，請關閉使用該檔案的程式，稍候再試。'
+            else:
+                self.notice = str(result)[:150] + ('…' if len(str(result)) > 150 else '')
+            if hasattr(result, 'staging_path'):
+                self.notice += '\n已保留暫存檔案，位置請見詳細資訊。'
             self.notice_error = kind == 'error'
         self.update_flow()
+
+    def toggle_details(self):
+        if self.error_details.winfo_manager():
+            self.error_details.grid_remove()
+            self.details_button.configure(text='查看錯誤詳細資訊')
+        else:
+            self.error_details.grid(row=5, column=0, columnspan=3, sticky='ew', pady=8)
+            self.details_button.configure(text='收合錯誤詳細資訊')
+            self.form._parent_canvas.yview_moveto(1)
 
     def exported(self,result):
         self.phase = 'done'

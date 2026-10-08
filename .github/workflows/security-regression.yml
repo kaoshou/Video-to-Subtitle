@@ -10,6 +10,7 @@ permissions:
 jobs:
   test:
     strategy:
+      fail-fast: false
       matrix:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
@@ -18,7 +19,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: python -m pip install av pillow customtkinter
+      - run: python -m pip install av pillow customtkinter tkinterdnd2 numpy tqdm
       - run: python -m unittest discover -s tests -v
         env:
           VTS_RUN_GUI_TESTS: '1'

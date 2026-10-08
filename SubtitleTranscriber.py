@@ -13,6 +13,9 @@ from pathlib import Path
 from web_export_dialog import WebExportDialog, completion_video
 from web_export_model import SubtitleSource
 from safe_files import atomic_write_text
+from ui_theme import (install_theme, ui_font, wrap_to_width, BACKGROUND, CARD,
+                      SURFACE, BORDER, TEXT, MUTED, ACCENT, HOVER, FONT_FAMILY)
+from ui_drop import dropped_paths, register_file_drop
 
 # Import core logic from transcriber.py
 from transcriber import (
@@ -154,7 +157,7 @@ def get_version():
 
 # --- 設定外觀 ---
 ctk.set_appearance_mode("System")  # Modes: "System" (standard), "Dark", "Light"
-ctk.set_default_color_theme("blue")  # Themes: "blue" (standard), "green", "dark-blue"
+install_theme()
 
 # --- 修正 CustomTkinter 在 Windows 上的視窗標題列閃爍問題 ---
 def _patch_windows_set_titlebar_color(window_self, color_mode: str):
@@ -344,13 +347,13 @@ class VideoPlayerWidget(ctk.CTkFrame):
             self.top_bar, text="選擇影片", width=75, height=26,
             fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
             text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
-            font=ctk.CTkFont(size=11, weight="bold"), command=self.browse_video
+            font=ui_font(size=11, weight="bold"), command=self.browse_video
         )
         self.btn_select_video.pack(side="left")
         
         self.lbl_video_name = ctk.CTkLabel(
             self.top_bar, text="未載入影片", 
-            font=ctk.CTkFont(size=11), text_color="gray", anchor="w"
+            font=ui_font(size=11), text_color=MUTED, anchor="w"
         )
         self.lbl_video_name.pack(side="left", padx=8, fill="x", expand=True)
         
@@ -358,7 +361,7 @@ class VideoPlayerWidget(ctk.CTkFrame):
             self.top_bar, text="關閉", width=45, height=26,
             fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
             text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
-            font=ctk.CTkFont(size=11), command=self.close_video
+            font=ui_font(size=11), command=self.close_video
         )
         self.btn_close_video.pack(side="right")
         
@@ -390,7 +393,7 @@ class VideoPlayerWidget(ctk.CTkFrame):
         
         self.lbl_time = ctk.CTkLabel(
             slider_row, text="00:00:00 / 00:00:00",
-            font=ctk.CTkFont(family="Consolas", size=11), width=125, anchor="e"
+            font=ui_font(family="Consolas", size=11), width=125, anchor="e"
         )
         self.lbl_time.pack(side="right")
         
@@ -402,14 +405,14 @@ class VideoPlayerWidget(ctk.CTkFrame):
             btn_row, text="◀◀ -5s", width=55, height=26,
             fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
             text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
-            font=ctk.CTkFont(size=11), command=lambda: self.seek_relative(-5.0)
+            font=ui_font(size=11), command=lambda: self.seek_relative(-5.0)
         )
         self.btn_prev5.pack(side="left", padx=(0, 3))
         
         self.btn_play = ctk.CTkButton(
             btn_row, text="播放 ▶", width=68, height=26,
             fg_color="#1f538d", hover_color="#14375e",
-            text_color="white", font=ctk.CTkFont(size=11, weight="bold"),
+            text_color="white", font=ui_font(size=11, weight="bold"),
             command=self.toggle_play
         )
         self.btn_play.pack(side="left", padx=3)
@@ -418,7 +421,7 @@ class VideoPlayerWidget(ctk.CTkFrame):
             btn_row, text="+5s ▶▶", width=55, height=26,
             fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
             text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
-            font=ctk.CTkFont(size=11), command=lambda: self.seek_relative(5.0)
+            font=ui_font(size=11), command=lambda: self.seek_relative(5.0)
         )
         self.btn_next5.pack(side="left", padx=(0, 4))
         
@@ -427,7 +430,7 @@ class VideoPlayerWidget(ctk.CTkFrame):
             btn_row, text="1.0x", width=42, height=26,
             fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
             text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
-            font=ctk.CTkFont(size=11, weight="bold"), command=self._cycle_speed
+            font=ui_font(size=11, weight="bold"), command=self._cycle_speed
         )
         self.btn_speed.pack(side="left", padx=(0, 4))
         
@@ -436,7 +439,7 @@ class VideoPlayerWidget(ctk.CTkFrame):
             btn_row, text="CC", width=36, height=26,
             fg_color="#1f538d", hover_color="#14375e",
             text_color="white", border_width=1, border_color=("#94a3b8", "#475569"),
-            font=ctk.CTkFont(size=11, weight="bold"), command=self.toggle_subtitle_overlay
+            font=ui_font(size=11, weight="bold"), command=self.toggle_subtitle_overlay
         )
         self.btn_cc.pack(side="left", padx=(0, 4))
         
@@ -445,7 +448,7 @@ class VideoPlayerWidget(ctk.CTkFrame):
             btn_row, text="🔊", width=30, height=26,
             fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
             text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
-            font=ctk.CTkFont(size=12), command=self._toggle_mute
+            font=ui_font(size=12), command=self._toggle_mute
         )
         self.btn_mute.pack(side="left", padx=(2, 3))
         
@@ -457,14 +460,14 @@ class VideoPlayerWidget(ctk.CTkFrame):
         self.slider_volume.pack(side="left", padx=2)
         
         self.lbl_volume = ctk.CTkLabel(
-            btn_row, text="100%", font=ctk.CTkFont(family="Consolas", size=10),
-            width=32, anchor="w", text_color="gray"
+            btn_row, text="100%", font=ui_font(family="Consolas", size=10),
+            width=32, anchor="w", text_color=MUTED
         )
         self.lbl_volume.pack(side="left", padx=(2, 0))
         
         self.lbl_hotkey_tip = ctk.CTkLabel(
             btn_row, text="[點擊畫面或空白鍵播放]",
-            font=ctk.CTkFont(size=10), text_color="gray"
+            font=ui_font(size=10), text_color=MUTED
         )
         self.lbl_hotkey_tip.pack(side="right")
         
@@ -782,7 +785,7 @@ class VideoPlayerWidget(ctk.CTkFrame):
         self._latest_image = None
         self._photo_image = None
         
-        self.lbl_video_name.configure(text="未載入影片", text_color="gray")
+        self.lbl_video_name.configure(text="未載入影片", text_color=MUTED)
         self.slider.configure(from_=0.0, to=100.0)
         self.slider.set(0.0)
         self.lbl_time.configure(text="00:00:00 / 00:00:00")
@@ -1266,7 +1269,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         self.lbl_title = ctk.CTkLabel(
             header_sub, 
             text=f"正在編輯: {os.path.basename(self.file_path)}", 
-            font=ctk.CTkFont(size=15, weight="bold")
+            font=ui_font(size=15, weight="bold")
         )
         self.lbl_title.pack(side="left")
         
@@ -1274,7 +1277,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         self.lbl_stats = ctk.CTkLabel(
             header_sub, 
             text=f"(共 {total_count} 筆字幕)" if not self.is_txt else "", 
-            font=ctk.CTkFont(size=12), text_color="gray"
+            font=ui_font(size=12), text_color=MUTED
         )
         self.lbl_stats.pack(side="left", padx=10)
         
@@ -1283,7 +1286,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             header_sub, text="最大化 🗖", width=85, height=28,
             fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
             text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
-            font=ctk.CTkFont(size=12), command=self._toggle_maximize
+            font=ui_font(size=12), command=self._toggle_maximize
         )
         self.btn_maximize.pack(side="right")
         
@@ -1292,7 +1295,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
                 header_sub, text="切換至全文原始碼模式", width=150, height=28,
                 fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
                 text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
-                font=ctk.CTkFont(size=12, weight="bold"), command=self._toggle_raw_mode
+                font=ui_font(size=12, weight="bold"), command=self._toggle_raw_mode
             )
             self.btn_toggle_mode.pack(side="right", padx=(0, 8))
             
@@ -1300,7 +1303,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
                 header_sub, text="收合影片預覽", width=105, height=28,
                 fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
                 text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
-                font=ctk.CTkFont(size=12), command=self._toggle_video_preview
+                font=ui_font(size=12), command=self._toggle_video_preview
             )
             self.btn_toggle_video.pack(side="right", padx=(0, 8))
             
@@ -1309,7 +1312,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             self.search_bar_frame = ctk.CTkFrame(self.top_frame, fg_color="transparent")
             self.search_bar_frame.pack(fill="x", padx=12, pady=(0, 10))
             
-            ctk.CTkLabel(self.search_bar_frame, text="搜尋字幕:", font=ctk.CTkFont(size=12, weight="bold"), text_color=("gray10", "gray90")).pack(side="left", padx=(0, 5))
+            ctk.CTkLabel(self.search_bar_frame, text="搜尋字幕:", font=ui_font(size=12, weight="bold"), text_color=("gray10", "gray90")).pack(side="left", padx=(0, 5))
             self.search_var = tk.StringVar()
             self.search_var.trace_add("write", lambda *args: self._on_search_change())
             
@@ -1323,11 +1326,11 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
                 self.search_bar_frame, text="清除", width=55, height=28,
                 fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
                 text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
-                font=ctk.CTkFont(size=11), command=lambda: self.search_var.set("")
+                font=ui_font(size=11), command=lambda: self.search_var.set("")
             )
             self.btn_clear_search.pack(side="left", padx=5)
             
-            self.lbl_search_result = ctk.CTkLabel(self.search_bar_frame, text="", font=ctk.CTkFont(size=11), text_color="gray")
+            self.lbl_search_result = ctk.CTkLabel(self.search_bar_frame, text="", font=ui_font(size=11), text_color=MUTED)
             self.lbl_search_result.pack(side="left", padx=10)
 
         # 中間主工作區容器
@@ -1336,7 +1339,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         
         if self.is_txt:
             # 純文字 TXT 檔案直接顯示 Textbox
-            self.txt_editor = ctk.CTkTextbox(self.main_container, font=ctk.CTkFont(family="Consolas", size=13))
+            self.txt_editor = ctk.CTkTextbox(self.main_container, font=ui_font(family="Consolas", size=13))
             self.txt_editor.pack(fill="both", expand=True)
             self.txt_editor.insert("0.0", self.raw_content)
         else:
@@ -1385,17 +1388,17 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             time_row.pack(fill="x", padx=12, pady=(10, 6))
             
             self.lbl_edit_item_idx = ctk.CTkLabel(
-                time_row, text="[第 1 筆]", font=ctk.CTkFont(family="Consolas", size=13, weight="bold"), width=80, anchor="w"
+                time_row, text="[第 1 筆]", font=ui_font(family="Consolas", size=13, weight="bold"), width=80, anchor="w"
             )
             self.lbl_edit_item_idx.pack(side="left")
             
-            ctk.CTkLabel(time_row, text="開始時間:", font=ctk.CTkFont(size=12, weight="bold"), text_color=("gray10", "gray90")).pack(side="left", padx=(5, 3))
-            self.entry_start = ctk.CTkEntry(time_row, width=110, height=28, font=ctk.CTkFont(family="Consolas", size=12))
+            ctk.CTkLabel(time_row, text="開始時間:", font=ui_font(size=12, weight="bold"), text_color=("gray10", "gray90")).pack(side="left", padx=(5, 3))
+            self.entry_start = ctk.CTkEntry(time_row, width=110, height=28, font=ui_font(family="Consolas", size=12))
             self.entry_start.pack(side="left", padx=2)
             self.entry_start.bind("<KeyRelease>", lambda e: self._on_time_edit())
             
-            ctk.CTkLabel(time_row, text="結束時間:", font=ctk.CTkFont(size=12, weight="bold"), text_color=("gray10", "gray90")).pack(side="left", padx=(10, 3))
-            self.entry_end = ctk.CTkEntry(time_row, width=110, height=28, font=ctk.CTkFont(family="Consolas", size=12))
+            ctk.CTkLabel(time_row, text="結束時間:", font=ui_font(size=12, weight="bold"), text_color=("gray10", "gray90")).pack(side="left", padx=(10, 3))
+            self.entry_end = ctk.CTkEntry(time_row, width=110, height=28, font=ui_font(family="Consolas", size=12))
             self.entry_end.pack(side="left", padx=2)
             self.entry_end.bind("<KeyRelease>", lambda e: self._on_time_edit())
             
@@ -1404,7 +1407,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
                 time_row, text="-0.5s", width=50, height=28,
                 fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
                 text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
-                font=ctk.CTkFont(size=11, weight="bold"),
+                font=ui_font(size=11, weight="bold"),
                 command=lambda: self._shift_current_time(-500)
             ).pack(side="left", padx=(10, 2))
             
@@ -1412,7 +1415,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
                 time_row, text="+0.5s", width=50, height=28,
                 fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
                 text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
-                font=ctk.CTkFont(size=11, weight="bold"),
+                font=ui_font(size=11, weight="bold"),
                 command=lambda: self._shift_current_time(500)
             ).pack(side="left", padx=2)
             
@@ -1421,14 +1424,14 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
                 time_row, text="上一條 (Alt+↑)", width=105, height=28,
                 fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
                 text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
-                font=ctk.CTkFont(size=12, weight="bold"), command=lambda: self._navigate_item(-1)
+                font=ui_font(size=12, weight="bold"), command=lambda: self._navigate_item(-1)
             ).pack(side="right", padx=(5, 0))
             
             ctk.CTkButton(
                 time_row, text="下一條 (Alt+↓)", width=105, height=28,
                 fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
                 text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
-                font=ctk.CTkFont(size=12, weight="bold"), command=lambda: self._navigate_item(1)
+                font=ui_font(size=12, weight="bold"), command=lambda: self._navigate_item(1)
             ).pack(side="right", padx=5)
 
             # 編輯工具列：字幕一鍵拆分與合併 (Ctrl+K / Ctrl+J)
@@ -1439,26 +1442,26 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
                 tools_row, text="✂️ 游標處拆分 (Ctrl+K)", width=155, height=26,
                 fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
                 text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
-                font=ctk.CTkFont(size=11, weight="bold"), command=self._split_current_subtitle
+                font=ui_font(size=11, weight="bold"), command=self._split_current_subtitle
             ).pack(side="left", padx=(0, 6))
             
             ctk.CTkButton(
                 tools_row, text="🔗 與下一條合併 (Ctrl+J)", width=160, height=26,
                 fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
                 text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
-                font=ctk.CTkFont(size=11, weight="bold"), command=self._merge_with_next_subtitle
+                font=ui_font(size=11, weight="bold"), command=self._merge_with_next_subtitle
             ).pack(side="left")
             
             ctk.CTkLabel(
                 tools_row, text="[游標置於文字中按 Ctrl+K 拆分 / 選中條目按 Ctrl+J 合併下一條]",
-                font=ctk.CTkFont(size=11), text_color="gray"
+                font=ui_font(size=11), text_color=MUTED
             ).pack(side="left", padx=10)
 
             # 編輯列 2：多行字幕文字編輯框 (支援貼上多行、換行，絕不壓縮破壞)
             text_row = ctk.CTkFrame(self.editor_dock, fg_color="transparent")
             text_row.pack(fill="x", padx=12, pady=(0, 10))
             
-            self.txt_item_editor = ctk.CTkTextbox(text_row, height=65, font=ctk.CTkFont(size=13))
+            self.txt_item_editor = ctk.CTkTextbox(text_row, height=65, font=ui_font(size=13))
             self.txt_item_editor.pack(fill="x", expand=True)
             self.txt_item_editor.bind("<KeyRelease>", lambda e: self._on_text_edit())
             self.txt_item_editor.bind("<Control-k>", lambda e: self._on_txt_ctrl_k(e))
@@ -1477,7 +1480,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             
             # 3. 原始碼模式容器 (預設隱藏)
             self.raw_frame = ctk.CTkFrame(self.main_container, fg_color="transparent")
-            self.raw_editor = ctk.CTkTextbox(self.raw_frame, font=ctk.CTkFont(family="Consolas", size=12))
+            self.raw_editor = ctk.CTkTextbox(self.raw_frame, font=ui_font(family="Consolas", size=12))
             self.raw_editor.pack(fill="both", expand=True)
 
         # 底部控制與提示列
@@ -1485,12 +1488,12 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         self.footer_frame.pack(fill="x", padx=15, pady=(10, 15))
         
         tip_str = "提示：編輯文字或調整時間軸，Alt+↑/↓ 跳轉，Ctrl+K 拆分，Ctrl+J 合併，空白鍵播放預覽。" if not self.is_txt else "提示：直接編輯文字內容，完成後點選儲存。"
-        ctk.CTkLabel(self.footer_frame, text=tip_str, font=ctk.CTkFont(size=11), text_color=("gray30", "gray70")).pack(side="left")
+        ctk.CTkLabel(self.footer_frame, text=tip_str, font=ui_font(size=11), text_color=("gray30", "gray70")).pack(side="left")
         
         self.btn_save = ctk.CTkButton(
             self.footer_frame, text="儲存並關閉 (Save & Close)", 
             fg_color="#1f538d", hover_color="#14375e", width=160, height=34,
-            font=ctk.CTkFont(weight="bold"), command=self.save_and_close
+            font=ui_font(weight="bold"), command=self.save_and_close
         )
         self.btn_save.pack(side="right", padx=(10, 0))
         
@@ -1498,7 +1501,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             self.footer_frame, text="取消 (Cancel)", 
             fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
             text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
-            width=90, height=34, font=ctk.CTkFont(size=12),
+            width=90, height=34, font=ui_font(size=12),
             command=self.destroy
         )
         self.btn_cancel.pack(side="right")
@@ -1509,25 +1512,25 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         style.theme_use("clam")
         
         is_dark = ctk.get_appearance_mode().lower() == "dark"
-        bg_color = "#242424" if is_dark else "#f9f9f9"
-        fg_color = "#E0E0E0" if is_dark else "#1A1A1A"
-        header_bg = "#2b2b2b" if is_dark else "#e5e5e5"
-        select_bg = "#1f538d" if is_dark else "#3b8ed0"
+        bg_color = CARD[1 if is_dark else 0]
+        fg_color = TEXT[1 if is_dark else 0]
+        header_bg = SURFACE[1 if is_dark else 0]
+        select_bg = ACCENT[1 if is_dark else 0]
         
         style.configure(
             "Treeview",
             background=bg_color,
             foreground=fg_color,
             fieldbackground=bg_color,
-            rowheight=26,
-            font=("Consolas", 10),
+            rowheight=30,
+            font=(FONT_FAMILY, 12),
             borderwidth=0
         )
         style.configure(
             "Treeview.Heading",
             background=header_bg,
             foreground=fg_color,
-            font=("Segoe UI", 10, "bold"),
+            font=(FONT_FAMILY, 12, "bold"),
             relief="flat",
             borderwidth=1
         )
@@ -1536,6 +1539,11 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             background=[("selected", select_bg)],
             foreground=[("selected", "#ffffff")]
         )
+
+    def _set_appearance_mode(self, mode_string):
+        super()._set_appearance_mode(mode_string)
+        if hasattr(self, 'tree'):
+            self._apply_treeview_theme()
 
     def _populate_treeview(self):
         """將字幕高效寫入 Treeview (毫秒級瞬間完成)"""
@@ -2076,14 +2084,6 @@ class EverCamConverterDialog:
         # 建立 UI
         self._build_ui()
 
-        # 支援拖曳
-        if DND_AVAILABLE:
-            try:
-                self.top.drop_target_register(DND_FILES)
-                self.top.dnd_bind('<<Drop>>', self.on_drop)
-            except Exception as e:
-                print(f"DEBUG: EverCamConverterDialog DND error: {e}")
-
         # 平滑置中呈現
         center_and_smooth_show(self.top, parent, width=780, height=530, is_modal=False)
         self.top.minsize(680, 420)
@@ -2120,26 +2120,27 @@ class EverCamConverterDialog:
         header_frame.pack(fill="x", padx=20, pady=(16, 8))
 
         title_box = ctk.CTkFrame(header_frame, fg_color="transparent")
-        title_box.pack(side="left", fill="y")
+        title_box.pack(fill="x")
         
         lbl_title = ctk.CTkLabel(
             title_box, text="🌐 EverCam 課程網頁轉換工具",
-            font=ctk.CTkFont(size=18, weight="bold")
+            font=ui_font(size=18, weight="bold")
         )
         lbl_title.pack(anchor="w")
 
         lbl_desc = ctk.CTkLabel(
             title_box, text="一鍵將 EverCam 課程目錄整合為現代化 HTML5 字幕播放器，支援繁中/雙語切換與關鍵字搜尋",
-            font=ctk.CTkFont(size=12), text_color="gray"
+            font=ui_font(size=13), text_color=MUTED, anchor="w", justify="left"
         )
-        lbl_desc.pack(anchor="w", pady=(2, 0))
+        lbl_desc.pack(fill="x", pady=(2, 0))
+        wrap_to_width(lbl_desc)
 
         action_box = ctk.CTkFrame(header_frame, fg_color="transparent")
-        action_box.pack(side="right", fill="y")
+        action_box.pack(fill="x", pady=(12, 0))
 
         btn_add_folder = ctk.CTkButton(
             action_box, text="📁 選擇課程資料夾...",
-            font=ctk.CTkFont(size=12, weight="bold"),
+            font=ui_font(size=12, weight="bold"),
             height=30, width=130, corner_radius=6,
             command=self.browse_single_course
         )
@@ -2147,9 +2148,9 @@ class EverCamConverterDialog:
 
         btn_scan_batch = ctk.CTkButton(
             action_box, text="🔍 批次掃描母目錄...",
-            font=ctk.CTkFont(size=12),
+            font=ui_font(size=12),
             height=30, width=130, corner_radius=6,
-            fg_color=("gray75", "gray35"), hover_color=("gray65", "gray45"),
+            fg_color=SURFACE, hover_color=("#E0E8F3", "#3B5070"),
             text_color=("gray10", "gray95"),
             command=self.browse_batch_scan
         )
@@ -2157,13 +2158,30 @@ class EverCamConverterDialog:
 
         btn_clear = ctk.CTkButton(
             action_box, text="清空",
-            font=ctk.CTkFont(size=12),
+            font=ui_font(size=12),
             height=30, width=55, corner_radius=6,
             fg_color="transparent", border_width=1,
             text_color=("gray10", "#DCE4EE"),
             command=self.clear_courses
         )
         btn_clear.pack(side="left")
+
+        self.drop_hint = ctk.CTkLabel(
+            self.top, text="將 EverCam 課程資料夾、影片或字幕拖入下方；也可拖入母目錄批次掃描。",
+            fg_color=SURFACE, text_color=MUTED, corner_radius=8,
+            anchor="w", justify="left", height=36)
+        self.drop_hint.pack(fill="x", padx=20, pady=(0, 10))
+        wrap_to_width(self.drop_hint, padding=20)
+
+        # Reserve footer before the expanding course list.
+        bottom_frame = ctk.CTkFrame(self.top, fg_color=CARD, corner_radius=0)
+        bottom_frame.pack(fill="x", side="bottom")
+        self.lbl_status_summary = ctk.CTkLabel(
+            bottom_frame, text="準備就緒", text_color=MUTED, anchor="w", justify="left")
+        self.lbl_status_summary.pack(fill="x", padx=20, pady=(10, 2))
+        wrap_to_width(self.lbl_status_summary)
+        btn_box = ctk.CTkFrame(bottom_frame, fg_color="transparent")
+        btn_box.pack(anchor="e", padx=20, pady=(4, 12))
 
         # 2. 中間課程列表可滾動區
         list_container = ctk.CTkFrame(self.top, fg_color="transparent")
@@ -2172,24 +2190,11 @@ class EverCamConverterDialog:
         self.scroll_frame = ctk.CTkScrollableFrame(list_container, fg_color="transparent")
         self.scroll_frame.pack(fill="both", expand=True)
 
-        # 3. 底部控制列
-        bottom_frame = ctk.CTkFrame(self.top, fg_color=("gray92", "gray18"), height=52, corner_radius=0)
-        bottom_frame.pack(fill="x", side="bottom")
-
-        self.lbl_status_summary = ctk.CTkLabel(
-            bottom_frame, text="準備就緒",
-            font=ctk.CTkFont(size=12), text_color=("gray20", "gray80")
-        )
-        self.lbl_status_summary.pack(side="left", padx=20, pady=12)
-
-        btn_box = ctk.CTkFrame(bottom_frame, fg_color="transparent")
-        btn_box.pack(side="right", padx=16, pady=8)
-
         self.btn_convert_all = ctk.CTkButton(
             btn_box, text="🚀 一鍵轉換全部的 EverCam 網頁",
-            font=ctk.CTkFont(size=13, weight="bold"),
+            font=ui_font(size=13, weight="bold"),
             height=34, corner_radius=8,
-            fg_color=("#1f8b4c", "#2ecc71"), hover_color=("#18703d", "#27ae60"),
+            fg_color=ACCENT, hover_color=HOVER,
             text_color="white",
             command=self.convert_all_courses
         )
@@ -2197,20 +2202,23 @@ class EverCamConverterDialog:
 
         btn_close = ctk.CTkButton(
             btn_box, text="關閉",
-            font=ctk.CTkFont(size=13),
+            font=ui_font(size=13),
             width=75, height=34, corner_radius=8,
-            fg_color=("gray75", "gray35"), hover_color=("gray65", "gray45"),
+            fg_color=SURFACE, hover_color=("#E0E8F3", "#3B5070"),
             text_color=("gray10", "gray95"),
             command=self.top.destroy
         )
         btn_close.pack(side="left")
 
     def on_drop(self, event):
-        paths = self.parent.parse_dnd_files(event.data)
+        paths = dropped_paths(self.top, event.data)
         added_count = 0
+        unsupported = 0
         for p in paths:
             if not p or not os.path.exists(p):
+                unsupported += 1
                 continue
+            before = len(self.courses)
             if os.path.isdir(p):
                 if evercam.is_evercam_folder(p):
                     c_abs = os.path.abspath(p)
@@ -2230,8 +2238,20 @@ class EverCamConverterDialog:
                     if c_abs not in self.courses:
                         self.courses.append(c_abs)
                         added_count += 1
+            if len(self.courses) == before:
+                # Existing courses are accepted duplicates; other files are
+                # reported explicitly instead of silently being ignored.
+                is_course, course = evercam.detect_evercam_project(p)
+                if not is_course and not (os.path.isdir(p) and evercam.scan_evercam_courses(p)):
+                    unsupported += 1
         if added_count > 0:
             self.refresh_list()
+        if unsupported or not paths:
+            self.drop_hint.configure(text=f"未辨識 {unsupported or 1} 個項目：請拖入含 config.js 與影音檔的 EverCam 課程或母目錄。",
+                                     text_color=('#B14536', '#FFB9A8'))
+        else:
+            self.drop_hint.configure(text=f"已加入 {added_count} 個 EverCam 課程（已在清單中的課程不重複加入）。", text_color=MUTED)
+        return 'break'
 
     def browse_single_course(self):
         target_dir = filedialog.askdirectory(title="選擇 EverCam 課程資料夾", parent=self.top)
@@ -2362,24 +2382,26 @@ class EverCamConverterDialog:
             self.btn_convert_all.configure(state="disabled")
             self.lbl_status_summary.configure(text="目前尚未載入任何 EverCam 課程")
 
-            empty_frame = ctk.CTkFrame(self.scroll_frame, fg_color=("gray95", "gray22"), corner_radius=12)
-            empty_frame.pack(fill="x", pady=40, padx=20)
+            empty_frame = ctk.CTkFrame(self.scroll_frame, fg_color=CARD, corner_radius=12)
+            empty_frame.pack(fill="x", pady=12, padx=4)
 
-            lbl_icon = ctk.CTkLabel(empty_frame, text="📁", font=ctk.CTkFont(size=36))
+            lbl_icon = ctk.CTkLabel(empty_frame, text="📁", font=ui_font(size=36))
             lbl_icon.pack(pady=(25, 5))
 
             lbl_empty_t = ctk.CTkLabel(
                 empty_frame, text="目前尚未加入任何 EverCam 課程",
-                font=ctk.CTkFont(size=15, weight="bold")
+                font=ui_font(size=15, weight="bold")
             )
             lbl_empty_t.pack(pady=(0, 6))
 
             lbl_empty_d = ctk.CTkLabel(
                 empty_frame,
                 text="您可點擊右上角「選擇課程資料夾」或「批次掃描母目錄」\n亦可直接將 EverCam 課程資料夾拖曳進此視窗中進行轉換與字幕整合",
-                font=ctk.CTkFont(size=12), text_color="gray", justify="center"
+                font=ui_font(size=13), text_color=MUTED, justify="center"
             )
-            lbl_empty_d.pack(pady=(0, 25))
+            lbl_empty_d.pack(fill="x", padx=12, pady=(0, 20))
+            wrap_to_width(lbl_empty_d)
+            self._register_drop()
             return
 
         self.btn_convert_all.configure(state="normal")
@@ -2393,16 +2415,16 @@ class EverCamConverterDialog:
 
             card = ctk.CTkFrame(
                 self.scroll_frame,
-                fg_color=("white", "gray20"),
+                fg_color=CARD,
                 corner_radius=8,
                 border_width=1,
-                border_color=("gray85", "gray30")
+                border_color=BORDER
             )
             card.pack(fill="x", pady=4, padx=2)
 
             # 左側資訊區
             left_info = ctk.CTkFrame(card, fg_color="transparent")
-            left_info.pack(side="left", fill="both", expand=True, padx=12, pady=8)
+            left_info.pack(fill="x", padx=12, pady=(10, 4))
 
             # 標題列 (序號 + 課程名 + 標籤)
             title_line = ctk.CTkFrame(left_info, fg_color="transparent")
@@ -2410,7 +2432,7 @@ class EverCamConverterDialog:
 
             lbl_idx = ctk.CTkLabel(
                 title_line, text=f"[{idx+1:02d}]",
-                font=ctk.CTkFont(family="Consolas", size=12, weight="bold"),
+                font=ui_font(family="Consolas", size=12, weight="bold"),
                 text_color=("#1f538d", "#5dade2"), width=32
             )
             lbl_idx.pack(side="left")
@@ -2418,22 +2440,26 @@ class EverCamConverterDialog:
             display_name = status.get("folder_name") or os.path.basename(c_path)
             lbl_cname = ctk.CTkLabel(
                 title_line, text=display_name,
-                font=ctk.CTkFont(size=13, weight="bold")
+                font=ui_font(size=13, weight="bold")
             )
-            lbl_cname.pack(side="left", padx=(4, 8))
+            lbl_cname.pack(side="left", fill="x", expand=True, padx=(4, 8))
+            wrap_to_width(lbl_cname)
+
+            badge_line = ctk.CTkFrame(left_info, fg_color="transparent")
+            badge_line.pack(fill="x", pady=(4, 0))
 
             # 播放器狀態徽章
             if status.get("is_deployed"):
                 badge_p = ctk.CTkLabel(
-                    title_line, text="已就緒播放器",
-                    font=ctk.CTkFont(size=10, weight="bold"),
+                    badge_line, text="已就緒播放器",
+                    font=ui_font(size=10, weight="bold"),
                     fg_color=("#e8f5e9", "#1b3820"), text_color=("#2e7d32", "#81c784"),
                     corner_radius=4, padx=5, pady=1
                 )
             else:
                 badge_p = ctk.CTkLabel(
-                    title_line, text="原始 EverCam 課程",
-                    font=ctk.CTkFont(size=10),
+                    badge_line, text="原始 EverCam 課程",
+                    font=ui_font(size=10),
                     fg_color=("gray88", "gray28"), text_color=("gray30", "gray80"),
                     corner_radius=4, padx=5, pady=1
                 )
@@ -2445,19 +2471,19 @@ class EverCamConverterDialog:
                 for sub_info in subs[:2]:  # 最多顯示 2 個代表性字幕
                     sub_text = f"字幕: {sub_info['file']} ({sub_info['count']}條)"
                     badge_s = ctk.CTkLabel(
-                        title_line, text=sub_text,
-                        font=ctk.CTkFont(size=10, weight="bold"),
+                        badge_line, text=sub_text,
+                        font=ui_font(size=10, weight="bold"),
                         fg_color=("#e3f2fd", "#152836"), text_color=("#1976d2", "#64b5f6"),
                         corner_radius=4, padx=5, pady=1
                     )
                     badge_s.pack(side="left", padx=(0, 4))
                 if len(subs) > 2:
-                    lbl_more = ctk.CTkLabel(title_line, text=f"+{len(subs)-2}", font=ctk.CTkFont(size=10), text_color="gray")
+                    lbl_more = ctk.CTkLabel(badge_line, text=f"+{len(subs)-2}", font=ui_font(size=10), text_color=MUTED)
                     lbl_more.pack(side="left")
             else:
                 badge_s = ctk.CTkLabel(
-                    title_line, text="⚠️ 尚未偵測到字幕檔",
-                    font=ctk.CTkFont(size=10),
+                    badge_line, text="⚠️ 尚未偵測到字幕檔",
+                    font=ui_font(size=10),
                     fg_color=("#fff3e0", "#332512"), text_color=("#e65100", "#ffb74d"),
                     corner_radius=4, padx=5, pady=1
                 )
@@ -2466,19 +2492,20 @@ class EverCamConverterDialog:
             # 第二行：路徑
             lbl_path = ctk.CTkLabel(
                 left_info, text=c_path,
-                font=ctk.CTkFont(size=11), text_color="gray", anchor="w"
+                font=ui_font(size=12), text_color=MUTED, anchor="w", justify="left"
             )
             lbl_path.pack(fill="x", anchor="w", pady=(3, 0))
+            wrap_to_width(lbl_path)
 
             # 右側操作按鈕區
             right_btns = ctk.CTkFrame(card, fg_color="transparent")
-            right_btns.pack(side="right", padx=(6, 12), pady=8)
+            right_btns.pack(anchor="e", padx=12, pady=(4, 10))
 
             btn_cvt = ctk.CTkButton(
                 right_btns, text="轉換網頁",
-                font=ctk.CTkFont(size=11, weight="bold"),
+                font=ui_font(size=11, weight="bold"),
                 width=72, height=28, corner_radius=6,
-                fg_color=("#1f8b4c", "#2ecc71"), hover_color=("#18703d", "#27ae60"),
+                fg_color=ACCENT, hover_color=HOVER,
                 text_color="white",
                 command=lambda p=c_path: self.convert_single(p)
             )
@@ -2486,7 +2513,7 @@ class EverCamConverterDialog:
 
             btn_prev = ctk.CTkButton(
                 right_btns, text="預覽",
-                font=ctk.CTkFont(size=11),
+                font=ui_font(size=11),
                 width=52, height=28, corner_radius=6,
                 fg_color=("gray82", "gray32"), hover_color=("gray72", "gray42"),
                 text_color=("gray10", "gray95"),
@@ -2497,7 +2524,7 @@ class EverCamConverterDialog:
 
             btn_folder = ctk.CTkButton(
                 right_btns, text="目錄",
-                font=ctk.CTkFont(size=11),
+                font=ui_font(size=11),
                 width=52, height=28, corner_radius=6,
                 fg_color="transparent", border_width=1,
                 text_color=("gray10", "#DCE4EE"),
@@ -2507,7 +2534,7 @@ class EverCamConverterDialog:
 
             btn_del = ctk.CTkButton(
                 right_btns, text="✕",
-                font=ctk.CTkFont(size=12),
+                font=ui_font(size=12),
                 width=28, height=28, corner_radius=6,
                 fg_color="transparent", text_color=("gray40", "gray70"),
                 hover_color=("gray90", "gray25"),
@@ -2517,6 +2544,12 @@ class EverCamConverterDialog:
 
         summary_text = f"共載入 {total} 個 EverCam 課程  (已偵測字幕: {sub_count} 個 | 已就緒播放器: {deployed_count} 個)"
         self.lbl_status_summary.configure(text=summary_text)
+        self._register_drop()
+
+    def _register_drop(self):
+        self.drop_available = register_file_drop(self.top, self.on_drop)
+        if not self.drop_available:
+            self.drop_hint.configure(text="此環境未啟用檔案拖放，請使用上方按鈕選擇課程資料夾。")
 
 
 class SmoothProgressBar(ctk.CTkProgressBar):
@@ -2834,24 +2867,25 @@ class App(BaseClass):
         self.header_frame = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
         self.header_frame.grid(row=0, column=0, sticky="ew", padx=20, pady=(15, 0))
         
-        self.logo_label = ctk.CTkLabel(self.header_frame, text="Video to Subtitle", font=ctk.CTkFont(size=24, weight="bold"))
+        self.logo_label = ctk.CTkLabel(self.header_frame, text="Video to Subtitle", font=ui_font(size=24, weight="bold"))
         self.logo_label.pack(side="left")
         
-        self.subtitle_label = ctk.CTkLabel(self.header_frame, text=f"本地語音轉字幕工具  v{get_version()}", font=ctk.CTkFont(size=14), text_color="gray")
+        self.subtitle_label = ctk.CTkLabel(self.header_frame, text=f"本地語音轉字幕工具  v{get_version()}", font=ui_font(size=14), text_color=MUTED)
         self.subtitle_label.pack(side="left", padx=(10, 0), pady=(5, 0))
 
         # --- 2. Main Content Area (Middle) ---
         self.main_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.main_frame.grid(row=1, column=0, sticky="nsew", padx=20, pady=(5, 5))
         self.main_frame.grid_columnconfigure(0, weight=1)
+        self.main_frame.grid_rowconfigure(1, weight=1)
         self.main_frame.grid_rowconfigure(4, weight=1, minsize=80) # 訊息日誌區隨著視窗高度自動展延
 
         # File Selection Frame (Batch Processing)
-        self.file_frame = ctk.CTkFrame(self.main_frame, corner_radius=8)
+        self.file_frame = ctk.CTkFrame(self.main_frame, corner_radius=12, border_width=1, border_color=BORDER)
         self.file_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
         self.file_frame.grid_columnconfigure(0, weight=1) # Textbox expands
         
-        self.label_file = ctk.CTkLabel(self.file_frame, text="1. 待處理清單 (支援拖曳多個檔案)", font=ctk.CTkFont(size=13, weight="bold"))
+        self.label_file = ctk.CTkLabel(self.file_frame, text="1. 待處理清單 (支援拖曳多個檔案)", font=ui_font(size=13, weight="bold"))
         self.label_file.grid(row=0, column=0, columnspan=2, padx=15, pady=(8, 2), sticky="w")
 
         # File List Textbox
@@ -2874,17 +2908,17 @@ class App(BaseClass):
         self.btn_edit_manual.pack(fill="x", pady=(0, 4))
 
         self.btn_evercam_tool = ctk.CTkButton(self.btns_file_frame, text="網頁播放器", command=self.open_web_player, width=115, height=26,
-                                              fg_color=("#1f8b4c", "#2ecc71"), hover_color=("#18703d", "#27ae60"),
-                                              text_color="white", font=ctk.CTkFont(size=12, weight="bold"))
+                                              fg_color=ACCENT, hover_color=HOVER,
+                                              text_color="white", font=ui_font(size=12, weight="bold"))
         self.btn_evercam_tool.pack(fill="x")
 
         # Settings Frame
-        self.settings_frame = ctk.CTkFrame(self.main_frame, corner_radius=8)
-        self.settings_frame.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        self.settings_frame = ctk.CTkScrollableFrame(self.main_frame, height=240, corner_radius=12, border_width=1, border_color=BORDER)
+        self.settings_frame.grid(row=1, column=0, sticky="nsew", pady=(0, 10))
         self.settings_frame.grid_columnconfigure(1, weight=1)
         self.settings_frame.grid_columnconfigure(3, weight=1)
         
-        self.label_settings = ctk.CTkLabel(self.settings_frame, text="2. 轉換設定", font=ctk.CTkFont(size=13, weight="bold"))
+        self.label_settings = ctk.CTkLabel(self.settings_frame, text="2. 轉換設定", font=ui_font(size=13, weight="bold"))
         self.label_settings.grid(row=0, column=0, columnspan=4, padx=15, pady=(8, 4), sticky="w")
 
         # Row 1: Comboboxes
@@ -2900,7 +2934,7 @@ class App(BaseClass):
         self.combo_model.pack(side="left", fill="x", expand=True, padx=(0, 6))
         
         self.btn_download_model = ctk.CTkButton(self.model_frame, text="下載模型", width=75, height=28,
-                                                font=ctk.CTkFont(size=12),
+                                                font=ui_font(size=12),
                                                 command=self.manual_download_model)
         self.btn_download_model.pack(side="right")
         
@@ -2977,73 +3011,73 @@ class App(BaseClass):
                                            command=self.toggle_advanced_settings, height=26)
         self.btn_toggle_adv.grid(row=5, column=0, columnspan=4, sticky="w", padx=15, pady=(2, 8))
 
-        # 進階設定面板 (使用輕巧 CTkFrame，無多餘捲軸，超緊湊 2 行佈局，高度僅約 70px)
-        self.adv_settings_frame = ctk.CTkFrame(self.settings_frame, fg_color=("gray92", "gray18"), corner_radius=6)
+        # 進階設定面板：兩欄呈現，沿用設定卡片的捲動區，避免窄視窗截斷。
+        self.adv_settings_frame = ctk.CTkFrame(self.settings_frame, fg_color=SURFACE, corner_radius=6)
         self.adv_settings_frame.grid_remove() # 預設隱藏
-        self.adv_settings_frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
+        self.adv_settings_frame.grid_columnconfigure((0, 1), weight=1)
         
-        # Row 0: Checkboxes (4 項複選功能單行橫向展開，精緻規整)
+        # Checkboxes: two columns retain readable labels at high DPI.
         self.chk_word_ts = ctk.CTkCheckBox(self.adv_settings_frame, text="精準時間軸 (Word Timestamps)", variable=self.word_timestamps_var,
-                                           font=ctk.CTkFont(size=12), checkbox_width=18, checkbox_height=18)
+                                           font=ui_font(size=12), checkbox_width=18, checkbox_height=18)
         self.chk_word_ts.grid(row=0, column=0, padx=(12, 4), pady=(6, 3), sticky="w")
         
         self.chk_spacing = ctk.CTkCheckBox(self.adv_settings_frame, text="中英文自動加空格", variable=self.spacing_var,
-                                           font=ctk.CTkFont(size=12), checkbox_width=18, checkbox_height=18)
+                                           font=ui_font(size=12), checkbox_width=18, checkbox_height=18)
         self.chk_spacing.grid(row=0, column=1, padx=(4, 4), pady=(6, 3), sticky="w")
         
         self.chk_case_corr = ctk.CTkCheckBox(self.adv_settings_frame, text="熱詞大小寫自動校正", variable=self.case_correction_var,
-                                             font=ctk.CTkFont(size=12), checkbox_width=18, checkbox_height=18)
-        self.chk_case_corr.grid(row=0, column=2, padx=(4, 4), pady=(6, 3), sticky="w")
+                                             font=ui_font(size=12), checkbox_width=18, checkbox_height=18)
+        self.chk_case_corr.grid(row=1, column=0, padx=(12, 4), pady=3, sticky="w")
         
         self.chk_vad = ctk.CTkCheckBox(self.adv_settings_frame, text="VAD 靜音過濾", variable=self.vad_filter_var,
-                                       font=ctk.CTkFont(size=12), checkbox_width=18, checkbox_height=18)
-        self.chk_vad.grid(row=0, column=3, padx=(4, 12), pady=(6, 3), sticky="w")
+                                       font=ui_font(size=12), checkbox_width=18, checkbox_height=18)
+        self.chk_vad.grid(row=1, column=1, padx=(4, 12), pady=3, sticky="w")
         
-        # Row 1: 下拉選單與斷句設定 (全部整合為精緻的一行水平排列)
+        # Parameters: separate machine/punctuation and sentence controls.
         self.chars_frame = ctk.CTkFrame(self.adv_settings_frame, fg_color="transparent")
-        self.chars_frame.grid(row=1, column=0, columnspan=4, padx=12, pady=(2, 6), sticky="ew")
+        self.chars_frame.grid(row=2, column=0, columnspan=2, padx=12, pady=(2, 6), sticky="ew")
 
-        self.label_threads = ctk.CTkLabel(self.chars_frame, text="CPU 執行緒:", font=ctk.CTkFont(size=12))
-        self.label_threads.pack(side="left", padx=(0, 4))
+        self.label_threads = ctk.CTkLabel(self.chars_frame, text="CPU 執行緒:", font=ui_font(size=12))
+        self.label_threads.grid(row=0, column=0, sticky="w", padx=(0, 4), pady=3)
         
         self.combo_threads = ctk.CTkOptionMenu(self.chars_frame, variable=self.cpu_threads_var,
-                                               values=["1", "2", "4", "8", "16"], width=65, height=24, font=ctk.CTkFont(size=11))
-        self.combo_threads.pack(side="left", padx=(0, 12))
+                                               values=["1", "2", "4", "8", "16"], width=65, height=24, font=ui_font(size=11))
+        self.combo_threads.grid(row=0, column=1, sticky="w", padx=(0, 12), pady=3)
 
-        self.label_clean_punc = ctk.CTkLabel(self.chars_frame, text="標點處理:", font=ctk.CTkFont(size=12))
-        self.label_clean_punc.pack(side="left", padx=(0, 4))
+        self.label_clean_punc = ctk.CTkLabel(self.chars_frame, text="標點處理:", font=ui_font(size=12))
+        self.label_clean_punc.grid(row=0, column=2, sticky="w", padx=(0, 4), pady=3)
         
         clean_punc_values = list(self.clean_punc_mapping.values())
         self.combo_clean_punc = ctk.CTkOptionMenu(self.chars_frame, variable=self.clean_punc_var,
-                                                  values=clean_punc_values, width=105, height=24, font=ctk.CTkFont(size=11))
-        self.combo_clean_punc.pack(side="left", padx=(0, 12))
+                                                  values=clean_punc_values, width=105, height=24, font=ui_font(size=11))
+        self.combo_clean_punc.grid(row=0, column=3, columnspan=3, sticky="w", pady=3)
 
-        self.label_max_chars = ctk.CTkLabel(self.chars_frame, text="斷句策略:", font=ctk.CTkFont(size=12))
-        self.label_max_chars.pack(side="left", padx=(0, 4))
+        self.label_max_chars = ctk.CTkLabel(self.chars_frame, text="斷句策略:", font=ui_font(size=12))
+        self.label_max_chars.grid(row=1, column=0, sticky="w", padx=(0, 4), pady=3)
         
-        self.label_strategy_desc = ctk.CTkLabel(self.chars_frame, text="自然語意與停頓 (預設)", font=ctk.CTkFont(size=12, weight="bold"))
-        self.label_strategy_desc.pack(side="left", padx=(0, 10))
+        self.label_strategy_desc = ctk.CTkLabel(self.chars_frame, text="自然語意與停頓 (預設)", font=ui_font(size=12, weight="bold"))
+        self.label_strategy_desc.grid(row=1, column=1, columnspan=2, sticky="w", padx=(0, 10), pady=3)
         
-        self.label_limit = ctk.CTkLabel(self.chars_frame, text="防溢上限:", font=ctk.CTkFont(size=12))
-        self.label_limit.pack(side="left", padx=(0, 4))
+        self.label_limit = ctk.CTkLabel(self.chars_frame, text="防溢上限:", font=ui_font(size=12))
+        self.label_limit.grid(row=1, column=3, sticky="w", padx=(0, 4), pady=3)
         
-        self.entry_max_chars = ctk.CTkEntry(self.chars_frame, textvariable=self.max_chars_var, width=42, height=24, font=ctk.CTkFont(size=12))
-        self.entry_max_chars.pack(side="left", padx=(0, 4))
+        self.entry_max_chars = ctk.CTkEntry(self.chars_frame, textvariable=self.max_chars_var, width=42, height=24, font=ui_font(size=12))
+        self.entry_max_chars.grid(row=1, column=4, sticky="w", padx=(0, 4), pady=3)
         
-        self.label_chars_hint = ctk.CTkLabel(self.chars_frame, text="字", font=ctk.CTkFont(size=11), text_color="gray")
-        self.label_chars_hint.pack(side="left")
+        self.label_chars_hint = ctk.CTkLabel(self.chars_frame, text="字", font=ui_font(size=11), text_color=MUTED)
+        self.label_chars_hint.grid(row=1, column=5, sticky="w", pady=3)
 
         # Action Buttons
         self.action_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
         self.action_frame.grid(row=2, column=0, sticky="ew", pady=(0, 6))
 
         self.btn_run = ctk.CTkButton(self.action_frame, text="開始轉錄 (Start)", command=self.start_thread, 
-                                     font=ctk.CTkFont(size=14, weight="bold"), height=40)
+                                     font=ui_font(size=14, weight="bold"), height=40)
         self.btn_run.pack(side="left", fill="x", expand=True, padx=(0, 10))
 
         self.btn_cancel = ctk.CTkButton(self.action_frame, text="取消 (Cancel)", command=self.cancel_task, 
                                         fg_color="transparent", border_width=2, text_color=("gray10", "#DCE4EE"),
-                                        font=ctk.CTkFont(size=14, weight="bold"), height=40, state="disabled")
+                                        font=ui_font(size=14, weight="bold"), height=40, state="disabled")
         self.btn_cancel.pack(side="right", fill="x", expand=True, padx=(0, 0))
 
         # Progress Bar Frame (兼顧特效與進度顯示)
@@ -3055,11 +3089,11 @@ class App(BaseClass):
         self.progressbar.grid(row=0, column=0, sticky="ew", padx=(0, 10))
         self.progressbar.set(0) # 0%
         
-        self.progress_label = ctk.CTkLabel(self.progress_frame, text="0.0%", width=45, font=ctk.CTkFont(size=12, weight="bold"))
+        self.progress_label = ctk.CTkLabel(self.progress_frame, text="0.0%", width=45, font=ui_font(size=12, weight="bold"))
         self.progress_label.grid(row=0, column=1, sticky="e")
 
         # Log Area (自動伸縮展延，滿足需求 1)
-        self.log_textbox = ctk.CTkTextbox(self.main_frame, height=85, font=ctk.CTkFont(family="Consolas", size=12))
+        self.log_textbox = ctk.CTkTextbox(self.main_frame, height=85, font=ui_font(family="Consolas", size=12))
         self.log_textbox.grid(row=4, column=0, sticky="nsew", pady=(0, 4))
         self.log_textbox.configure(state="disabled")
 
@@ -3069,7 +3103,7 @@ class App(BaseClass):
         self.controls_frame.grid_columnconfigure(0, weight=1) # Spacer spans
 
         # Left: Appearance Mode
-        self.label_mode = ctk.CTkLabel(self.controls_frame, text="外觀 (Theme):", text_color="gray")
+        self.label_mode = ctk.CTkLabel(self.controls_frame, text="外觀 (Theme):", text_color=MUTED)
         self.label_mode.pack(side="left", padx=(0, 5))
         
         self.appearance_mode_optionemenu = ctk.CTkOptionMenu(self.controls_frame, values=["System", "Light", "Dark"],
@@ -3086,17 +3120,18 @@ class App(BaseClass):
         self.btn_storage.pack(side="right", padx=(0, 10))
 
         # --- 4. Status Bar (Row 3 - Bottom) ---
-        self.status_frame = ctk.CTkFrame(self, height=24, corner_radius=0, fg_color=("gray95", "gray10"))
+        self.status_frame = ctk.CTkFrame(self, height=24, corner_radius=0, fg_color=BACKGROUND)
         self.status_frame.grid(row=3, column=0, sticky="ew")
         self.status_frame.grid_columnconfigure(0, weight=1) # Status label expands
 
         # Left: Status
-        self.status_label = ctk.CTkLabel(self.status_frame, text="就緒 - 請加入檔案", anchor="w", font=ctk.CTkFont(size=12))
+        self.status_label = ctk.CTkLabel(self.status_frame, text="就緒 - 請加入檔案", anchor="w", font=ui_font(size=12))
         self.status_label.grid(row=0, column=0, sticky="ew", padx=10)
+        wrap_to_width(self.status_label)
 
         # Right: Credits
         self.credit_label = ctk.CTkLabel(self.status_frame, text="Developed by Yu-Han Cheng 鄭郁翰", 
-                                         font=ctk.CTkFont(size=10), text_color="gray")
+                                         font=ui_font(size=10), text_color=MUTED)
         self.credit_label.grid(row=0, column=1, sticky="e", padx=10)
 
         # 初始化模型下拉選單標籤
@@ -3332,13 +3367,13 @@ class App(BaseClass):
         is_downloading = [False]
         
         # 1. 標題與說明
-        ctk.CTkLabel(self.storage_window, text="模型快取與儲存管理", font=ctk.CTkFont(size=18, weight="bold")).pack(pady=(15, 5))
+        ctk.CTkLabel(self.storage_window, text="模型快取與儲存管理", font=ui_font(size=18, weight="bold")).pack(pady=(15, 5))
         
         desc_text = (
             "Whisper 模型檔案較大 (約 75MB 至 3.1GB)，初次使用需自網路下載。\n"
             "您可以在此檢視各模型下載狀態、自訂儲存磁碟，或預先下載所需模型避免轉錄時久候。"
         )
-        ctk.CTkLabel(self.storage_window, text=desc_text, justify="left", wraplength=600, font=ctk.CTkFont(size=12)).pack(padx=20, pady=(0, 10))
+        ctk.CTkLabel(self.storage_window, text=desc_text, justify="left", wraplength=600, font=ui_font(size=12)).pack(padx=20, pady=(0, 10))
 
         # 2. 路徑與磁碟空間顯示區
         path_frame = ctk.CTkFrame(self.storage_window)
@@ -3347,11 +3382,11 @@ class App(BaseClass):
         path_header = ctk.CTkFrame(path_frame, fg_color="transparent")
         path_header.pack(fill="x", padx=15, pady=(8, 2))
         
-        ctk.CTkLabel(path_header, text="目前模型儲存路徑:", font=ctk.CTkFont(weight="bold")).pack(side="left")
-        lbl_disk_free = ctk.CTkLabel(path_header, text="磁碟剩餘空間: 檢測中...", font=ctk.CTkFont(size=11), text_color="gray")
+        ctk.CTkLabel(path_header, text="目前模型儲存路徑:", font=ui_font(weight="bold")).pack(side="left")
+        lbl_disk_free = ctk.CTkLabel(path_header, text="磁碟剩餘空間: 檢測中...", font=ui_font(size=11), text_color=MUTED)
         lbl_disk_free.pack(side="right")
         
-        path_display = ctk.CTkTextbox(path_frame, height=45, font=ctk.CTkFont(size=11))
+        path_display = ctk.CTkTextbox(path_frame, height=45, font=ui_font(size=11))
         path_display.pack(fill="x", padx=15, pady=5)
         
         def get_current_root():
@@ -3393,7 +3428,7 @@ class App(BaseClass):
         list_frame = ctk.CTkFrame(self.storage_window)
         list_frame.pack(fill="both", expand=True, padx=20, pady=10)
         
-        ctk.CTkLabel(list_frame, text="本地模型清單 (點擊可立即預先下載)", font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=15, pady=(10, 5))
+        ctk.CTkLabel(list_frame, text="本地模型清單 (點擊可立即預先下載)", font=ui_font(weight="bold")).pack(anchor="w", padx=15, pady=(10, 5))
 
         models_scroll = ctk.CTkScrollableFrame(list_frame, height=210)
         models_scroll.pack(fill="both", expand=True, padx=10, pady=(0, 10))
@@ -3402,7 +3437,7 @@ class App(BaseClass):
         dl_progress_frame = ctk.CTkFrame(self.storage_window, fg_color="transparent")
         dl_progress_frame.pack(fill="x", padx=20, pady=(0, 10))
         
-        dl_status_label = ctk.CTkLabel(dl_progress_frame, text="就緒 - 點擊上方按鈕可預先下載模型", font=ctk.CTkFont(size=12), anchor="w")
+        dl_status_label = ctk.CTkLabel(dl_progress_frame, text="就緒 - 點擊上方按鈕可預先下載模型", font=ui_font(size=12), anchor="w")
         dl_status_label.pack(fill="x", pady=(0, 4))
         
         dl_bar = ctk.CTkProgressBar(dl_progress_frame, height=12)
@@ -3442,10 +3477,10 @@ class App(BaseClass):
                 approx_mb = info.get("approx_size_mb", 0)
                 size_str = f"約 {approx_mb} MB" if approx_mb < 1000 else f"約 {approx_mb / 1000:.1f} GB"
 
-                lbl_name = ctk.CTkLabel(row, text=f"{m:15s}", font=ctk.CTkFont(weight="bold", family="Consolas", size=13), width=130, anchor="w")
+                lbl_name = ctk.CTkLabel(row, text=f"{m:15s}", font=ui_font(weight="bold", family="Consolas", size=13), width=130, anchor="w")
                 lbl_name.pack(side="left", padx=(10, 5), pady=6)
 
-                lbl_desc = ctk.CTkLabel(row, text=f"{desc}", font=ctk.CTkFont(size=12), text_color="gray", anchor="w")
+                lbl_desc = ctk.CTkLabel(row, text=f"{desc}", font=ui_font(size=12), text_color=MUTED, anchor="w")
                 lbl_desc.pack(side="left", fill="x", expand=True, padx=5, pady=6)
 
                 # 檢查該模型是否目前正處於下載中 (主畫面預先下載、轉錄下載或本對話框下載)
@@ -3457,11 +3492,11 @@ class App(BaseClass):
                 if is_actively_downloading:
                     status_text = "下載中..."
                     status_color = ("#e67e22", "#f39c12")
-                    lbl_st = ctk.CTkLabel(row, text=status_text, font=ctk.CTkFont(size=12, weight="bold"), text_color=status_color, width=70)
+                    lbl_st = ctk.CTkLabel(row, text=status_text, font=ui_font(size=12, weight="bold"), text_color=status_color, width=70)
                     lbl_st.pack(side="left", padx=5, pady=6)
                     model_status_labels[m] = lbl_st
 
-                    btn_act = ctk.CTkButton(row, text="下載中...", width=80, height=26, font=ctk.CTkFont(size=11), fg_color="gray", state="disabled")
+                    btn_act = ctk.CTkButton(row, text="下載中...", width=80, height=26, font=ui_font(size=11), fg_color="gray", state="disabled")
                     btn_act.pack(side="right", padx=(5, 2), pady=6)
                     model_action_btns[m] = btn_act
                     continue
@@ -3470,13 +3505,13 @@ class App(BaseClass):
                 
                 status_text = "已下載" if is_dl else "未下載"
                 status_color = ("#1f8b4c", "#2ecc71") if is_dl else "gray"
-                lbl_st = ctk.CTkLabel(row, text=status_text, font=ctk.CTkFont(size=12, weight="bold"), text_color=status_color, width=70)
+                lbl_st = ctk.CTkLabel(row, text=status_text, font=ui_font(size=12, weight="bold"), text_color=status_color, width=70)
                 lbl_st.pack(side="left", padx=5, pady=6)
                 model_status_labels[m] = lbl_st
 
                 if is_dl:
                     btn_del = ctk.CTkButton(
-                        row, text="清除快取", width=65, height=26, font=ctk.CTkFont(size=11),
+                        row, text="清除快取", width=65, height=26, font=ui_font(size=11),
                         fg_color="transparent", border_width=1, text_color=("gray20", "#DCE4EE")
                     )
                     btn_del.configure(command=lambda mod=m: delete_model_cache(mod))
@@ -3484,7 +3519,7 @@ class App(BaseClass):
 
                 btn_text = "重新下載" if is_dl else "立即下載"
                 btn_color = "gray" if is_dl else ("#1f538d", "#14375e")
-                btn_act = ctk.CTkButton(row, text=btn_text, width=80, height=26, font=ctk.CTkFont(size=11), fg_color=btn_color)
+                btn_act = ctk.CTkButton(row, text=btn_text, width=80, height=26, font=ui_font(size=11), fg_color=btn_color)
                 btn_act.configure(command=lambda mod=m: start_download_model(mod))
                 btn_act.pack(side="right", padx=(5, 2), pady=6)
                 model_action_btns[m] = btn_act
@@ -3906,7 +3941,7 @@ class App(BaseClass):
         scroll_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
         # Title
-        ctk.CTkLabel(scroll_frame, text="Video to Subtitle (本地語音轉字幕工具)", font=ctk.CTkFont(size=20, weight="bold")).pack(pady=(10, 5))
+        ctk.CTkLabel(scroll_frame, text="Video to Subtitle (本地語音轉字幕工具)", font=ui_font(size=20, weight="bold")).pack(pady=(10, 5))
         
         version_frame = ctk.CTkFrame(scroll_frame, fg_color="transparent")
         version_frame.pack(pady=(0, 20))
@@ -3914,7 +3949,7 @@ class App(BaseClass):
         ctk.CTkLabel(version_frame, text=f"Version {get_version()}").pack(side="left", padx=5)
         
         self.btn_manual_update = ctk.CTkButton(version_frame, text="檢查更新", width=80, height=24, 
-                                              font=ctk.CTkFont(size=11),
+                                              font=ui_font(size=11),
                                               command=lambda: self.check_for_updates(manual=True))
         self.btn_manual_update.pack(side="left", padx=5)
 
@@ -3922,7 +3957,7 @@ class App(BaseClass):
         dev_frame = ctk.CTkFrame(scroll_frame)
         dev_frame.pack(fill="x", pady=10)
         
-        ctk.CTkLabel(dev_frame, text="開發人員資訊 (Developer)", font=ctk.CTkFont(weight="bold")).pack(pady=5)
+        ctk.CTkLabel(dev_frame, text="開發人員資訊 (Developer)", font=ui_font(weight="bold")).pack(pady=5)
         ctk.CTkLabel(dev_frame, text="鄭郁翰 (Yu-Han Cheng)").pack()
         ctk.CTkLabel(dev_frame, text="E-mail: kaoshou@gmail.com").pack()
         
@@ -3933,8 +3968,8 @@ class App(BaseClass):
         os_frame = ctk.CTkFrame(scroll_frame)
         os_frame.pack(fill="x", pady=10)
         
-        ctk.CTkLabel(os_frame, text="開源專案宣告 (Open Source Acknowledgements)", font=ctk.CTkFont(weight="bold")).pack(pady=(10, 5))
-        ctk.CTkLabel(os_frame, text="本軟體使用以下開源專案：", font=ctk.CTkFont(size=12)).pack(pady=(0, 10))
+        ctk.CTkLabel(os_frame, text="開源專案宣告 (Open Source Acknowledgements)", font=ui_font(weight="bold")).pack(pady=(10, 5))
+        ctk.CTkLabel(os_frame, text="本軟體使用以下開源專案：", font=ui_font(size=12)).pack(pady=(0, 10))
 
         # List of libraries
         libs = [
@@ -3956,7 +3991,7 @@ class App(BaseClass):
             item_frame = ctk.CTkFrame(os_frame, fg_color="transparent")
             item_frame.pack(fill="x", pady=2)
             title_text = f"• {name} ({license_})" if license_ else f"• {name}"
-            ctk.CTkLabel(item_frame, text=title_text, font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=20)
+            ctk.CTkLabel(item_frame, text=title_text, font=ui_font(weight="bold")).pack(anchor="w", padx=20)
             create_link(item_frame, url, url).pack(anchor="w", padx=40)
 
         # Close Button
@@ -4364,7 +4399,7 @@ class App(BaseClass):
             except Exception:
                 pass
         else:
-            # 展開進階設定：由於採 2 行緊湊佈局高度僅約 70px，無須複雜滾動計算
+            # 設定卡片可捲動；在矮視窗中適度保留日誌與操作區。
             try:
                 scale = self._get_window_scaling() if hasattr(self, '_get_window_scaling') else 1.0
                 cur_h = int(self.winfo_height() / scale)
@@ -4394,7 +4429,7 @@ class App(BaseClass):
     def open_web_player(self):
         choice = create_smooth_toplevel(self)
         choice.title('網頁播放器')
-        ctk.CTkLabel(choice, text='選擇網頁來源', font=ctk.CTkFont(size=18, weight='bold')).pack(pady=18)
+        ctk.CTkLabel(choice, text='選擇網頁來源', font=ui_font(size=18, weight='bold')).pack(pady=18)
         def open_mode(standalone):
             choice.destroy()
             if standalone:
@@ -4450,7 +4485,7 @@ class App(BaseClass):
 
         label_title = ctk.CTkLabel(
             top_frame, text="轉錄任務已完成",
-            font=ctk.CTkFont(size=18, weight="bold"),
+            font=ui_font(size=18, weight="bold"),
             text_color=("#1f538d", "#DCE4EE")
         )
         label_title.pack(anchor="center")
@@ -4460,7 +4495,7 @@ class App(BaseClass):
         if ec_count > 0:
             msg += f"，並偵測到 {ec_count} 個 EverCam 數位課程專案"
         msg += "。您可以在下方直接進行操作："
-        label_msg = ctk.CTkLabel(top_frame, text=msg, font=ctk.CTkFont(size=12), text_color=("gray30", "gray75"))
+        label_msg = ctk.CTkLabel(top_frame, text=msg, font=ui_font(size=12), text_color=("gray30", "gray75"))
         label_msg.pack(anchor="center", pady=(3, 0))
 
         # --- 2. 底部控制區域 (side='bottom' 優先 pack，保證絕對不被中間列表擠出) ---
@@ -4509,16 +4544,16 @@ class App(BaseClass):
             btn_ec_title = "🚀 一鍵轉換全部的 EverCam 網頁" if len(evercam_projects) > 1 else "🚀 立即轉換為 EverCam 網頁播放器"
             btn_ec_main = ctk.CTkButton(
                 bottom_btn_box, text=btn_ec_title,
-                fg_color=("#1f8b4c", "#2ecc71"), hover_color=("#18703d", "#27ae60"),
-                text_color="white", font=ctk.CTkFont(size=13, weight="bold"), height=34, corner_radius=8,
+                fg_color=ACCENT, hover_color=HOVER,
+                text_color="white", font=ui_font(size=13, weight="bold"), height=34, corner_radius=8,
                 command=deploy_all_evercam
             )
             btn_ec_main.pack(side="left", padx=8)
 
         btn_close = ctk.CTkButton(
             bottom_btn_box, text="關閉",
-            fg_color=("gray75", "gray35"), hover_color=("gray65", "gray45"),
-            text_color=("gray10", "gray95"), font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color=SURFACE, hover_color=("#E0E8F3", "#3B5070"),
+            text_color=("gray10", "gray95"), font=ui_font(size=13, weight="bold"),
             width=88, height=34, corner_radius=8,
             command=dialog.destroy
         )
@@ -4566,10 +4601,10 @@ class App(BaseClass):
         for i, f_path in enumerate(files):
             row_frame = ctk.CTkFrame(
                 content_box,
-                fg_color=("white", "gray20"),
+                fg_color=CARD,
                 corner_radius=8,
                 border_width=1,
-                border_color=("gray85", "gray30")
+                border_color=BORDER
             )
             row_frame.pack(fill="x", pady=3, padx=2)
             
@@ -4580,7 +4615,7 @@ class App(BaseClass):
             # 序號標籤
             lbl_idx = ctk.CTkLabel(
                 info_left, text=f"[{i+1:02d}]",
-                font=ctk.CTkFont(family="Consolas", size=12, weight="bold"),
+                font=ui_font(family="Consolas", size=12, weight="bold"),
                 text_color=("#1f538d", "#5dade2"), width=34
             )
             lbl_idx.pack(side="left")
@@ -4592,14 +4627,14 @@ class App(BaseClass):
             else:
                 display_name = short_name
 
-            lbl_name = ctk.CTkLabel(info_left, text=display_name, anchor="w", font=ctk.CTkFont(size=12, weight="bold"))
+            lbl_name = ctk.CTkLabel(info_left, text=display_name, anchor="w", font=ui_font(size=12, weight="bold"))
             lbl_name.pack(side="left", padx=4)
 
             # 若為 EverCam 專案，顯示精美徽章
             is_ec_row, ec_row_dir = evercam.detect_evercam_project(f_path)
             if is_ec_row:
                 lbl_badge = ctk.CTkLabel(
-                    info_left, text="EverCam 課程", font=ctk.CTkFont(size=10, weight="bold"),
+                    info_left, text="EverCam 課程", font=ui_font(size=10, weight="bold"),
                     fg_color=("#e8f5e9", "#1b3820"), text_color=("#2e7d32", "#81c784"),
                     corner_radius=4, padx=5, pady=1
                 )
@@ -4613,7 +4648,7 @@ class App(BaseClass):
 
             # 按鈕 1：開啟字幕 (精緻幽靈次要按鈕)
             btn_open = ctk.CTkButton(
-                btn_group, text="開啟字幕", width=66, height=26, font=ctk.CTkFont(size=11),
+                btn_group, text="開啟字幕", width=66, height=26, font=ui_font(size=11),
                 fg_color=("gray90", "gray28"), hover_color=("gray80", "gray38"),
                 text_color=("gray20", "gray90"), corner_radius=6,
                 command=lambda p=f_path: open_file(p)
@@ -4622,7 +4657,7 @@ class App(BaseClass):
 
             # 按鈕 2：開啟目錄 (精緻幽靈次要按鈕)
             btn_dir = ctk.CTkButton(
-                btn_group, text="開啟目錄", width=66, height=26, font=ctk.CTkFont(size=11),
+                btn_group, text="開啟目錄", width=66, height=26, font=ui_font(size=11),
                 fg_color=("gray90", "gray28"), hover_color=("gray80", "gray38"),
                 text_color=("gray20", "gray90"), corner_radius=6,
                 command=lambda p=f_path: open_folder(p)
@@ -4632,15 +4667,15 @@ class App(BaseClass):
             # 按鈕 3：字幕校對 (品牌深藍核心按鈕)
             if can_edit:
                 btn_edit = ctk.CTkButton(
-                    btn_group, text="字幕校對", width=68, height=26, font=ctk.CTkFont(size=11, weight="bold"),
+                    btn_group, text="字幕校對", width=68, height=26, font=ui_font(size=11, weight="bold"),
                     fg_color=("#1f538d", "#14375e"), hover_color=("#163d66", "#1a4675"), text_color="white",
                     corner_radius=6,
                     command=lambda p=f_path: edit_file(p)
                 )
             else:
                 btn_edit = ctk.CTkButton(
-                    btn_group, text="字幕校對", width=68, height=26, font=ctk.CTkFont(size=11),
-                    state="disabled", fg_color=("gray90", "gray28"), text_color="gray", corner_radius=6
+                    btn_group, text="字幕校對", width=68, height=26, font=ui_font(size=11),
+                    state="disabled", fg_color=("gray90", "gray28"), text_color=MUTED, corner_radius=6
                 )
             btn_edit.pack(side="left", padx=2)
 
@@ -4656,8 +4691,8 @@ class App(BaseClass):
             # 按鈕 4 (若為 EverCam 專案)：EverCam網頁轉換 (質感翡翠綠特色按鈕)
             if is_ec_row:
                 btn_row_ec = ctk.CTkButton(
-                    btn_group, text="EverCam網頁轉換", width=110, height=26, font=ctk.CTkFont(size=11, weight="bold"),
-                    fg_color=("#1f8b4c", "#2ecc71"), hover_color=("#18703d", "#27ae60"), text_color="white",
+                    btn_group, text="EverCam網頁轉換", width=110, height=26, font=ui_font(size=11, weight="bold"),
+                    fg_color=ACCENT, hover_color=HOVER, text_color="white",
                     corner_radius=6,
                     command=lambda fld=ec_row_dir, s_f=f_path: deploy_and_preview_evercam(fld, s_f)
                 )
