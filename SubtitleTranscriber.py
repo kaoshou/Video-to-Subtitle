@@ -3382,18 +3382,25 @@ class App(BaseClass):
         # 狀態控制變數
         storage_cancel_flag = [False]
         is_downloading = [False]
+
+        # Keep actions outside scrollable content, including when the window
+        # manager caps the native height at high display scaling.
+        body = ctk.CTkFrame(self.storage_window, fg_color="transparent")
+        body.pack(fill="both", expand=True)
+        content = ctk.CTkScrollableFrame(body, fg_color="transparent")
+        content.pack(fill="both", expand=True)
         
         # 1. 標題與說明
-        ctk.CTkLabel(self.storage_window, text="模型快取與儲存管理", font=ui_font(size=18, weight="bold")).pack(pady=(15, 5))
+        ctk.CTkLabel(content, text="模型快取與儲存管理", font=ui_font(size=18, weight="bold")).pack(pady=(15, 5))
         
         desc_text = (
             "Whisper 模型檔案較大 (約 75MB 至 3.1GB)，初次使用需自網路下載。\n"
             "您可以在此檢視各模型下載狀態、自訂儲存磁碟，或預先下載所需模型避免轉錄時久候。"
         )
-        ctk.CTkLabel(self.storage_window, text=desc_text, justify="left", wraplength=600, font=ui_font(size=12)).pack(padx=20, pady=(0, 10))
+        ctk.CTkLabel(content, text=desc_text, justify="left", wraplength=600, font=ui_font(size=12)).pack(padx=20, pady=(0, 10))
 
         # 2. 路徑與磁碟空間顯示區
-        path_frame = ctk.CTkFrame(self.storage_window)
+        path_frame = ctk.CTkFrame(content)
         path_frame.pack(fill="x", padx=20, pady=5)
         
         path_header = ctk.CTkFrame(path_frame, fg_color="transparent")
@@ -3442,7 +3449,7 @@ class App(BaseClass):
         ctk.CTkButton(btn_path_frame, text="開啟資料夾", command=self.open_model_path, width=100, height=28, fg_color="gray").pack(side="left")
 
         # 3. 模型下載狀態清單
-        list_frame = ctk.CTkFrame(self.storage_window)
+        list_frame = ctk.CTkFrame(content)
         list_frame.pack(fill="both", expand=True, padx=20, pady=10)
         
         ctk.CTkLabel(list_frame, text="本地模型清單 (點擊可立即預先下載)", font=ui_font(weight="bold")).pack(anchor="w", padx=15, pady=(10, 5))
@@ -3452,7 +3459,7 @@ class App(BaseClass):
 
         # 4. 底部下載進度區域
         dl_progress_frame = ctk.CTkFrame(self.storage_window, fg_color="transparent")
-        dl_progress_frame.pack(side="bottom", fill="x", padx=20, pady=(0, 10), before=list_frame)
+        dl_progress_frame.pack(side="bottom", fill="x", padx=20, pady=(0, 10), before=body)
         
         dl_status_label = ctk.CTkLabel(dl_progress_frame, text="就緒 - 點擊上方按鈕可預先下載模型", font=ui_font(size=12), anchor="w")
         dl_status_label.pack(fill="x", pady=(0, 4))

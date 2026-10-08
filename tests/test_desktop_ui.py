@@ -165,6 +165,41 @@ class DesktopUI(unittest.TestCase):
             yield widget
             yield from self.widgets(widget)
 
+    def test_model_manager_controls_remain_reachable_in_short_window(self):
+        # A window manager may cap height at high DPI; fixed header/path
+        # content must not consume the download actions or hide the list.
+        app = self.main_app()
+        app.show_storage_settings()
+        window = app.storage_window
+        window.geometry('660x360')
+        self.root.update()
+        self.assert_buttons_visible(window, ['完成 (Close)', '取消下載'])
+        for button in self.widgets(window):
+            if isinstance(button, self.ctk.CTkButton) and button.cget('text') in ('完成 (Close)', '取消下載'):
+                self.assertGreaterEqual(button.winfo_height(), button.winfo_reqheight() - 2)
+        scrolls = [w for w in self.widgets(window) if isinstance(w, self.ctk.CTkScrollableFrame)]
+        self.assertTrue(scrolls)
+        for scroll in scrolls:
+            scroll._parent_canvas.yview_moveto(1)
+        self.root.update()
+        last_model_button = next(w for w in reversed(list(self.widgets(scrolls[-1])))
+                                 if isinstance(w, self.ctk.CTkButton))
+        self.assertTrue(last_model_button.winfo_ismapped())
+        self.assertGreaterEqual(last_model_button.winfo_rooty(), window.winfo_rooty())
+        self.assertLessEqual(last_model_button.winfo_rooty() + last_model_button.winfo_height(),
+                             window.winfo_rooty() + window.winfo_height())
+        for scroll in scrolls:
+            canvas = scroll._parent_canvas
+            self.assertGreaterEqual(last_model_button.winfo_rooty(), canvas.winfo_rooty())
+            self.assertLessEqual(last_model_button.winfo_rooty() + last_model_button.winfo_height(),
+                                 canvas.winfo_rooty() + canvas.winfo_height())
+            self.assertGreaterEqual(last_model_button.winfo_rootx(), canvas.winfo_rootx())
+            self.assertLessEqual(last_model_button.winfo_rootx() + last_model_button.winfo_width(),
+                                 canvas.winfo_rootx() + canvas.winfo_width())
+        self.assertGreaterEqual(last_model_button.winfo_height(), last_model_button.winfo_reqheight() - 2)
+        self.assertGreaterEqual(last_model_button.winfo_width(), last_model_button.winfo_reqwidth() - 2)
+        self.assertFalse(self.errors, repr(self.errors))
+
     def assert_buttons_visible(self, top, texts):
         buttons = {w.cget('text'): w for w in self.widgets(top)
                    if isinstance(w, self.ctk.CTkButton)}
