@@ -85,6 +85,7 @@ export async function buildSite({ repositoryRoot = resolve(websiteRoot, '..'), o
     await copyFile(join(repositoryRoot, source), join(outputRoot, 'assets', target));
   }
   await copyFile(join(websiteRoot, 'src/site.css'), join(outputRoot, 'assets/site.css'));
+  await copyFile(join(websiteRoot, 'src/lightbox.js'), join(outputRoot, 'assets/lightbox.js'));
   await writePage(outputRoot, '', renderLayout({ title: '本地語音轉字幕工具', description: content.heroText, page: 'home', body: renderHome() }));
   const source = await readFile(guidePath, 'utf8');
   const guide = renderGuide(source);

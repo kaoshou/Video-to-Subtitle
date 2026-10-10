@@ -36,7 +36,7 @@ function icon(name) {
 }
 
 function imageLink(file, alt, className = '', eager = false) {
-  return '<a class="image-zoom ' + className + '" href="' + assetPath(file) + '" target="_blank" rel="noopener" aria-label="放大查看：' + escapeHtml(alt) + '（新分頁）"><img src="' + assetPath(file) + '" alt="' + escapeHtml(alt) + '"' + (eager ? ' fetchpriority="high"' : ' loading="lazy"') + '></a>';
+  return '<a class="image-zoom ' + className + '" href="' + assetPath(file) + '" aria-label="放大查看：' + escapeHtml(alt) + '"><img src="' + assetPath(file) + '" alt="' + escapeHtml(alt) + '"' + (eager ? ' fetchpriority="high"' : ' loading="lazy"') + '></a>';
 }
 
 export function renderHome() {
