@@ -38,3 +38,18 @@ test('missing genuine screenshots block publication', async () => {
     await rm(fixture, { recursive: true, force: true });
   }
 });
+
+test('cross-page guide anchors are validated before publication', async () => {
+  const out = await mkdtemp(join(tmpdir(), 'video-subtitle-cross-anchor-'));
+  try {
+    await buildSite({ repositoryRoot: root, outputRoot: out });
+    const homePath = join(out, 'index.html');
+    const html = await readFile(homePath, 'utf8');
+    await writeFile(homePath, html.replace('</main>', '<a href="/Video-to-Subtitle/guide/#字幕校對器">校對</a></main>'));
+    await validateOutput(out);
+    await writeFile(homePath, html.replace('</main>', '<a href="/Video-to-Subtitle/guide/#missing-section">校對</a></main>'));
+    await assert.rejects(validateOutput(out), /Unresolved page fragment/);
+  } finally {
+    await rm(out, { recursive: true, force: true });
+  }
+});

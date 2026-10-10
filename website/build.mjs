@@ -54,12 +54,20 @@ export async function validateOutput(outputRoot) {
       const relative = decodeURIComponent(href.slice('/Video-to-Subtitle/'.length).split('#')[0].split('?')[0]);
       const target = resolve(root, relative);
       if (target !== root && !target.startsWith(root + sep)) throw new Error(`Path escapes site: ${href}`);
+      let targetPage;
       try {
         const info = await stat(target);
-        if (info.isDirectory()) await required(join(target, 'index.html'));
+        if (info.isDirectory()) targetPage = await required(join(target, 'index.html'));
         else if (info.size === 0) throw new Error('empty');
+        else targetPage = target;
       } catch {
         throw new Error(`Unresolved site asset: ${route}: ${href}`);
+      }
+      if (href.includes('#')) {
+        const fragment = decodeURIComponent(href.slice(href.indexOf('#') + 1));
+        const targetHtml = await readFile(targetPage, 'utf8');
+        const targetIds = new Set([...targetHtml.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]));
+        if (!targetIds.has(fragment)) throw new Error(`Unresolved page fragment: ${route}: ${href}`);
       }
     }
   }
