@@ -39,3 +39,19 @@ test('built guide covers the complete v2.7.7 workflow without stale package inst
     await rm(out, { recursive: true, force: true });
   }
 });
+
+test('guide renders language filename examples and common language codes as a table', async () => {
+  const source = await readFile(resolve(import.meta.dirname, '../../docs/USER_GUIDE.zh-TW.md'), 'utf8');
+  const { html, toc } = renderGuide(source);
+  assert.ok(toc.some(item => item.label === '字幕檔名與自動配對規則'));
+  assert.ok(toc.some(item => item.label === '常見語系代碼對照表'));
+  const languageTable = html.match(/<table>[\s\S]*?<th>字幕語言<\/th>[\s\S]*?<\/table>/)?.[0];
+  assert.ok(languageTable, 'language reference must render as a native HTML table');
+  for (const code of ['zh-TW', 'zh-CN', 'en', 'ja', 'ko', 'vi', 'id', 'th', 'my', 'es', 'pt', 'ru', 'fr', 'de', 'it', 'ms', 'fil', 'hi', 'ar']) {
+    assert.ok(languageTable.includes(`<code>media.${code}.srt</code>`), code);
+  }
+  assert.match(html, /改檔名不會翻譯字幕/);
+  assert.match(html, /同語系只加入一份/);
+  assert.match(html, /EverCam 的無語系/);
+  assert.match(html, /一般 MP4 的無語系字幕則是/);
+});
