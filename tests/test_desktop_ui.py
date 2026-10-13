@@ -135,8 +135,14 @@ class DesktopUI(unittest.TestCase):
         self.assertFalse(top.attributes('-topmost'))
         # Simulate the native focus restoration after the picker closes.
         app.lift()
-        self.root.update()
-        self.assertTrue(app.tk.call('wm', 'stackorder', top._w, 'isabove', app._w))
+        # Window-server ordering and CTk titlebar focus restoration are async.
+        # Observe after their queued events, not before the first native paint.
+        deadline = time.monotonic() + 0.3
+        while time.monotonic() < deadline:
+            self.root.update()
+            time.sleep(0.01)
+        self.assertTrue(app.tk.call('wm', 'stackorder', top._w, 'isabove', app._w),
+                        f"stack={app.tk.call('wm', 'stackorder', app._w)}, focus={app.focus_get()}")
 
     def test_opencam_null_subtitles_selection_multitrack_and_real_publication(self):
         # Break caught: null subtitles crash rendering or UI commits wrong
