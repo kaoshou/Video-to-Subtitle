@@ -255,12 +255,6 @@ jobs:
           name: VideoToSubtitle-Mac
           path: output-mac
 
-      - name: 下載 Windows 安裝成品
-        uses: actions/download-artifact@v4
-        with:
-          name: VideoToSubtitle-Windows-Setup
-          path: output-windows-setup
-
       - name: 取得版本號
         id: get_version
         run: |
@@ -280,7 +274,6 @@ jobs:
           body_path: docs/releases/v${{ steps.get_version.outputs.version }}.md
           files: |
             output-windows/VideoToSubtitle.exe
-            output-windows-setup/VideoToSubtitle-Setup-v*.exe
             output-mac/VideoToSubtitle.dmg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
