@@ -50,8 +50,8 @@ export function renderHome() {
   return '<div class="home-page">' +
 '<section class="home-hero"><div class="container home-hero-grid">' +
   '<div class="home-hero-copy"><p class="eyebrow">' + escapeHtml(content.eyebrow) + '</p><h1><span>影片留在電腦，</span><em>字幕安心生成。</em></h1><p class="home-lead">' + escapeHtml(content.heroText) + '</p>' +
-  '<div class="hero-actions"><a class="button button-primary" href="' + latest + '/download/VideoToSubtitle.exe">下載 Windows 版 <span aria-hidden="true">↓</span></a><a class="button button-secondary" href="' + latest + '/download/VideoToSubtitle.dmg">下載 macOS 版 <span aria-hidden="true">↓</span></a></div>' +
-  '<div class="home-hero-links"><a href="#quickstart">看快速上手 →</a><a href="' + latest + '">版本資訊與其他下載</a></div><ul class="home-trust" aria-label="工具特色"><li>免費・開放原始碼</li><li>本機轉錄</li><li>無顯卡也能用</li></ul></div>' +
+  '<div class="hero-actions"><a class="button button-primary" href="' + latest + '/download/VideoToSubtitle.exe">下載 Windows 免安裝版 <span aria-hidden="true">↓</span></a><a class="button button-secondary" href="' + latest + '/download/VideoToSubtitle.dmg">下載 macOS 版 <span aria-hidden="true">↓</span></a></div>' +
+  '<div class="home-hero-links"><a href="#quickstart">看快速上手 →</a><a href="' + latest + '">Windows 安裝版／版本資訊 ↗</a></div><ul class="home-trust" aria-label="工具特色"><li>免費・開放原始碼</li><li>本機轉錄</li><li>無顯卡也能用</li></ul></div>' +
   '<figure class="home-hero-visual"><div class="preview-label"><span>你的字幕工作台</span><span>DESKTOP APP</span></div>' + imageLink('screenshot_main.png', 'Video to Subtitle 主畫面，顯示影片清單與轉錄設定', '', true) + '<figcaption><span>v2.7.12 主操作介面 · Linux 示範</span><span>點擊圖片放大 ↗</span></figcaption></figure>' +
 '</div><div class="container home-output-line"><span class="output-label">從一段影片開始</span><span>影片／音訊</span>' + icon('arrow') + '<span>字幕初稿</span>' + icon('arrow') + '<span>人工校對</span>' + icon('arrow') + '<span>字幕檔／網頁教材</span></div></section>' +
 

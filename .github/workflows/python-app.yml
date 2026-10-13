@@ -267,6 +267,12 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
         shell: bash
 
+      - name: 下載 Windows 安裝成品
+        uses: actions/download-artifact@v4
+        with:
+          name: VideoToSubtitle-Windows-Setup
+          path: output-windows-setup
+
       - name: 建立 Github Release 並上傳檔案
         uses: softprops/action-gh-release@v2
         with:
@@ -276,9 +282,11 @@ jobs:
           draft: false
           prerelease: false
           generate_release_notes: true
+          fail_on_unmatched_files: true
           body_path: docs/releases/v${{ steps.get_version.outputs.version }}.md
           files: |
             output-windows/VideoToSubtitle.exe
+            output-windows-setup/VideoToSubtitle-Setup-v${{ steps.get_version.outputs.version }}.exe
             output-mac/VideoToSubtitle.dmg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

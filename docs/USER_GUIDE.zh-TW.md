@@ -6,7 +6,7 @@ Video to Subtitle 是以 faster-whisper（Windows／一般 CPU 與 CUDA）及 ml
 
 ## 下載與系統需求
 
-請只從 [GitHub Releases](https://github.com/kaoshou/Video-to-Subtitle/releases/latest) 下載最新版。Windows 發行檔為 `VideoToSubtitle.exe`，macOS 發行檔為 `VideoToSubtitle.dmg`。
+請只從 [GitHub Releases](https://github.com/kaoshou/Video-to-Subtitle/releases/latest) 下載最新版。Windows 可選 `VideoToSubtitle-Setup-v<版本>.exe` 安裝版或 `VideoToSubtitle.exe` 免安裝版；macOS 發行檔為 `VideoToSubtitle.dmg`。
 
 第一次使用某個 Whisper 模型時需要網路連線。模型下載完成後，一般轉錄、字幕校對及 EverCam 轉換均可在本機執行。模型需要約 75 MB 至 3.1 GB，請預留比模型標示大小更多的暫存與解壓縮空間。
 
@@ -17,11 +17,11 @@ Video to Subtitle 是以 faster-whisper（Windows／一般 CPU 與 CUDA）及 ml
 3. 雙擊執行。若 Windows SmartScreen 顯示保護提示，先確認檔案確實來自本專案的官方 Releases，再依系統畫面選擇顯示詳細資訊並執行。
 4. 使用 CPU 不需要額外設定；CUDA 為具備相容 NVIDIA 顯示卡之使用者的選用加速功能。
 
-#### Windows 安裝版（試用）
+#### Windows 安裝版（自 v2.7.14 起）
 
-目前另提供 `VideoToSubtitle-Setup-v<版本>.exe` 的 GitHub Actions 試用成品，尚未加入正式 Release。免安裝的 `VideoToSubtitle.exe` 繼續保留。
+正式 Release 另提供 `VideoToSubtitle-Setup-v<版本>.exe` 安裝版（本次為 `VideoToSubtitle-Setup-v2.7.14.exe`）。免安裝的 `VideoToSubtitle.exe` 繼續保留。
 
-1. 從本專案提供的試用成品下載 **VideoToSubtitle-Setup** 安裝包，依繁體中文精靈安裝。預設僅供目前使用者使用，不要求系統管理員權限；可改安裝位置、選擇是否建立桌面捷徑。
+1. 從[官方 Releases](https://github.com/kaoshou/Video-to-Subtitle/releases/latest) 下載 **VideoToSubtitle-Setup** 安裝包，依繁體中文精靈安裝。預設僅供目前使用者使用，不要求系統管理員權限；可改安裝位置、選擇是否建立桌面捷徑。
 2. 從「開始」功能表的 **Video to Subtitle** 啟動，或使用已選擇建立的桌面捷徑。安裝包已內含 Python 與必要套件，不需事先準備執行環境。
 3. 初次使用語音模型仍需下載；安裝版不另外附贈模型。CPU 可直接使用，CUDA 仍需相容 NVIDIA 顯示卡與驅動。
 4. 更新前關閉程式，再執行新安裝包。解除安裝可在 Windows「已安裝的應用程式」找到 **Video to Subtitle**；它不會刪除使用者設定、模型或影音。

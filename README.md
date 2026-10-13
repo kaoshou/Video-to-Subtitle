@@ -16,6 +16,14 @@
 
 本文三張介面截圖均擷取自 **v2.7.12**，使用 Linux 雲端虛擬顯示環境與示範影音／字幕，並非真實轉錄成果。Windows／macOS 的字型與視窗外觀可能略有差異；下載的正式安裝檔仍為 Windows 與 macOS 版本。
 
+## 🚀 v2.7.14 更新說明
+
+- 正式提供 Windows 繁體中文安裝版，內含 Python 與必要套件，保留原有免安裝 EXE；使用者不需事先準備執行環境。
+- 安裝版在安裝時解壓執行環境，避免每次啟動重新解壓；啟動速度依實際電腦而異，模型計算速度不變。
+- Windows 封裝版設定改存使用者資料夾；更新與解除安裝保留設定、模型快取與影音。
+- 修正「首頁 → 網頁播放器 → OpenCam」工具視窗可能被首頁遮住；只跟隨首頁層級，不設為全系統永遠置頂。
+- [完整更新說明](docs/releases/v2.7.14.md)。
+
 ## 🚀 v2.7.13 更新說明
 
 - 新增 OpenCam 字幕置入，支援原本沒有字幕的專案與多語字幕；保留原影片、網頁及章節，每次置入前建立完整備份。
@@ -235,9 +243,9 @@
 1. 下載程式：[前往 Releases 頁面](https://github.com/kaoshou/Video-to-Subtitle/releases) 下載最新的 VideoToSubtitle.exe。
 2. 執行：雙擊 EXE 檔案即可開始使用。初次開啟需要稍待片刻。
 
-### Windows 安裝版（試用）
+### Windows 安裝版（自 v2.7.14 起）
 
-新增 `VideoToSubtitle-Setup-v<版本>.exe` 安裝包，採用 PyInstaller 資料夾式封裝；Python 與必要套件在安裝時解壓，之後啟動不需每次重新解壓。既有免安裝 EXE 繼續保留。**安裝版先以 GitHub Actions 試用成品提供，尚未加入正式 Release；請勿把編譯器 Inno Setup 的安裝包當成本程式。**
+新增 `VideoToSubtitle-Setup-v<版本>.exe` 安裝包，採用 PyInstaller 資料夾式封裝；Python 與必要套件在安裝時解壓，之後啟動不需每次重新解壓。既有免安裝 EXE 繼續保留。請從[官方 Releases](https://github.com/kaoshou/Video-to-Subtitle/releases/latest) 下載 `VideoToSubtitle-Setup-v2.7.14.exe` 或後續版本；請勿把編譯器 Inno Setup 的安裝包當成本程式。
 
 安裝精靈使用繁體中文，預設只安裝給目前使用者，可選安裝位置及桌面捷徑，亦可從「開始」功能表啟動／Windows「已安裝的應用程式」解除安裝。不需事先安裝 Python 或外部 FFmpeg。Windows x64、Windows 10／11 為目標平台；實際自動驗證環境見建置紀錄。
 
