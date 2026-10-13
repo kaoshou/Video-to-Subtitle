@@ -57,6 +57,19 @@
     var pipToggle = document.getElementById("pip-toggle");
     var chapterList = document.getElementById("chapter-list");
     var chapterEmpty = document.getElementById("chapter-empty");
+    var chaptersTab = document.getElementById("chapters-tab");
+    var transcriptTab = document.getElementById("transcript-tab");
+    var chaptersPanel = document.getElementById("chapters-panel");
+    var transcriptPanel = document.getElementById("transcript-panel");
+    var transcriptSearch = document.getElementById("transcript-search");
+    var transcriptLanguage = document.getElementById("transcript-language");
+    var transcriptList = document.getElementById("transcript-list");
+    var transcriptStatus = document.getElementById("transcript-status");
+    var transcriptMore = document.getElementById("transcript-more");
+    var transcriptTracks = [];
+    var transcriptMatches = [];
+    var transcriptVisibleCount = 100;
+    var transcriptRows = [];
     var chapterButtons = [];
     var nativeTracks = [];
     var activeSubtitleLanguage = "off";
@@ -158,6 +171,7 @@
         if (standalone) {
             document.body.classList.add("standalone-player");
             chapterCard.hidden = true;
+            chapterCard.setAttribute("aria-label", "逐字稿");
         }
         setCourseDurationMetadata(duration);
 
@@ -182,7 +196,7 @@
     }
 
     function syncChapterHeight() {
-        if (standalone) { return; }
+        if (standalone && chapterCard.hidden) { chapterCard.style.height = ""; return; }
         if (window.matchMedia("(max-width: 1040px)").matches) {
             chapterCard.style.height = "";
             return;
@@ -640,6 +654,186 @@
         captionButton.classList.toggle("is-active", language !== "off");
         markMenuSelection(captionMenu, language);
         if (persist !== false) { savePreference(subtitleStorageKey, language); }
+        if (transcriptLanguage && transcriptTracks.some(function (track) { return track.language === language; })) {
+            transcriptLanguage.value = language;
+            searchTranscript();
+        }
+    }
+
+    function installTranscript() {
+        // Read embedded subtitle data, so search also works offline and with CC off.
+        if (!transcriptSearch || !transcriptLanguage || !transcriptList) { return; }
+        var transcriptToggle = document.getElementById("transcript-toggle");
+        if (transcriptToggle && transcriptPanel) {
+            transcriptToggle.addEventListener("click", function () {
+                var open = chapterCard.hidden;
+                chapterCard.hidden = !open;
+                document.body.classList.toggle("standalone-transcript-open", open);
+                activateReadingTab("transcript");
+                transcriptPanel.hidden = !open;
+                transcriptToggle.setAttribute("aria-expanded", String(!transcriptPanel.hidden));
+                transcriptToggle.setAttribute("aria-label", transcriptPanel.hidden ? "顯示逐字稿與搜尋" : "收合逐字稿與搜尋");
+                transcriptToggle.title = transcriptPanel.hidden ? "顯示逐字稿與搜尋" : "收合逐字稿與搜尋";
+                if (!transcriptPanel.hidden) {
+                    updateTranscriptPosition();
+                    if (!transcriptSearch.disabled) { transcriptSearch.focus(); }
+                }
+                syncChapterHeight();
+            });
+        }
+        transcriptTracks = (Array.isArray(subtitleData.tracks) ? subtitleData.tracks : []).map(function (track) {
+            var cues = (Array.isArray(track.cues) ? track.cues : []).filter(function (cue) {
+                return Number.isFinite(Number(cue.start)) && Number(cue.start) >= 0 &&
+                    Number.isFinite(Number(cue.end)) && Number(cue.end) > Number(cue.start);
+            }).map(function (cue) {
+                var text = String(cue.text || "");
+                return { start: Number(cue.start), end: Number(cue.end), text: text, searchable: text.toLowerCase() };
+            });
+            return { language: track.language || "und", label: getLanguageLabel(track), cues: cues };
+        });
+        transcriptTracks.forEach(function (track) {
+            var option = document.createElement("option");
+            option.value = track.language;
+            option.textContent = track.label;
+            transcriptLanguage.appendChild(option);
+        });
+        if (transcriptTracks.some(function (track) { return track.language === activeSubtitleLanguage; })) {
+            transcriptLanguage.value = activeSubtitleLanguage;
+        }
+        var unavailable = !transcriptTracks.some(function (track) { return track.cues.length > 0; });
+        transcriptSearch.disabled = unavailable;
+        transcriptLanguage.disabled = unavailable;
+        document.getElementById("transcript-clear").disabled = unavailable;
+        transcriptSearch.addEventListener("input", function (event) {
+            if (!event.isComposing) { searchTranscript(); }
+        });
+        transcriptSearch.addEventListener("compositionend", searchTranscript);
+        transcriptLanguage.addEventListener("change", searchTranscript);
+        document.getElementById("transcript-clear").addEventListener("click", function () {
+            transcriptSearch.value = "";
+            searchTranscript();
+            transcriptSearch.focus();
+        });
+        transcriptMore.addEventListener("click", function () {
+            var previousCount = transcriptVisibleCount;
+            transcriptVisibleCount += 100;
+            renderTranscript();
+            if (transcriptMore.hidden && transcriptRows[previousCount]) {
+                transcriptRows[previousCount].button.focus();
+            }
+        });
+        searchTranscript();
+    }
+
+    function activateReadingTab(name) {
+        if (!chaptersTab || !transcriptTab) { return; }
+        var transcript = name === "transcript";
+        chaptersPanel.hidden = transcript || standalone;
+        transcriptPanel.hidden = !transcript;
+        chaptersTab.setAttribute("aria-selected", String(!transcript));
+        transcriptTab.setAttribute("aria-selected", String(transcript));
+        chaptersTab.tabIndex = transcript ? -1 : 0;
+        transcriptTab.tabIndex = transcript ? 0 : -1;
+        if (transcript) { updateTranscriptPosition(); }
+        else { window.requestAnimationFrame(updateChapterTitleOverflow); }
+        syncChapterHeight();
+    }
+
+    function installReadingTabs() {
+        if (!chaptersTab || !transcriptTab) { return; }
+        chaptersTab.hidden = standalone;
+        chaptersTab.addEventListener("click", function () { activateReadingTab("chapters"); });
+        transcriptTab.addEventListener("click", function () { activateReadingTab("transcript"); });
+        [chaptersTab, transcriptTab].forEach(function (tab) {
+            tab.addEventListener("keydown", function (event) {
+                var tabs = [chaptersTab, transcriptTab].filter(function (item) { return !item.hidden; });
+                var index = tabs.indexOf(tab);
+                if (event.key === "ArrowRight") { index = (index + 1) % tabs.length; }
+                else if (event.key === "ArrowLeft") { index = (index + tabs.length - 1) % tabs.length; }
+                else if (event.key === "Home") { index = 0; }
+                else if (event.key === "End") { index = tabs.length - 1; }
+                else { return; }
+                event.preventDefault();
+                activateReadingTab(tabs[index] === transcriptTab ? "transcript" : "chapters");
+                tabs[index].focus();
+            });
+        });
+        activateReadingTab(standalone ? "transcript" : "chapters");
+        if (standalone) { transcriptPanel.hidden = true; }
+    }
+
+    function searchTranscript() {
+        var track = transcriptTracks.find(function (item) { return item.language === transcriptLanguage.value; });
+        var query = transcriptSearch.value.trim().toLowerCase();
+        transcriptMatches = track ? track.cues.filter(function (cue) {
+            return !query || cue.searchable.indexOf(query) !== -1;
+        }) : [];
+        transcriptVisibleCount = 100;
+        renderTranscript();
+    }
+
+    function appendTranscriptText(element, text, query) {
+        // Literal matching and text nodes: subtitle contents never become HTML.
+        var offset = 0;
+        var lower = text.toLowerCase();
+        var index = query ? lower.indexOf(query) : -1;
+        while (index !== -1) {
+            element.appendChild(document.createTextNode(text.slice(offset, index)));
+            var mark = document.createElement("mark");
+            mark.textContent = text.slice(index, index + query.length);
+            element.appendChild(mark);
+            offset = index + query.length;
+            index = lower.indexOf(query, offset);
+        }
+        element.appendChild(document.createTextNode(text.slice(offset)));
+    }
+
+    function renderTranscript() {
+        transcriptList.textContent = "";
+        transcriptRows = [];
+        var fragment = document.createDocumentFragment();
+        var query = transcriptSearch.value.trim().toLowerCase();
+        transcriptMatches.slice(0, transcriptVisibleCount).forEach(function (cue) {
+            var item = document.createElement("li");
+            var button = document.createElement("button");
+            var time = document.createElement("span");
+            var text = document.createElement("span");
+            button.type = "button";
+            button.className = "transcript-item";
+            time.className = "transcript-time";
+            time.textContent = formatTime(cue.start);
+            text.className = "transcript-text";
+            appendTranscriptText(text, cue.text, query);
+            button.appendChild(time);
+            button.appendChild(text);
+            button.addEventListener("click", function () {
+                video.currentTime = cue.start;
+                updateTimeline();
+                playVideo();
+            });
+            item.appendChild(button);
+            fragment.appendChild(item);
+            transcriptRows.push({ button: button, cue: cue });
+        });
+        transcriptList.appendChild(fragment);
+        transcriptMore.hidden = transcriptVisibleCount >= transcriptMatches.length;
+        if (transcriptSearch.disabled) {
+            transcriptStatus.textContent = "尚未加入字幕，無法顯示逐字稿。";
+        } else if (!transcriptMatches.length) {
+            transcriptStatus.textContent = query ? "找不到符合的字幕，請換個關鍵字。" : "此語言沒有可用的字幕內容。";
+        } else {
+            transcriptStatus.textContent = (query ? "找到 " : "共 ") + transcriptMatches.length +
+                " 段字幕，已顯示 " + transcriptRows.length + " 段。";
+        }
+        updateTranscriptPosition();
+    }
+
+    function updateTranscriptPosition() {
+        transcriptRows.forEach(function (row) {
+            var active = video.currentTime >= row.cue.start && video.currentTime < row.cue.end;
+            if (active) { row.button.setAttribute("aria-current", "true"); }
+            else { row.button.removeAttribute("aria-current"); }
+        });
     }
 
     function installSpeedMenu() {
@@ -710,6 +904,7 @@
             setActiveChapter(findActiveChapter(video.currentTime));
         }
         updateCaptionOverlay();
+        updateTranscriptPosition();
     }
 
     function updateVolume() {
@@ -1003,6 +1198,8 @@
     setCourseMetadata();
     renderChapters();
     installSubtitles();
+    installTranscript();
+    installReadingTabs();
     installSpeedMenu();
     installPictureInPicture();
     bindEvents();

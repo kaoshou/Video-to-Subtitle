@@ -10,6 +10,7 @@ on:
       - 'SubtitleTranscriber.py'
       - 'transcriber.py'
       - 'evercam_integration.py'
+      - 'opencam*.py'
       - 'safe_files.py'
       - 'web_export*.py'
       - 'ui_*.py'

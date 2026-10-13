@@ -27,6 +27,8 @@ from transcriber import (
 
 # Import EverCam subtitle player integration
 import evercam_integration as evercam
+import opencam_integration as opencam
+from opencam_dialog import OpenCamSubtitleDialog, offer_completed_projects
 
 # 啟動時確保系統環境變數 PATH 包含 FFmpeg 常用路徑 (特別是 macOS Homebrew /opt/homebrew/bin)
 ensure_ffmpeg_path()
@@ -2777,7 +2779,7 @@ class App(BaseClass):
                 print(f"拖曳功能初始化失敗: {e}")
 
     def add_files_from_paths(self, paths):
-        """統一處理自拖曳或對話框選取加入的檔案清單，智慧辨識 EverCam 專案與影音格式"""
+        """統一處理拖曳或選取的檔案，辨識 EverCam／OpenCam 專案與影音格式。"""
         if not paths:
             return
 
@@ -2789,6 +2791,15 @@ class App(BaseClass):
             # 去除可能的引號與多餘空白
             f = f.strip().strip('"').strip("'")
             if not os.path.exists(f):
+                continue
+
+            is_oc, oc_folder = opencam.detect_opencam_project(f)
+            if is_oc:
+                video = os.path.join(oc_folder, 'media.mp4')
+                if video not in self.file_list:
+                    self.file_list.append(video)
+                    valid_files_added += 1
+                    self.log(f"💡 偵測並載入 OpenCam 網頁播放器: {os.path.basename(oc_folder)}")
                 continue
 
             # 情況 1：若選取或拖入的是資料夾，且屬於 EverCam 課程專案，自動找出媒體檔案並載入
@@ -2841,11 +2852,14 @@ class App(BaseClass):
 
         # 檢查當前清單中是否含有 EverCam 專案
         total_ec = sum(1 for p in self.file_list if evercam.detect_evercam_project(p)[0])
+        total_oc = sum(1 for p in self.file_list if opencam.detect_opencam_project(p)[0])
 
         if valid_files_added > 0 or len(self.file_list) > 0:
             status_msg = f"目前共有 {len(self.file_list)} 個檔案"
             if total_ec > 0:
                 status_msg += f" (💡 包含 {total_ec} 個 EverCam 課程)"
+            if total_oc > 0:
+                status_msg += f" (OpenCam {total_oc} 個)"
             self.status_label.configure(text=status_msg)
             self.btn_run.focus_set()
 
@@ -4502,19 +4516,28 @@ class App(BaseClass):
         """開啟獨立的 EverCam 課程網頁轉換工具視窗"""
         EverCamConverterDialog(self, initial_courses=initial_courses)
 
+    def open_opencam_tool(self, folder=None, subtitles=()):
+        grabbed = self.grab_current()
+        if grabbed:
+            grabbed.grab_release()
+        return OpenCamSubtitleDialog(self, folder=folder, subtitles=subtitles)
+
     def open_web_player(self):
         choice = create_smooth_toplevel(self)
         choice.title('網頁播放器')
         ctk.CTkLabel(choice, text='選擇網頁來源', font=ui_font(size=18, weight='bold')).pack(pady=18)
-        def open_mode(standalone):
+        def open_mode(mode):
             choice.destroy()
-            if standalone:
+            if mode == 'standalone':
                 WebExportDialog(self, app_version=get_version())
+            elif mode == 'opencam':
+                self.open_opencam_tool()
             else:
                 self.open_evercam_tool()
-        ctk.CTkButton(choice, text='EverCam 課程轉換', command=lambda: open_mode(False)).pack(pady=8)
-        ctk.CTkButton(choice, text='一般影片＋字幕', command=lambda: open_mode(True)).pack(pady=8)
-        center_and_smooth_show(choice, self, 360, 220)
+        ctk.CTkButton(choice, text='一般影片＋字幕', height=36, width=250, command=lambda: open_mode('standalone')).pack(pady=8)
+        ctk.CTkButton(choice, text='EverCam 課程轉換', height=36, width=250, command=lambda: open_mode('evercam')).pack(pady=8)
+        ctk.CTkButton(choice, text='OpenCam 置入字幕', height=36, width=250, command=lambda: open_mode('opencam')).pack(pady=8)
+        center_and_smooth_show(choice, self, 360, 280)
 
     def show_completion_dialog(self, count, files, sources=None, subtitle_language=''):
         sources = sources or {}
@@ -4543,6 +4566,7 @@ class App(BaseClass):
             is_ec, c_dir = evercam.detect_evercam_project(f_path)
             if is_ec and c_dir not in evercam_projects:
                 evercam_projects[c_dir] = f_path
+        opencam_projects = opencam.completed_projects(files, sources)
 
         file_count = len(files)
         # 精準動態高度計算，提供充足留白並確保底部控制列 100% 完整可見
@@ -4570,6 +4594,8 @@ class App(BaseClass):
         msg = f"已成功轉錄 {count} 個影音檔案"
         if ec_count > 0:
             msg += f"，並偵測到 {ec_count} 個 EverCam 數位課程專案"
+        if opencam_projects:
+            msg += f"，OpenCam 播放器 {len(set(f for f, s in opencam_projects))} 個"
         msg += "。您可以在下方直接進行操作："
         label_msg = ctk.CTkLabel(top_frame, text=msg, font=ui_font(size=12), text_color=("gray30", "gray75"))
         label_msg.pack(anchor="center", pady=(3, 0))
@@ -4757,12 +4783,20 @@ class App(BaseClass):
 
             source_video = completion_video(f_path, sources)
             if source_video:
-                ctk.CTkButton(
-                    btn_group, text='匯出字幕網頁', width=96, height=26,
-                    command=lambda v=source_video, s=f_path: WebExportDialog(
-                        self, app_version=get_version(), video=v,
-                        subtitles=(SubtitleSource(Path(s), subtitle_language),))
-                ).pack(side='left', padx=2)
+                is_oc_row, oc_row_dir = opencam.detect_opencam_project(source_video)
+                if is_oc_row:
+                    ctk.CTkButton(
+                        btn_group, text='OpenCam 置入字幕', width=116, height=26,
+                        command=lambda fld=oc_row_dir, s=f_path: self.open_opencam_tool(
+                            fld, (SubtitleSource(Path(s), subtitle_language),))
+                    ).pack(side='left', padx=2)
+                else:
+                    ctk.CTkButton(
+                        btn_group, text='匯出字幕網頁', width=96, height=26,
+                        command=lambda v=source_video, s=f_path: WebExportDialog(
+                            self, app_version=get_version(), video=v,
+                            subtitles=(SubtitleSource(Path(s), subtitle_language),))
+                    ).pack(side='left', padx=2)
 
             # 按鈕 4 (若為 EverCam 專案)：EverCam網頁轉換 (質感翡翠綠特色按鈕)
             if is_ec_row:
@@ -4776,6 +4810,10 @@ class App(BaseClass):
 
         # 後台渲染完成後一次性置中並平滑呈現 (杜絕閃爍)
         center_and_smooth_show(dialog, self, 780, dialog_h, is_modal=True)
+        if opencam_projects:
+            dialog.after(250, lambda: offer_completed_projects(
+                dialog, opencam_projects, subtitle_language,
+                open_dialog=lambda parent, **options: self.open_opencam_tool(**options)))
 
 if __name__ == "__main__":
     import multiprocessing

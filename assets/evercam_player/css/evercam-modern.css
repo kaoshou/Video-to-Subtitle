@@ -48,11 +48,11 @@ button {
 .course-header {
     position: relative;
     display: flex;
-    min-height: 82px;
+    min-height: 76px;
     align-items: center;
     gap: 17px;
     margin: 0 0 20px;
-    padding: 16px 28px 16px 20px;
+    padding: 12px 24px 12px 20px;
     overflow: hidden;
     background:
         radial-gradient(circle at 88% 16%, rgba(44, 146, 146, 0.13) 0, rgba(44, 146, 146, 0) 24%),
@@ -141,25 +141,27 @@ h1 {
     position: relative;
     z-index: 1;
     margin: 0;
-    font-size: clamp(22px, 2.4vw, 34px);
+    font-size: clamp(22px, 2vw, 28px);
     font-weight: 750;
     letter-spacing: -0.025em;
     line-height: 1.25;
+    overflow-wrap: anywhere;
 }
 
 .course-heading {
     position: relative;
     z-index: 1;
     min-width: 0;
+    flex: 1;
 }
 
 .course-meta {
     display: flex;
     flex-wrap: wrap;
     gap: 7px 18px;
-    margin-top: 7px;
+    margin-top: 5px;
     color: var(--muted);
-    font-size: 13px;
+    font-size: 12px;
     line-height: 1.4;
 }
 
@@ -184,10 +186,129 @@ h1 {
 
 .learning-layout {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) clamp(270px, 21vw, 330px);
+    grid-template-columns: minmax(0, 1fr) clamp(300px, 25vw, 360px);
     gap: 22px;
     align-items: start;
 }
+
+.player-tools {
+    display: flex;
+    justify-content: flex-end;
+    min-height: 48px;
+    padding: 2px 10px;
+    border-top: 1px solid #e6ecec;
+    background: #fafcfc;
+}
+.transcript-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    min-height: 44px;
+    padding: 8px 12px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: #51696a;
+    font-size: 14px;
+    font-weight: 500;
+}
+.transcript-toggle:hover, .transcript-toggle[aria-expanded="true"] { background: #eaf5f4; color: var(--active); }
+.transcript-toggle:focus-visible { outline: 3px solid var(--active); outline-offset: 3px; }
+.transcript-toggle-icon { width: 20px; height: 20px; }
+.transcript-toggle-arrow {
+    width: 7px;
+    height: 7px;
+    margin: -3px 2px 0 4px;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    transform: rotate(45deg);
+}
+.transcript-toggle[aria-expanded="true"] .transcript-toggle-arrow { margin-top: 3px; transform: rotate(225deg); }
+.transcript-card[hidden] { display: none; }
+.transcript-card {
+    margin-top: 18px;
+    padding: clamp(16px, 3vw, 28px);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+}
+
+.transcript-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 18px;
+}
+
+.transcript-header h2 { margin: 0; font-size: 20px; }
+.transcript-header p { margin: 5px 0 0; color: var(--muted); font-size: 14px; }
+.transcript-language-field { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.transcript-language-field label { font-size: 14px; color: var(--muted); }
+.transcript-language-field select {
+    max-width: 100%;
+    min-height: 44px;
+    padding: 8px 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--ink);
+    background: var(--surface);
+    font: inherit;
+}
+
+.transcript-search-field { display: flex; flex-wrap: wrap; gap: 10px; }
+.transcript-search-field input {
+    flex: 1 1 200px;
+    min-width: 0;
+    min-height: 44px;
+    padding: 10px 14px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #fafcfc;
+    color: var(--ink);
+}
+.transcript-search-field button, .transcript-more {
+    min-height: 44px;
+    padding: 10px 16px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--active);
+}
+.transcript-card :is(button, input, select):focus-visible {
+    outline: 3px solid var(--active);
+    outline-offset: 3px;
+}
+.transcript-card :disabled { cursor: default; opacity: .6; }
+.transcript-status { margin: 14px 0; color: var(--muted); font-size: 14px; }
+.transcript-list {
+    max-height: 420px;
+    overflow-y: auto;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    overscroll-behavior: contain;
+}
+.transcript-item {
+    display: flex;
+    gap: 16px;
+    width: 100%;
+    min-height: 48px;
+    padding: 12px 10px;
+    border: 0;
+    border-bottom: 1px solid #edf0f0;
+    background: transparent;
+    color: var(--ink);
+    text-align: left;
+    align-items: baseline;
+}
+.transcript-item:hover, .transcript-item[aria-current="true"] { background: #eaf5f4; }
+.transcript-time { flex: 0 0 65px; font-variant-numeric: tabular-nums; color: var(--active); font-size: 14px; }
+.transcript-text { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.transcript-text mark { padding: 0 2px; border-radius: 3px; color: #382a00; background: #ffec9b; }
+.transcript-more { margin-top: 14px; }
+.transcript-more[hidden] { display: none; }
 
 .player-card {
     width: 100%;
@@ -782,6 +903,61 @@ body.frame-fullscreen-active {
     flex-direction: column;
 }
 
+.reading-card[hidden], .reading-panel[hidden], .reading-tabs [hidden] { display: none; }
+.reading-tabs {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 4px;
+    padding: 8px;
+    border-bottom: 1px solid var(--line);
+}
+.reading-tabs button {
+    flex: 1;
+    min-width: 0;
+    min-height: 42px;
+    padding: 9px 12px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 14px;
+    font-weight: 600;
+}
+.reading-tabs button:hover { background: #f4f8f8; }
+.reading-tabs button[aria-selected="true"] { color: var(--active); background: #e8f4f3; }
+.reading-panel {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+}
+.reading-panel.transcript-card {
+    margin: 0;
+    padding: 14px;
+    border: 0;
+    border-radius: 0;
+    overflow: hidden;
+}
+.reading-panel .transcript-header {
+    flex: 0 0 auto;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+.reading-panel .transcript-header p { margin: 0; font-size: 12px; }
+.reading-panel .transcript-language-field { justify-content: space-between; }
+.reading-panel .transcript-language-field label { font-size: 12px; }
+.reading-panel .transcript-language-field select { min-height: 36px; padding: 5px 8px; font-size: 13px; }
+.reading-panel .transcript-search-field { flex: 0 0 auto; flex-wrap: nowrap; gap: 6px; }
+.reading-panel .transcript-search-field input { flex-basis: 0; padding: 8px 10px; font-size: 14px; }
+.reading-panel .transcript-search-field button { padding: 8px 10px; font-size: 13px; }
+.reading-panel .transcript-status { flex: 0 0 auto; margin: 10px 0; font-size: 12px; }
+.reading-panel .transcript-list { flex: 1; min-height: 0; max-height: none; }
+.reading-panel .transcript-item { gap: 10px; padding: 11px 6px; font-size: 14px; }
+.reading-panel .transcript-time { flex-basis: 48px; font-size: 12px; }
+.reading-panel .transcript-more { flex: 0 0 auto; margin-top: 10px; padding: 7px 12px; font-size: 13px; }
+
 .chapter-header {
     display: flex;
     align-items: center;
@@ -1141,6 +1317,7 @@ body.frame-fullscreen-active {
     .chapter-list {
         max-height: 520px;
     }
+    .reading-panel .transcript-list { max-height: 420px; flex: 0 1 auto; }
 }
 
 @media (max-width: 640px) {
@@ -1212,6 +1389,8 @@ body.frame-fullscreen-active {
     .learning-layout {
         gap: 12px;
     }
+    .reading-panel .transcript-search-field input,
+    .reading-panel .transcript-language-field select { font-size: 16px; }
 
     .player-card,
     .chapter-card {
@@ -1345,6 +1524,14 @@ body.frame-fullscreen-active {
     margin-inline: auto;
 }
 .standalone-player .chapter-card { display: none; }
+.standalone-player.standalone-transcript-open .chapter-card { display: flex; }
+.standalone-player.standalone-transcript-open .learning-layout {
+    max-width: none;
+    grid-template-columns: minmax(0, 1fr) clamp(300px, 25vw, 360px);
+}
+@media (max-width: 1040px) {
+    .standalone-player.standalone-transcript-open .learning-layout { grid-template-columns: 1fr; }
+}
 .standalone-player .course-description {
     max-width: 1200px;
     margin: 24px auto;

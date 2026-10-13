@@ -95,18 +95,58 @@
                         </div>
                     </div>
                 </div>
+                <div class="player-tools" aria-label="閱讀工具">
+                    <button id="transcript-toggle" class="transcript-toggle" type="button"
+                        aria-label="顯示逐字稿與搜尋" aria-expanded="false" aria-controls="transcript-panel">
+                        <svg class="transcript-toggle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="1.7" stroke-linecap="round" aria-hidden="true" focusable="false">
+                            <path d="M4 5h13M4 10h7M4 15h5"></path>
+                            <circle cx="16" cy="15" r="4"></circle><path d="m19 18 3 3"></path>
+                        </svg>
+                        <span>逐字稿與搜尋</span>
+                        <span class="transcript-toggle-arrow" aria-hidden="true"></span>
+                    </button>
+                </div>
             </section>
 
-            <aside class="chapter-card" aria-labelledby="chapters-heading">
-                <div class="chapter-header">
-                    <h2 id="chapters-heading">章節索引</h2>
+            <aside class="chapter-card reading-card" aria-label="章節與逐字稿">
+                <div class="reading-tabs" role="tablist" aria-label="閱讀內容">
+                    <button id="chapters-tab" type="button" role="tab" aria-controls="chapters-panel"
+                        aria-selected="true" tabindex="0">章節</button>
+                    <button id="transcript-tab" type="button" role="tab" aria-controls="transcript-panel"
+                        aria-selected="false" tabindex="-1">逐字稿</button>
                 </div>
-                <nav id="chapter-list" class="chapter-list" aria-label="影片章節"></nav>
-                <p id="chapter-empty" class="empty-state" hidden>尚無章節索引。</p>
+                <section id="chapters-panel" class="reading-panel" role="tabpanel" aria-labelledby="chapters-tab">
+                    <h2 id="chapters-heading" class="sr-only">章節索引</h2>
+                    <nav id="chapter-list" class="chapter-list" aria-label="影片章節"></nav>
+                    <p id="chapter-empty" class="empty-state" hidden>尚無章節索引。</p>
+                </section>
+                <section id="transcript-panel" class="transcript-card reading-panel" role="tabpanel" aria-labelledby="transcript-tab" hidden>
+                    <div class="transcript-header">
+                        <div>
+                            <h2 id="transcript-heading" class="sr-only">逐字稿與搜尋</h2>
+                            <p>點選字幕，跳到影片對應時間。</p>
+                        </div>
+                        <div class="transcript-language-field">
+                            <label for="transcript-language">逐字稿語言</label>
+                            <select id="transcript-language"></select>
+                        </div>
+                    </div>
+                    <div class="transcript-search-field" role="search" aria-label="搜尋逐字稿">
+                        <label class="sr-only" for="transcript-search">搜尋字幕關鍵字</label>
+                        <input id="transcript-search" type="search" placeholder="搜尋逐字稿…" maxlength="200"
+                            autocomplete="off" aria-controls="transcript-list">
+                        <button id="transcript-clear" type="button" aria-label="清除搜尋">清除</button>
+                    </div>
+                    <p id="transcript-status" class="transcript-status" role="status"></p>
+                    <ol id="transcript-list" class="transcript-list" aria-label="逐字稿搜尋結果"></ol>
+                    <button id="transcript-more" class="transcript-more" type="button" hidden>顯示更多</button>
+                </section>
             </aside>
         </div>
 
         <p id="course-description" class="course-description" hidden></p>
+
         <footer class="course-footer" aria-label="播放器操作提示">
             <p class="keyboard-hints">
                 <span><kbd>Space</kbd> 播放／暫停</span>

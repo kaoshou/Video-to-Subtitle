@@ -87,6 +87,107 @@ class DesktopUI(unittest.TestCase):
                                     color(app.settings_frame.cget('fg_color')))
         self.ctk.set_appearance_mode('Light')
 
+    def test_opencam_null_subtitles_selection_multitrack_and_real_publication(self):
+        # Break caught: null subtitles crash rendering or UI commits wrong
+        # languages, disables publication or changes the original player.
+        import test_opencam_integration as fixtures
+        from opencam_dialog import OpenCamSubtitleDialog
+        f = fixtures.OpenCamIntegration(); f.setUp()
+        self.addCleanup(f.doCleanups)
+        original = (f.folder / 'opencam-player.js').read_bytes()
+        dialog = OpenCamSubtitleDialog(self.root, folder=f.folder)
+        self.addCleanup(lambda: dialog.top.destroy() if dialog.top.winfo_exists() else None)
+        self.assertEqual(dialog.submit_button.cget('state'), 'disabled')
+        dialog.add_subtitles([f.srt])
+        self.root.update()
+        self.assertEqual(dialog.submit_button.cget('state'), 'normal')
+        dialog.inputs[0][1].set('英文')
+        dialog.refresh_action()
+        dialog.submit_button.invoke()
+        deadline = time.monotonic() + 15
+        while dialog.job and time.monotonic() < deadline:
+            self.root.update(); time.sleep(0.01)
+        self.assertIsNone(dialog.job)
+        self.assertIsNotNone(dialog.result, dialog.notice.cget('text'))
+        import opencam_integration
+        data = opencam_integration.load_project(f.folder).data
+        self.assertEqual(data['subtitles']['tracks'][0]['language'], 'en')
+        self.assertEqual(dialog.result.backup_path.read_bytes(), original)
+        self.assertEqual((f.folder / 'index.html').read_bytes(), b'original player')
+        self.assertFalse(self.errors, repr(self.errors))
+
+    def test_opencam_main_ingestion_and_completion_prompt_can_be_declined(self):
+        # Break caught: dropped project isn't queued, or declining the
+        # completion prompt still writes to an OpenCam player.
+        import test_opencam_integration as fixtures
+        from unittest.mock import patch
+        import SubtitleTranscriber as desktop
+        f = fixtures.OpenCamIntegration(); f.setUp()
+        self.addCleanup(f.doCleanups)
+        app = self.main_app()
+        original = (f.folder / 'opencam-player.js').read_bytes()
+        app.add_files_from_paths([str(f.folder)])
+        self.assertIn(str(f.folder / 'media.mp4'), app.file_list)
+        with patch.object(desktop.messagebox, 'askyesno', return_value=False) as question:
+            app.show_completion_dialog(1, [str(f.srt)], {str(f.srt): str(f.folder / 'media.mp4')})
+            deadline = time.monotonic() + .6
+            while time.monotonic() < deadline:
+                app.update(); time.sleep(.01)
+            self.assertEqual(question.call_count, 1)
+        self.assertEqual((f.folder / 'opencam-player.js').read_bytes(), original)
+        self.assertEqual(list(f.folder.glob('*.backup-*.js')), [])
+        self.assertFalse(self.errors, repr(self.errors))
+
+    def test_opencam_homepage_entry_and_accepted_completion_open_prefilled_ui(self):
+        import test_opencam_integration as fixtures
+        from unittest.mock import patch
+        import SubtitleTranscriber as desktop
+        f = fixtures.OpenCamIntegration(); f.setUp()
+        self.addCleanup(f.doCleanups)
+        app = self.main_app()
+        app.open_web_player(); app.update()
+        button = next(w for w in self.widgets(app) if isinstance(w, self.ctk.CTkButton)
+                      and w.cget('text') == 'OpenCam 置入字幕')
+        button.invoke(); app.update()
+        top = next(w for w in app.winfo_children() if isinstance(w, self.ctk.CTkToplevel)
+                   and w.title() == 'OpenCam 字幕置入')
+        self.assert_buttons_visible(top, ['選擇資料夾…', '加入 SRT／VTT 字幕…', '備份並置入字幕'])
+        top.destroy()
+        with patch.object(desktop.messagebox, 'askyesno', return_value=True):
+            app.show_completion_dialog(1, [str(f.srt)], {str(f.srt): str(f.folder / 'media.mp4')}, 'en')
+            deadline = time.monotonic() + .6
+            while time.monotonic() < deadline:
+                app.update(); time.sleep(.01)
+        top = next(w for w in app.winfo_children() if isinstance(w, self.ctk.CTkToplevel)
+                   and w.title() == 'OpenCam 字幕置入')
+        labels = [w.cget('text') for w in self.widgets(top) if isinstance(w, self.ctk.CTkLabel)]
+        self.assertIn(f.srt.name, labels)
+        combos = [w for w in self.widgets(top) if isinstance(w, self.ctk.CTkComboBox)]
+        self.assertEqual([w.get() for w in combos], ['英文'])
+        self.assertIsNone(app.grab_current())
+        self.assertEqual(list(f.folder.glob('*.backup-*.js')), [])
+        self.assertFalse(self.errors, repr(self.errors))
+
+    def test_opencam_adding_another_subtitle_keeps_pending_language_edit(self):
+        import test_opencam_integration as fixtures
+        from opencam_dialog import OpenCamSubtitleDialog
+        f = fixtures.OpenCamIntegration(); f.setUp()
+        self.addCleanup(f.doCleanups)
+        dialog = OpenCamSubtitleDialog(self.root, folder=f.folder)
+        self.addCleanup(lambda: dialog.top.destroy() if dialog.top.winfo_exists() else None)
+        dialog.add_subtitles([f.srt]); self.root.update()
+        # A file drop can arrive before the entry receives FocusOut.
+        dialog.inputs[0][1].set('英文')
+        another = f.root / 'media.ja.vtt'; another.touch()
+        dialog.add_subtitles([another]); self.root.update()
+        self.assertEqual([t.language for t in dialog.state.tracks], ['en', 'ja'])
+        self.assertEqual([v.get() for t, v in dialog.inputs], ['英文', '日文'])
+        dialog.inputs[1][1].set('英文')
+        dialog.refresh_action()
+        self.assertEqual(dialog.submit_button.cget('state'), 'disabled')
+        self.assertIn('語系不可重複', dialog.notice.cget('text'))
+        self.assertFalse(self.errors, repr(self.errors))
+
     def test_about_and_update_check_use_the_launched_version(self):
         # Break caught: late dialogs/reporting read updated metadata, while
         # the title and main header still describe the original running app.
