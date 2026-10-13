@@ -87,6 +87,35 @@ class DesktopUI(unittest.TestCase):
                                     color(app.settings_frame.cget('fg_color')))
         self.ctk.set_appearance_mode('Light')
 
+    def test_installed_settings_save_and_reload_without_writing_app_directory(self):
+        # Break caught: App ignores its per-user path, drops Chinese settings,
+        # or cannot read settings after an installer replaces its files.
+        from unittest.mock import patch
+        import SubtitleTranscriber as desktop
+        from app_settings import resolve_settings_path
+        self.cleanup_root()
+        source = Path(self.temp.name) / 'bundle'
+        local = Path(self.temp.name) / 'user'
+        source.mkdir(); local.mkdir()
+        def user_path(_source):
+            return resolve_settings_path(source, system='win32', frozen=True,
+                                         environ={'LOCALAPPDATA': str(local)})
+        with patch.object(desktop, 'resolve_settings_path', side_effect=user_path), \
+                patch.object(desktop.App, 'check_for_updates'):
+            self.root = desktop.App()
+            self.root.update()
+            self.root.model_var.set('small')
+            self.root.hotwords_var.set('字幕, 研習')
+            self.root.save_settings()
+            self.assertTrue(Path(self.root.config_file).is_file())
+            self.assertFalse((source / 'config.json').exists())
+            self.cleanup_root()
+            source.rmdir(); source.mkdir()
+            self.root = desktop.App()
+            self.root.update()
+            self.assertEqual(self.root.get_clean_model_name(), 'small')
+            self.assertEqual(self.root.hotwords_var.get(), '字幕, 研習')
+
     def test_opencam_null_subtitles_selection_multitrack_and_real_publication(self):
         # Break caught: null subtitles crash rendering or UI commits wrong
         # languages, disables publication or changes the original player.

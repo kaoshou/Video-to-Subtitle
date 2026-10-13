@@ -14,6 +14,7 @@ from pathlib import Path
 from web_export_dialog import WebExportDialog, completion_video
 from web_export_model import SubtitleSource
 from safe_files import atomic_write_text
+from app_settings import resolve_settings_path, read_settings, write_settings
 from ui_theme import (install_theme, ui_font, wrap_to_width, BACKGROUND, CARD,
                       SURFACE, BORDER, TEXT, MUTED, ACCENT, HOVER, FONT_FAMILY)
 from ui_drop import dropped_paths, register_file_drop
@@ -2731,7 +2732,7 @@ class App(BaseClass):
         self.last_completed_files = []
 
         # 讀取設定檔 (持久化)
-        self.config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+        self.config_file = resolve_settings_path(Path(__file__).resolve().parent)
         self.load_settings()
 
         # Grid configuration
@@ -3736,8 +3737,7 @@ class App(BaseClass):
             return
             
         try:
-            with open(self.config_file, "r", encoding="utf-8") as f:
-                config = json.load(f)
+            config = read_settings(self.config_file)
                 
             if "model" in config:
                 clean_m = config["model"].split()[0].strip()
@@ -3789,8 +3789,7 @@ class App(BaseClass):
             "appearance_mode": ctk.get_appearance_mode()
         }
         try:
-            with open(self.config_file, "w", encoding="utf-8") as f:
-                json.dump(config, f, indent=4, ensure_ascii=False)
+            write_settings(self.config_file, config)
         except Exception as e:
             print(f"DEBUG: Failed to save config: {e}")
 

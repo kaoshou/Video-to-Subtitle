@@ -1,12 +1,18 @@
 # -*- mode: python ; coding: utf-8 -*-
 import sys
+import os
 from PyInstaller.utils.hooks import collect_all
+
+windows_bundle = os.environ.get('VTS_WINDOWS_BUNDLE', 'onefile')
+if sys.platform == 'win32' and windows_bundle not in ('onefile', 'onedir'):
+    raise ValueError('VTS_WINDOWS_BUNDLE must be onefile or onedir')
 
 datas = []
 binaries = []
 hiddenimports = []
 datas += [('pyproject.toml', '.')]
 datas += [('assets', 'assets')]
+datas += [('app_icon.ico', '.')]
 tmp_ret = collect_all('customtkinter')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('tkinterdnd2')
@@ -147,6 +153,28 @@ if sys.platform == 'darwin':
         info_plist={
             'NSHighResolutionCapable': 'True'
         },
+    )
+elif sys.platform == 'win32' and windows_bundle == 'onedir':
+    exe = EXE(
+        pyz,
+        a.scripts,
+        [],
+        exclude_binaries=True,
+        name='VideoToSubtitle',
+        icon='app_icon.ico',
+        debug=False,
+        strip=False,
+        upx=True,
+        console=False,
+    )
+    coll = COLLECT(
+        exe,
+        a.binaries,
+        a.datas,
+        strip=False,
+        upx=True,
+        upx_exclude=[],
+        name='VideoToSubtitle',
     )
 else:
     exe = EXE(

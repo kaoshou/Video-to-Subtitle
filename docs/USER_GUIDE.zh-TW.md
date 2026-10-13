@@ -17,6 +17,19 @@ Video to Subtitle 是以 faster-whisper（Windows／一般 CPU 與 CUDA）及 ml
 3. 雙擊執行。若 Windows SmartScreen 顯示保護提示，先確認檔案確實來自本專案的官方 Releases，再依系統畫面選擇顯示詳細資訊並執行。
 4. 使用 CPU 不需要額外設定；CUDA 為具備相容 NVIDIA 顯示卡之使用者的選用加速功能。
 
+#### Windows 安裝版（試用）
+
+目前另提供 `VideoToSubtitle-Setup-v<版本>.exe` 的 GitHub Actions 試用成品，尚未加入正式 Release。免安裝的 `VideoToSubtitle.exe` 繼續保留。
+
+1. 從本專案提供的試用成品下載 **VideoToSubtitle-Setup** 安裝包，依繁體中文精靈安裝。預設僅供目前使用者使用，不要求系統管理員權限；可改安裝位置、選擇是否建立桌面捷徑。
+2. 從「開始」功能表的 **Video to Subtitle** 啟動，或使用已選擇建立的桌面捷徑。安裝包已內含 Python 與必要套件，不需事先準備執行環境。
+3. 初次使用語音模型仍需下載；安裝版不另外附贈模型。CPU 可直接使用，CUDA 仍需相容 NVIDIA 顯示卡與驅動。
+4. 更新前關閉程式，再執行新安裝包。解除安裝可在 Windows「已安裝的應用程式」找到 **Video to Subtitle**；它不會刪除使用者設定、模型或影音。
+
+預設程式安裝在 `%LOCALAPPDATA%\Programs\VideoToSubtitle`；Windows 封裝版的設定另存 `%LOCALAPPDATA%\VideoToSubtitle\config.json`，安裝版與新版免安裝版共用。模型仍在 `~/.cache/huggingface/hub` 或您指定的模型目錄。原始碼／macOS 的設定位置不變。
+
+安裝版使用資料夾式封裝，執行環境只在安裝時解壓，可減少每次啟動的等待；不改變模型計算速度。首次啟動、重複啟動以及防毒掃描都可能影響體感，請以實際電腦測試為準，不需關閉防毒。目標平台為 Windows 10／11 x64，Windows ARM 不在此次驗證範圍。
+
 ### macOS 安裝與啟動
 
 1. 下載最新的 `VideoToSubtitle.dmg`。

@@ -138,7 +138,7 @@
   * `PyAV`（FFmpeg C 庫）與 `sounddevice` 改為在開啟「字幕編輯器」時才按需載入，啟動時不再佔用 CPU 掃描音訊裝置或載入龐大多媒體庫。
   * 軟體啟動後，**主操作視窗在 0.5 秒內瞬間彈出**。
 * **Windows 單一檔案便攜性維持**：
-  * Windows 端持續維持單一檔案 `VideoToSubtitle.exe`，兼具免安裝隨身攜帶與快速秒開的優點。
+  * Windows 端保留單一檔案 `VideoToSubtitle.exe`，方便免安裝攜帶。單檔版每次啟動需要解壓執行環境，速度依電腦與防毒掃描情況而異。
 
 ## 🚀 v2.7.1 更新說明
 本版本針對校對效率、操作流暢度與 macOS 跨平台環境相容性進行全面升級：
@@ -235,6 +235,16 @@
 1. 下載程式：[前往 Releases 頁面](https://github.com/kaoshou/Video-to-Subtitle/releases) 下載最新的 VideoToSubtitle.exe。
 2. 執行：雙擊 EXE 檔案即可開始使用。初次開啟需要稍待片刻。
 
+### Windows 安裝版（試用）
+
+新增 `VideoToSubtitle-Setup-v<版本>.exe` 安裝包，採用 PyInstaller 資料夾式封裝；Python 與必要套件在安裝時解壓，之後啟動不需每次重新解壓。既有免安裝 EXE 繼續保留。**安裝版先以 GitHub Actions 試用成品提供，尚未加入正式 Release；請勿把編譯器 Inno Setup 的安裝包當成本程式。**
+
+安裝精靈使用繁體中文，預設只安裝給目前使用者，可選安裝位置及桌面捷徑，亦可從「開始」功能表啟動／Windows「已安裝的應用程式」解除安裝。不需事先安裝 Python 或外部 FFmpeg。Windows x64、Windows 10／11 為目標平台；實際自動驗證環境見建置紀錄。
+
+Windows 封裝版的設定保存在 `%LOCALAPPDATA%\VideoToSubtitle\config.json`；模型保留既有使用者快取或自選路徑。更新與解除安裝不刪除設定、模型或影音。安裝版與新版免安裝版共用同一使用者設定；原始碼與 macOS 的設定位置維持不變。
+
+首次使用模型仍需下載；CUDA 仍需要相容 NVIDIA 顯示卡與驅動。啟動較快不代表轉錄速度變快；請在實際電腦試用比較，無須停用防毒或新增排除項目。更新或解除安裝前請先關閉程式。
+
 ## 🛠️ 開發與建置 (開發者)
 若您希望從原始碼執行或自行打包，請參考以下步驟。
 
@@ -270,6 +280,22 @@
     pyinstaller VideoToSubtitle.spec
     ```
     打包完成後，執行檔將位於 `dist/VideoToSubtitle.exe` (Windows) 或 `dist/VideoToSubtitle.app` (macOS)。
+
+5. **Windows 安裝版建置（Python 3.11 x64 + Inno Setup 6.7.3）**
+
+   在 PowerShell 中使用相同 spec：
+
+   ```powershell
+   $env:VTS_WINDOWS_BUNDLE = 'onedir'
+   pyinstaller --noconfirm --distpath dist/windows-install --workpath build/windows-install VideoToSubtitle.spec
+   $version = python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])"
+   $source = (Resolve-Path 'dist/windows-install/VideoToSubtitle').Path
+   $output = Join-Path $PWD 'dist/installer'
+   & 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' "/DAppVersion=$version" "/DSourceDir=$source" "/DOutputDir=$output" packaging/windows/VideoToSubtitle.iss
+   Remove-Item Env:VTS_WINDOWS_BUNDLE
+   ```
+
+   `ISCC.exe` 的路徑請依編譯器實際安裝位置調整；使用者不需安裝此編譯器。CI 會校驗官方編譯器 SHA256，再測試真實安裝、獨立 EXE 啟動、網頁匯出、重裝及解除安裝。手動選 `windows_only` 僅建置試用成品，不會發布 Release。Inno Setup 的使用條件請參考其[官方網站](https://jrsoftware.org/isinfo.php)。
 
 ## 📚 使用的第三方專案與授權
 本工具使用了以下開源專案：
