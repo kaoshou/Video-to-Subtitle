@@ -81,6 +81,10 @@ class OpenCamSubtitleDialog:
         self.controls = []
         self.top = ctk.CTkToplevel(parent)
         self.top.withdraw()
+        # Keep the tool above its owning homepage, including the native focus
+        # restoration when the source-selection popup closes. Not globally
+        # topmost or modal: the rest of the application remains usable.
+        self.top.transient(parent)
         self.top.title('OpenCam 字幕置入')
         self.top.geometry('760x650')
         self.top.minsize(640, 520)
@@ -137,6 +141,8 @@ class OpenCamSubtitleDialog:
             self.render()
         register_file_drop(self.top, self.on_drop)
         self.top.deiconify()
+        self.top.lift()
+        self.top.focus_force()
 
     def select_project(self, folder, subtitles=()):
         if self.job: return

@@ -116,6 +116,28 @@ class DesktopUI(unittest.TestCase):
             self.assertEqual(self.root.get_clean_model_name(), 'small')
             self.assertEqual(self.root.hotwords_var.get(), '字幕, 研習')
 
+    def test_opencam_opened_from_homepage_stays_above_home_without_global_topmost(self):
+        # Break caught: closing the source picker restores the homepage over
+        # an unowned OpenCam window, hiding the tool the user just opened.
+        app = self.main_app()
+        app.open_web_player()
+        self.root.update()
+        picker = next(widget for widget in app.winfo_children()
+                      if isinstance(widget, self.ctk.CTkToplevel) and widget.title() == '網頁播放器')
+        button = next(widget for widget in picker.winfo_children()
+                      if isinstance(widget, self.ctk.CTkButton) and widget.cget('text') == 'OpenCam 置入字幕')
+        button.invoke()
+        self.root.update()
+        top = next(widget for widget in app.winfo_children()
+                   if isinstance(widget, self.ctk.CTkToplevel) and widget.title() == 'OpenCam 字幕置入')
+        self.assertEqual(str(top.transient()), str(app))
+        self.assertTrue(top.winfo_viewable())
+        self.assertFalse(top.attributes('-topmost'))
+        # Simulate the native focus restoration after the picker closes.
+        app.lift()
+        self.root.update()
+        self.assertTrue(app.tk.call('wm', 'stackorder', top._w, 'isabove', app._w))
+
     def test_opencam_null_subtitles_selection_multitrack_and_real_publication(self):
         # Break caught: null subtitles crash rendering or UI commits wrong
         # languages, disables publication or changes the original player.
