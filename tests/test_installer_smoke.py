@@ -18,7 +18,7 @@ class InstallerSmokeTools(unittest.TestCase):
     def test_first_launch_is_reported_separately_from_repeat_median(self):
         from scripts.smoke_windows_installer import summarize_startup
         self.assertEqual(summarize_startup([12.0, 5.0, 3.0]),
-                         {'first_launch_seconds': 12.0,
+                         {'first_gui_launch_seconds': 12.0,
                           'repeat_median_seconds': 4.0,
                           'samples_seconds': [12.0, 5.0, 3.0]})
 

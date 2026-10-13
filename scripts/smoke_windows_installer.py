@@ -25,7 +25,7 @@ def isolated_environment(source):
 def summarize_startup(samples):
     if len(samples) < 2:
         raise ValueError('Need a first launch and at least one repeat')
-    return {'first_launch_seconds': samples[0],
+    return {'first_gui_launch_seconds': samples[0],
             'repeat_median_seconds': statistics.median(samples[1:]),
             'samples_seconds': samples}
 
@@ -179,6 +179,7 @@ def run_smoke(installer, portable, report):
                 pass
             result = {'platform': 'Windows x64 GitHub runner',
                       'measurement': 'process start to visible responsive main window; no inference',
+                      'warmup': 'export smoke ran before GUI timing; samples are not disk/AV cold starts',
                       'python_on_app_path': False,
                       'install_reinstall_uninstall_passed': True,
                       **{label: summarize_startup(values) for label, values in samples.items()}}

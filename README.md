@@ -295,7 +295,7 @@ Windows 封裝版的設定保存在 `%LOCALAPPDATA%\VideoToSubtitle\config.json`
    Remove-Item Env:VTS_WINDOWS_BUNDLE
    ```
 
-   `ISCC.exe` 的路徑請依編譯器實際安裝位置調整；使用者不需安裝此編譯器。CI 會校驗官方編譯器 SHA256，再測試真實安裝、獨立 EXE 啟動、網頁匯出、重裝及解除安裝。手動選 `windows_only` 僅建置試用成品，不會發布 Release。Inno Setup 的使用條件請參考其[官方網站](https://jrsoftware.org/isinfo.php)。
+   `ISCC.exe` 的路徑請依編譯器實際安裝位置調整；使用者不需安裝此編譯器。6.7.3 的 `Languages` 目錄需補入[繁中語言檔（固定來源）](https://raw.githubusercontent.com/jrsoftware/issrc/f8e83fddb902d35811d1d352d2556725a4442cdb/Files/Languages/ChineseTraditional.isl)，SHA256 為 `031684fc769259291fd563338b5abe20b7753c88ab5a2976b83a80788deb8455`。CI 會校驗編譯器及語言檔，再測試真實安裝、獨立 EXE 啟動、網頁匯出、重裝及解除安裝。手動選 `windows_only` 僅建置試用成品，不會發布 Release。啟動報告的第一次是首次 GUI 取樣，先前已執行匯出驗證，不代表磁碟／防毒冷啟動。Inno Setup 的使用條件請參考其[官方網站](https://jrsoftware.org/isinfo.php)。
 
 ## 📚 使用的第三方專案與授權
 本工具使用了以下開源專案：

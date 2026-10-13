@@ -160,6 +160,11 @@ jobs:
         $compilerDir = Join-Path $env:RUNNER_TEMP 'vts-inno-compiler'
         $process = Start-Process $compilerInstaller -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', "/DIR=$compilerDir") -Wait -PassThru
         if ($process.ExitCode -ne 0) { throw "Inno Setup install failed: $($process.ExitCode)" }
+        # Chinese Traditional became official after this compiler release.
+        # Pin the current official translation, compatible with Inno 6.5+.
+        $translation = Join-Path $compilerDir 'Languages/ChineseTraditional.isl'
+        Invoke-WebRequest 'https://raw.githubusercontent.com/jrsoftware/issrc/f8e83fddb902d35811d1d352d2556725a4442cdb/Files/Languages/ChineseTraditional.isl' -OutFile $translation
+        if ((Get-FileHash $translation -Algorithm SHA256).Hash.ToLowerInvariant() -ne '031684fc769259291fd563338b5abe20b7753c88ab5a2976b83a80788deb8455') { throw 'Traditional Chinese translation SHA256 mismatch' }
         $version = python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])"
         $source = (Resolve-Path 'dist/windows-install/VideoToSubtitle').Path
         $output = Join-Path $env:GITHUB_WORKSPACE 'dist/installer'
