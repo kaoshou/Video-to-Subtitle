@@ -16,6 +16,14 @@
 
 本文三張介面截圖均擷取自 **v2.7.12**，使用 Linux 雲端虛擬顯示環境與示範影音／字幕，並非真實轉錄成果。Windows／macOS 的字型與視窗外觀可能略有差異；下載的正式安裝檔仍為 Windows 與 macOS 版本。
 
+## 🚀 v2.7.15 更新說明
+
+- 修正 Windows 安裝版與免安裝版的 OpenCC 相依 DLL 封裝，避免勾選「強制繁體中文」卻仍產出簡體字幕。
+- 強制繁體啟用前先檢查轉換元件；元件不可用時明確停止，不再默默略過。正常啟用會在任務日誌標明 OpenCC 已啟用。
+- 新增五種字幕格式、前導提示、長句與時間戳的繁體輸出回歸，以及兩種 Windows 成品的轉換、故障與安裝驗證。
+- 未勾選強制繁體、翻譯成英文及既有影片／網頁播放器流程保持原本行為；繁體轉換仍不能代替人工校對。
+- [完整更新說明](docs/releases/v2.7.15.md)。
+
 ## 🚀 v2.7.14 更新說明
 
 - 正式提供 Windows 繁體中文安裝版，內含 Python 與必要套件，保留原有免安裝 EXE；使用者不需事先準備執行環境。
@@ -245,7 +253,7 @@
 
 ### Windows 安裝版（自 v2.7.14 起）
 
-新增 `VideoToSubtitle-Setup-v<版本>.exe` 安裝包，採用 PyInstaller 資料夾式封裝；Python 與必要套件在安裝時解壓，之後啟動不需每次重新解壓。既有免安裝 EXE 繼續保留。請從[官方 Releases](https://github.com/kaoshou/Video-to-Subtitle/releases/latest) 下載 `VideoToSubtitle-Setup-v2.7.14.exe` 或後續版本；請勿把編譯器 Inno Setup 的安裝包當成本程式。
+新增 `VideoToSubtitle-Setup-v<版本>.exe` 安裝包，採用 PyInstaller 資料夾式封裝；Python 與必要套件在安裝時解壓，之後啟動不需每次重新解壓。既有免安裝 EXE 繼續保留。請從[官方 Releases](https://github.com/kaoshou/Video-to-Subtitle/releases/latest) 下載 `VideoToSubtitle-Setup-v2.7.15.exe` 或後續版本；請勿把編譯器 Inno Setup 的安裝包當成本程式。
 
 安裝精靈使用繁體中文，預設只安裝給目前使用者，可選安裝位置及桌面捷徑，亦可從「開始」功能表啟動／Windows「已安裝的應用程式」解除安裝。不需事先安裝 Python 或外部 FFmpeg。Windows x64、Windows 10／11 為目標平台；實際自動驗證環境見建置紀錄。
 

@@ -19,7 +19,7 @@ Video to Subtitle 是以 faster-whisper（Windows／一般 CPU 與 CUDA）及 ml
 
 #### Windows 安裝版（自 v2.7.14 起）
 
-正式 Release 另提供 `VideoToSubtitle-Setup-v<版本>.exe` 安裝版（本次為 `VideoToSubtitle-Setup-v2.7.14.exe`）。免安裝的 `VideoToSubtitle.exe` 繼續保留。
+正式 Release 另提供 `VideoToSubtitle-Setup-v<版本>.exe` 安裝版（本次為 `VideoToSubtitle-Setup-v2.7.15.exe`）。免安裝的 `VideoToSubtitle.exe` 繼續保留。
 
 1. 從[官方 Releases](https://github.com/kaoshou/Video-to-Subtitle/releases/latest) 下載 **VideoToSubtitle-Setup** 安裝包，依繁體中文精靈安裝。預設僅供目前使用者使用，不要求系統管理員權限；可改安裝位置、選擇是否建立桌面捷徑。
 2. 從「開始」功能表的 **Video to Subtitle** 啟動，或使用已選擇建立的桌面捷徑。安裝包已內含 Python 與必要套件，不需事先準備執行環境。
@@ -83,6 +83,8 @@ v2.7.7 發行包已整合 PyAV 音訊解碼與執行 MLX 所需的元件。**使
 ### 強制繁體中文與翻譯英文
 
 「強制繁體中文」會在中文辨識後使用 OpenCC 轉為台灣慣用繁體文字。它不會代替人工校對，也不會修正所有專有名詞。
+
+自 v2.7.15 起，啟用時會先檢查繁體轉換元件，任務日誌會顯示「強制繁體中文：已啟用 OpenCC」。若元件未成功載入，會在模型初始化前停止並顯示原因，不會默默輸出未轉換的字幕。Windows 安裝版與免安裝版均已修正相依 DLL 的封裝；更新前請先關閉舊程式。前導提示用於引導辨識內容，不能代替這個輸出後處理步驟，無須為了強制繁體而移除自訂提示。
 
 「翻譯為英文」會要求 Whisper 執行英文翻譯；啟用時，「強制繁體中文」不適用。需要保留原語言字幕時，不要勾選英文翻譯。
 
