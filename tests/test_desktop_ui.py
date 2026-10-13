@@ -71,6 +71,24 @@ class DesktopUI(unittest.TestCase):
             self.root.update()
             time.sleep(0.01)
 
+    def test_missing_traditional_converter_stops_batch_before_model_initialization(self):
+        from unittest.mock import patch
+        import SubtitleTranscriber as desktop
+        import transcriber
+        app = self.main_app()
+        app.file_list = [str(Path(self.temp.name) / 'media.mp4')]
+        app.zh_tw_var.set(True)
+        app.translate_en_var.set(False)
+        errors = []
+        with patch.object(transcriber, 'converter', None), \
+                patch.object(desktop.messagebox, 'showerror', side_effect=lambda title, text: errors.append(text)), \
+                patch.object(desktop.SubtitleTranscriber, 'load_model', side_effect=RuntimeError('unexpected model loading')):
+            app.process_batch()
+        self.root.update()
+        self.assertIsNone(app.transcriber, 'Missing converter must stop before model initialization')
+        self.assertTrue(any('繁體' in text and 'OpenCC' in text for text in errors), errors)
+        self.assertFalse(list(Path(self.temp.name).glob('*.srt')))
+
     def test_main_content_surfaces_remain_distinct_in_both_themes(self):
         # Break caught: the file list or settings inputs disappear into a
         # same-colored parent surface after a palette/layout change.

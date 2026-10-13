@@ -90,6 +90,12 @@ except Exception as e:
     print(f"Error collecting macOS dependencies: {e}")
 tmp_ret = collect_all('opencc')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+if sys.platform == 'win32':
+    # OpenCC's delvewheel loader looks in the sibling opencc.libs directory.
+    # Dependency analysis can otherwise deduplicate its VC runtime into
+    # numpy.libs, which is not registered when OpenCC is imported first.
+    from PyInstaller.utils.hooks import collect_delvewheel_libs_directory
+    datas, binaries = collect_delvewheel_libs_directory('opencc', datas=datas, binaries=binaries)
 tmp_ret = collect_all('av')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('PIL')

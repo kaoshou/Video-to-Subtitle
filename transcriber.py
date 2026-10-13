@@ -125,12 +125,31 @@ def check_ffmpeg_available():
         )
     return False, None, msg
 
+converter_error = None
 try:
     import opencc
     converter = opencc.OpenCC('s2twp.json') # 簡體到繁體 (台灣慣用語)
-except ImportError:
+except Exception as error:
     converter = None
-    logging.warning("尚未安裝 opencc，將無法支援強制轉換繁體功能，請執行 pip install opencc")
+    converter_error = error
+    logging.warning("繁體轉換元件 OpenCC 初始化失敗：%s", error)
+
+
+class TraditionalChineseConversionError(RuntimeError):
+    """The requested output cannot be guaranteed to use Traditional Chinese."""
+
+
+def require_traditional_converter():
+    """Never silently downgrade a requested Traditional Chinese transcription."""
+    if converter is None:
+        detail = str(converter_error) if converter_error is not None else 'OpenCC 未載入'
+        raise TraditionalChineseConversionError(
+            '無法啟用「強制繁體中文」：繁體轉換元件 OpenCC 未成功載入。\n'
+            '已停止轉錄，避免輸出未經繁體轉換的字幕。\n'
+            '請重新安裝修正版程式；原始碼執行時請確認 OpenCC 與字典安裝完整。\n'
+            f'技術資訊：{detail}'
+        ) from converter_error
+    return converter
 
 
 # 模型資訊對照表 (用於顯示預估大小、說明與磁碟空間檢查)
@@ -700,6 +719,7 @@ class SubtitleTranscriber:
         word_timestamps: (bool) 是否啟用單字級時間戳
         """
         print(f"DEBUG: run() called for file: {file_path}")
+        output_converter = require_traditional_converter() if force_zh_tw and task == 'transcribe' else None
         if max_chars is None or max_chars < 25:
             max_chars = 35 if task != "translate" else 80
         if not self.model:
@@ -719,6 +739,10 @@ class SubtitleTranscriber:
             mode_text = "翻譯成英文 (Translate to English)" if task == "translate" else "原語轉錄 (Transcribe)"
             log_callback(f"任務模式: {mode_text}")
             log_callback(f"輸出格式: {output_format.upper()}")
+            if output_converter is not None:
+                log_callback('強制繁體中文：已啟用 OpenCC（台灣繁體與慣用詞）。')
+            elif force_zh_tw and task == 'translate':
+                log_callback('強制繁體中文：英文翻譯模式不套用中文轉換。')
         
             if initial_prompt and task == "transcribe":
                 log_callback(f"啟用提示詞優化: {initial_prompt}")
@@ -1197,8 +1221,11 @@ class SubtitleTranscriber:
                     return ""
                 
                 # 1. 強制簡轉繁
-                if force_zh_tw and task == "transcribe" and converter:
-                    text = converter.convert(text)
+                if output_converter is not None:
+                    try:
+                        text = output_converter.convert(text)
+                    except Exception as error:
+                        raise TraditionalChineseConversionError(f'繁體字幕轉換失敗：{error}') from error
                     
                 # 2. 熱詞大小寫校正
                 if hotwords and task == "transcribe" and case_correction:

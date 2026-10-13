@@ -143,6 +143,22 @@ jobs:
                           'dist/VideoToSubtitle.app/Contents/MacOS/VideoToSubtitle').resolve()
         subprocess.run([str(executable), '--test-web-export'], check=True, timeout=180)
 
+    - name: 驗證成品的強制繁體字幕轉換
+      shell: python
+      run: |
+        from pathlib import Path
+        import os
+        import subprocess
+        import sys
+        executable = Path('dist/VideoToSubtitle.exe' if sys.platform == 'win32' else
+                          'dist/VideoToSubtitle.app/Contents/MacOS/VideoToSubtitle').resolve()
+        env = dict(os.environ)
+        if sys.platform == 'win32':
+            from scripts.smoke_windows_installer import isolated_environment
+            env = isolated_environment(env)
+        subprocess.run([str(executable), '--test-traditional-chinese'], check=True,
+                       env=env, timeout=180)
+
     - name: 建立 Windows 安裝版資料夾封裝
       if: matrix.os == 'windows-latest'
       env:

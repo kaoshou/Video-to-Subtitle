@@ -13,6 +13,11 @@ class WindowsPackaging(unittest.TestCase):
         hooks = types.ModuleType('PyInstaller.utils.hooks')
         hooks.collect_all = lambda name: ([(name + '-data', name)],
                                          [(name + '-dll', name)], [name])
+        def collect_external_libs(package, datas=None, binaries=None):
+            if package != 'opencc':
+                raise AssertionError('This build boundary fixture represents OpenCC external DLLs')
+            return datas, binaries + [('opencc-vcruntime.dll', 'opencc.libs')]
+        hooks.collect_delvewheel_libs_directory = collect_external_libs
         def analysis(scripts, **kwargs):
             return types.SimpleNamespace(pure=[], scripts=scripts,
                                          binaries=kwargs['binaries'], datas=kwargs['datas'])
@@ -53,3 +58,10 @@ class WindowsPackaging(unittest.TestCase):
     def test_unknown_bundle_mode_fails_instead_of_silently_building_portable(self):
         with self.assertRaises(ValueError):
             self.spec('onerdir')
+
+    def test_both_windows_payloads_preserve_opencc_external_dll_search_directory(self):
+        for mode in ('onefile', 'onedir'):
+            with self.subTest(mode=mode):
+                records = self.spec(mode)
+                binaries = records['EXE'][0][2] if mode == 'onefile' else records['COLLECT'][0][1]
+                self.assertIn(('opencc-vcruntime.dll', 'opencc.libs'), binaries)

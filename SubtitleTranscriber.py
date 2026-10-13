@@ -23,7 +23,8 @@ from ui_drop import dropped_paths, register_file_drop
 from transcriber import (
     SubtitleTranscriber, check_model_downloaded, download_model_with_progress,
     MODEL_INFO, CorruptedModelError, clear_model_cache,
-    ensure_ffmpeg_path, check_ffmpeg_available
+    ensure_ffmpeg_path, check_ffmpeg_available, require_traditional_converter,
+    TraditionalChineseConversionError
 )
 
 # Import EverCam subtitle player integration
@@ -4186,6 +4187,8 @@ class App(BaseClass):
             
             task = "translate" if translate_to_en else "transcribe"
             if use_zh_tw and not translate_to_en:
+                # Preflight before downloading/loading a model for the whole batch.
+                require_traditional_converter()
                 if user_prompt:
                     # 智慧融合：繁中前導引導句 + 使用者自訂提示詞
                     initial_prompt = f"以下是使用台灣繁體中文撰寫的字幕。{user_prompt}"
@@ -4409,6 +4412,8 @@ class App(BaseClass):
                         
                 except Exception as e:
                     error_str = str(e)
+                    if isinstance(e, TraditionalChineseConversionError):
+                        raise
                     # 若為模型下載失敗、網路連線中斷、缺少 FFmpeg 或重大核心問題，應直接中止後續檔案，避免無效重複報錯
                     if ("模型下載" in error_str or "網路連線失敗" in error_str or "無法取得模型" in error_str 
                         or "缺少 GPU 函式庫" in error_str or "缺少 FFmpeg" in error_str or "ffmpeg" in error_str.lower()):
@@ -4835,6 +4840,19 @@ if __name__ == "__main__":
     
     # Enable multiprocessing support for frozen executables
     multiprocessing.freeze_support()
+
+    # Verify the real bundled converter before any model or GUI is created.
+    if "--test-traditional-chinese" in sys.argv:
+        from scripts.smoke_traditional_chinese import run_smoke
+        try:
+            run_smoke()
+        except Exception as error:
+            # Windowed frozen builds otherwise show a blocking bootloader
+            # traceback dialog, making a deliberately failing CI probe hang.
+            if sys.stderr is not None:
+                print(f'Traditional Chinese subtitle smoke failed: {error}', file=sys.stderr)
+            sys.exit(1)
+        sys.exit(0)
 
     # Exercise the packaged exporter and bundled assets without models or GUI.
     # Own the temporary directory so this diagnostic never overwrites user files.

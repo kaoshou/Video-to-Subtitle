@@ -145,6 +145,25 @@ def run_smoke(installer, portable, report):
                     raise AssertionError(f'Installed payload missing: {file}')
             subprocess.run([str(executable), '--test-web-export'], check=True, env=env,
                            cwd=root, timeout=180)
+            for exe in (portable, executable):
+                subprocess.run([str(exe), '--test-traditional-chinese'], check=True,
+                               env=env, cwd=root, timeout=180)
+            # Recreate the missing sibling DLL-directory condition only inside
+            # our disposable installation. Never touch a real user's install.
+            libraries = installed / '_internal/opencc.libs'
+            disabled = root / 'disabled-opencc.libs'
+            if not libraries.is_dir():
+                raise AssertionError('Installed payload missing OpenCC external DLL directory')
+            libraries.rename(disabled)
+            try:
+                failed = subprocess.run([str(executable), '--test-traditional-chinese'],
+                                        env=env, cwd=root, timeout=180)
+                if failed.returncode == 0:
+                    raise AssertionError('Missing OpenCC dependency was silently accepted')
+            finally:
+                disabled.rename(libraries)
+            subprocess.run([str(executable), '--test-traditional-chinese'], check=True,
+                           env=env, cwd=root, timeout=180)
             config = local / 'VideoToSubtitle/config.json'
             config.parent.mkdir(exist_ok=True)
             expected = {'model': 'small', 'hotwords': '研習, 老師', 'model_path': str(cache)}
@@ -182,6 +201,8 @@ def run_smoke(installer, portable, report):
                       'warmup': 'export smoke ran before GUI timing; samples are not disk/AV cold starts',
                       'python_on_app_path': False,
                       'install_reinstall_uninstall_passed': True,
+                      'traditional_chinese_smoke_passed': True,
+                      'missing_opencc_dll_rejected': True,
                       **{label: summarize_startup(values) for label, values in samples.items()}}
             report.write_text(json.dumps(result, indent=2), encoding='utf-8')
             print(json.dumps(result, indent=2))
