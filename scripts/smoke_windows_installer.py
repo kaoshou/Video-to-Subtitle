@@ -156,10 +156,15 @@ def run_smoke(installer, portable, report):
                 raise AssertionError('Installed payload missing OpenCC external DLL directory')
             libraries.rename(disabled)
             try:
-                failed = subprocess.run([str(executable), '--test-traditional-chinese'],
+                failure_report = report.parent / 'missing-opencc-report.json'
+                failed = subprocess.run([str(executable), '--test-traditional-chinese',
+                                         '--test-report', str(failure_report.resolve())],
                                         env=env, cwd=root, timeout=180)
-                if failed.returncode == 0:
-                    raise AssertionError('Missing OpenCC dependency was silently accepted')
+                diagnostic = json.loads(failure_report.read_text(encoding='utf-8'))
+                if (failed.returncode != 1 or diagnostic['success'] or
+                        diagnostic.get('error_type') != 'TraditionalChineseConversionError'):
+                    raise AssertionError(f'Missing OpenCC dependency was not identified: {diagnostic}')
+                print(json.dumps(diagnostic, ensure_ascii=False, indent=2))
             finally:
                 disabled.rename(libraries)
             subprocess.run([str(executable), '--test-traditional-chinese'], check=True,

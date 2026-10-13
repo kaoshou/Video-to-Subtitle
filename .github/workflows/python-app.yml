@@ -154,10 +154,16 @@ jobs:
                           'dist/VideoToSubtitle.app/Contents/MacOS/VideoToSubtitle').resolve()
         env = dict(os.environ)
         if sys.platform == 'win32':
+            # shell: python executes a script in RUNNER_TEMP, not the repo.
+            sys.path.insert(0, str(Path.cwd()))
             from scripts.smoke_windows_installer import isolated_environment
             env = isolated_environment(env)
-        subprocess.run([str(executable), '--test-traditional-chinese'], check=True,
-                       env=env, timeout=180)
+        report = Path('dist/traditional-portable-report.json').resolve()
+        result = subprocess.run([str(executable), '--test-traditional-chinese', '--test-report', str(report)],
+                                env=env, timeout=180)
+        if report.is_file():
+            print(report.read_text(encoding='utf-8'))
+        result.check_returncode()
 
     - name: 建立 Windows 安裝版資料夾封裝
       if: matrix.os == 'windows-latest'

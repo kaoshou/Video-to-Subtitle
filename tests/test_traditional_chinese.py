@@ -136,6 +136,33 @@ class TraditionalChineseOutput(unittest.TestCase):
             else:
                 self.fail('A failed conversion must not report a successful subtitle')
 
+    def test_headless_smoke_writes_success_report(self):
+        report = self.folder / 'smoke-report.json'
+        result = subprocess.run(
+            [sys.executable, 'SubtitleTranscriber.py', '--test-traditional-chinese',
+             '--test-report', str(report)],
+            cwd=Path(transcriber.__file__).parent, capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(report.is_file(), 'Windowed builds need a report when stdout is unavailable')
+        self.assertTrue(json.loads(report.read_text())['success'])
+
+    def test_headless_smoke_records_real_failure_even_without_stdio(self):
+        report = self.folder / 'failure-report.json'
+        command = (
+            "import sys,runpy,transcriber; transcriber.converter=None; "
+            "sys.stdout=None; sys.stderr=None; "
+            "sys.argv=['SubtitleTranscriber.py','--test-traditional-chinese','--test-report',sys.argv[1]]; "
+            "runpy.run_path('SubtitleTranscriber.py',run_name='__main__')"
+        )
+        result = subprocess.run([sys.executable, '-c', command, str(report)],
+                                cwd=Path(transcriber.__file__).parent, timeout=120)
+        self.assertEqual(result.returncode, 1)
+        self.assertTrue(report.is_file(), 'A headless failure must leave actionable diagnostics')
+        data = json.loads(report.read_text())
+        self.assertFalse(data['success'])
+        self.assertIn('繁體', data['error'])
+        self.assertIn('TraditionalChineseConversionError', data['traceback'])
+
 
 if __name__ == '__main__':
     unittest.main()

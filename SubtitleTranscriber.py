@@ -4843,16 +4843,29 @@ if __name__ == "__main__":
 
     # Verify the real bundled converter before any model or GUI is created.
     if "--test-traditional-chinese" in sys.argv:
-        from scripts.smoke_traditional_chinese import run_smoke
+        import argparse
+        parser = argparse.ArgumentParser(description='Verify bundled Traditional Chinese subtitle output')
+        parser.add_argument('--test-report', type=Path)
+        options, _ = parser.parse_known_args()
+        report = {'success': True}
         try:
+            from scripts.smoke_traditional_chinese import run_smoke
             run_smoke()
         except Exception as error:
             # Windowed frozen builds otherwise show a blocking bootloader
             # traceback dialog, making a deliberately failing CI probe hang.
             if sys.stderr is not None:
                 print(f'Traditional Chinese subtitle smoke failed: {error}', file=sys.stderr)
-            sys.exit(1)
-        sys.exit(0)
+            report = {'success': False, 'error_type': type(error).__name__,
+                      'error': str(error), 'traceback': traceback.format_exc()}
+        if options.test_report is not None:
+            try:
+                atomic_write_text(options.test_report, json.dumps(report, ensure_ascii=False, indent=2))
+            except Exception as error:
+                if sys.stderr is not None:
+                    print(f'Cannot save Traditional Chinese smoke report: {error}', file=sys.stderr)
+                sys.exit(1)
+        sys.exit(0 if report['success'] else 1)
 
     # Exercise the packaged exporter and bundled assets without models or GUI.
     # Own the temporary directory so this diagnostic never overwrites user files.
