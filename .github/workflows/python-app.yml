@@ -148,6 +148,7 @@ jobs:
       run: |
         from pathlib import Path
         import os
+        import json
         import subprocess
         import sys
         executable = Path('dist/VideoToSubtitle.exe' if sys.platform == 'win32' else
@@ -162,7 +163,7 @@ jobs:
         result = subprocess.run([str(executable), '--test-traditional-chinese', '--test-report', str(report)],
                                 env=env, timeout=180)
         if report.is_file():
-            print(report.read_text(encoding='utf-8'))
+            print(json.dumps(json.loads(report.read_text(encoding='utf-8')), ensure_ascii=True))
         result.check_returncode()
 
     - name: 建立 Windows 安裝版資料夾封裝

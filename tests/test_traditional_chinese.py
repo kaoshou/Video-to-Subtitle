@@ -144,7 +144,7 @@ class TraditionalChineseOutput(unittest.TestCase):
             cwd=Path(transcriber.__file__).parent, capture_output=True, text=True, timeout=120)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(report.is_file(), 'Windowed builds need a report when stdout is unavailable')
-        self.assertTrue(json.loads(report.read_text())['success'])
+        self.assertTrue(json.loads(report.read_text(encoding='utf-8'))['success'])
 
     def test_headless_smoke_records_real_failure_even_without_stdio(self):
         report = self.folder / 'failure-report.json'
@@ -158,7 +158,7 @@ class TraditionalChineseOutput(unittest.TestCase):
                                 cwd=Path(transcriber.__file__).parent, timeout=120)
         self.assertEqual(result.returncode, 1)
         self.assertTrue(report.is_file(), 'A headless failure must leave actionable diagnostics')
-        data = json.loads(report.read_text())
+        data = json.loads(report.read_text(encoding='utf-8'))
         self.assertFalse(data['success'])
         self.assertIn('繁體', data['error'])
         self.assertIn('TraditionalChineseConversionError', data['traceback'])

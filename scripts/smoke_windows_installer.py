@@ -164,7 +164,8 @@ def run_smoke(installer, portable, report):
                 if (failed.returncode != 1 or diagnostic['success'] or
                         diagnostic.get('error_type') != 'TraditionalChineseConversionError'):
                     raise AssertionError(f'Missing OpenCC dependency was not identified: {diagnostic}')
-                print(json.dumps(diagnostic, ensure_ascii=False, indent=2))
+                # ASCII-escaped JSON also works in legacy Windows consoles.
+                print(json.dumps(diagnostic, ensure_ascii=True, indent=2))
             finally:
                 disabled.rename(libraries)
             subprocess.run([str(executable), '--test-traditional-chinese'], check=True,
