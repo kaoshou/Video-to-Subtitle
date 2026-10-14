@@ -5,6 +5,7 @@ file associations, opens the fixture directly in a browser, or kills browsers.
 The only browser cleanup is WM_CLOSE for a currently matching sentinel window.
 """
 import argparse
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -30,6 +31,31 @@ def _read_open_report(path, returncode):
     if returncode != 0 or not isinstance(result, dict) or result.get('success') is not True:
         raise RuntimeError(f'EXE open-page failed (exit {returncode}): {result!r}')
     return result
+
+
+def _local_page_environment(source):
+    # Late import permits the installer harness to import this module too.
+    try:
+        from scripts.smoke_windows_installer import isolated_environment
+    except ModuleNotFoundError:  # Direct invocation from the scripts directory.
+        from smoke_windows_installer import isolated_environment
+    # ShellExecute's browser inherits this environment. Keep LOCALAPPDATA so
+    # it shares the profile warmed by _warm_edge, outside our HTML directory.
+    return isolated_environment(source)
+
+
+@contextmanager
+def _close_page_on_exit(desktop, sentinel, result):
+    try:
+        yield
+    finally:
+        try:
+            # Covers a page that appeared just after timeout as well.
+            result['sentinel_windows_closed'] = sum(
+                desktop.close_sentinel(window, sentinel) for window in desktop.windows()
+                if _is_browser_page(window['title'], window['process_name'], sentinel))
+        except Exception as error:
+            result['cleanup_error'] = str(error)
 
 
 class _WindowsDesktop:
@@ -136,11 +162,6 @@ def smoke_local_page(executable: Path, report_dir: Path):
     """Return evidence on success; write local-page-smoke.json even on failure."""
     if sys.platform != 'win32' or os.environ.get('GITHUB_ACTIONS') != 'true':
         raise RuntimeError('Local page smoke is restricted to disposable Windows GitHub CI')
-    # Late import also permits the installer harness to import this module.
-    try:
-        from scripts.smoke_windows_installer import isolated_environment
-    except ModuleNotFoundError:  # Direct invocation from the scripts directory.
-        from smoke_windows_installer import isolated_environment
     executable, report_dir = Path(executable).resolve(), Path(report_dir).resolve()
     report_dir.mkdir(parents=True, exist_ok=True)
     result = {'success': False, 'executable': str(executable),
@@ -154,7 +175,10 @@ def smoke_local_page(executable: Path, report_dir: Path):
             raise FileNotFoundError(f'Packaged executable missing: {executable}')
         desktop = _WindowsDesktop()
         result['edge_warmup'], warmup_process = _warm_edge()
-        with tempfile.TemporaryDirectory(prefix='vts-local-page-ci-') as temporary:
+        # Contexts exit in reverse order: close our browser window before
+        # deleting its HTML. Browser profiles are never created in this tree.
+        with (tempfile.TemporaryDirectory(prefix='vts-local-page-ci-') as temporary,
+              _close_page_on_exit(desktop, sentinel, result)):
             root = Path(temporary)
             directory = root / '網頁 測試 # 100% & 瀏覽器'
             directory.mkdir()
@@ -165,10 +189,7 @@ def smoke_local_page(executable: Path, report_dir: Path):
             result['page_path'] = str(page)
             app_report = report_dir / f'exe-open-page-{sentinel}.json'
             result['app_report_path'] = str(app_report)
-            local = root / 'runtime-appdata'
-            local.mkdir()
-            env = isolated_environment(os.environ)
-            env['LOCALAPPDATA'] = str(local)
+            env = _local_page_environment(os.environ)
             env['HF_HOME'] = str(root / 'model-cache')
             command = [str(executable), '--test-open-page', str(page),
                        '--test-report', str(app_report)]
@@ -210,14 +231,6 @@ def smoke_local_page(executable: Path, report_dir: Path):
         result['error_type'], result['error'] = type(error).__name__, str(error)
         raise
     finally:
-        if desktop is not None:
-            try:
-                # Covers a page that appeared just after timeout as well.
-                result['sentinel_windows_closed'] = sum(
-                    desktop.close_sentinel(window, sentinel) for window in desktop.windows()
-                    if _is_browser_page(window['title'], window['process_name'], sentinel))
-            except Exception as error:
-                result['cleanup_error'] = str(error)
         if warmup_process is not None:
             result['edge_warmup']['returncode_at_finish'] = warmup_process.poll()
         (report_dir / 'local-page-smoke.json').write_text(

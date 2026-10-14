@@ -3,6 +3,7 @@ import importlib.util
 import json
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -57,6 +58,79 @@ class WindowsLocalPageSmokeTests(unittest.TestCase):
         self.assertFalse(smoke._is_browser_page('Welcome to Microsoft Edge', 'msedge.exe', sentinel))
         self.assertFalse(smoke._is_browser_page(sentinel, 'notepad.exe', sentinel))
         self.assertFalse(smoke._is_browser_page('VTS_LOCAL_PAGE_other', 'chrome.exe', sentinel))
+
+    def test_browser_inherits_runner_profile_with_python_removed(self):
+        smoke = self.module()
+        self.assertTrue(hasattr(smoke, '_local_page_environment'),
+                        'Local-page runtime environment must preserve the browser profile')
+        source = {'SystemRoot': r'C:\Windows', 'PATH': r'C:\Python;C:\ffmpeg',
+                  'PYTHONHOME': r'C:\Python', 'PYTHONPATH': r'C:\site-packages',
+                  'LOCALAPPDATA': r'C:\Users\runneradmin\AppData\Local'}
+        environment = smoke._local_page_environment(source)
+        self.assertEqual(environment['LOCALAPPDATA'], r'C:\Users\runneradmin\AppData\Local')
+        self.assertEqual(environment['PATH'], str(Path(r'C:\Windows') / 'System32'))
+        self.assertNotIn('PYTHONHOME', environment)
+        self.assertNotIn('PYTHONPATH', environment)
+        self.assertEqual(source['PATH'], r'C:\Python;C:\ffmpeg')
+
+    def test_closes_sentinel_before_removing_its_html_directory(self):
+        smoke = self.module()
+        temporary_directory = tempfile.TemporaryDirectory
+        state = {'closed': False}
+        test = self
+
+        class HtmlTemporaryDirectory:
+            def __init__(self, **kwargs):
+                self.directory = temporary_directory(**kwargs)
+
+            def __enter__(self):
+                return self.directory.__enter__()
+
+            def __exit__(self, *args):
+                try:
+                    test.assertTrue(state['closed'], 'HTML cleanup preceded browser WM_CLOSE')
+                finally:
+                    self.directory.__exit__(*args)
+
+        class Desktop:
+            def windows(self):
+                return [] if state['closed'] else [
+                    {'hwnd': 42, 'pid': 4242, 'process_name': 'msedge.exe', 'title': state['title']}]
+
+            def responsive(self, hwnd):
+                return True
+
+            def screenshot(self, hwnd, path):
+                pass
+
+            def close_sentinel(self, window, sentinel):
+                test.assertTrue(state['page'].is_file(), 'Browser closed after HTML removal')
+                test.assertIn(sentinel, window['title'])
+                state['closed'] = True
+                return True
+
+        def open_page(command, **kwargs):
+            page = Path(command[command.index('--test-open-page') + 1])
+            state['page'] = page
+            state['title'] = page.read_text(encoding='utf-8').split('<title>')[1].split('</title>')[0]
+            report = Path(command[command.index('--test-report') + 1])
+            report.write_text('{"success": true}', encoding='utf-8')
+            return SimpleNamespace(returncode=0)
+
+        with temporary_directory() as temporary:
+            executable = Path(temporary) / 'fixture.exe'
+            executable.touch()
+            report_dir = Path(temporary) / 'reports'
+            with patch.object(smoke.sys, 'platform', 'win32'), patch.dict(
+                    smoke.os.environ, {'GITHUB_ACTIONS': 'true'}), patch.object(
+                    smoke, '_WindowsDesktop', Desktop), patch.object(
+                    smoke, '_warm_edge', return_value=({'available': False}, None)), patch.object(
+                    smoke.subprocess, 'run', side_effect=open_page), patch.object(
+                    smoke.tempfile, 'TemporaryDirectory', HtmlTemporaryDirectory):
+                result = smoke.smoke_local_page(executable, report_dir)
+            self.assertTrue(result['success'])
+            self.assertFalse(state['page'].exists())
+            self.assertTrue(json.loads((report_dir / 'local-page-smoke.json').read_text())['success'])
 
 
 if __name__ == '__main__':
