@@ -1,0 +1,6 @@
+{
+  "name": "vts-player-browser-verification",
+  "private": true,
+  "type": "module",
+  "devDependencies": {"playwright": "1.64.0"}
+}

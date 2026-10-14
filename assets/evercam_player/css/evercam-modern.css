@@ -309,6 +309,20 @@ h1 {
 .transcript-text mark { padding: 0 2px; border-radius: 3px; color: #382a00; background: #ffec9b; }
 .transcript-more { margin-top: 14px; }
 .transcript-more[hidden] { display: none; }
+.transcript-follow-control {
+    display: flex;
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 12px;
+    margin-top: 10px;
+    color: var(--muted);
+    font-size: 12px;
+}
+.transcript-follow-label { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; }
+.transcript-follow-label input { width: 16px; height: 16px; margin: 0; accent-color: var(--active); }
+.transcript-pagination { display: flex; flex: 0 0 auto; gap: 8px; }
+.transcript-pagination .transcript-more { flex: 1; }
 
 .player-card {
     width: 100%;
@@ -957,6 +971,9 @@ body.frame-fullscreen-active {
 .reading-panel .transcript-item { gap: 10px; padding: 11px 6px; font-size: 14px; }
 .reading-panel .transcript-time { flex-basis: 48px; font-size: 12px; }
 .reading-panel .transcript-more { flex: 0 0 auto; margin-top: 10px; padding: 7px 12px; font-size: 13px; }
+/* Keep the mobile document height stable when the last follow window hides
+   pagination: shrinking the page would clamp scrollY and move the video. */
+.reading-panel .transcript-pagination { min-height: 54px; }
 
 .chapter-header {
     display: flex;

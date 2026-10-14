@@ -191,9 +191,9 @@ class DesktopUI(unittest.TestCase):
         self.assertEqual((f.folder / 'index.html').read_bytes(), b'original player')
         self.assertFalse(self.errors, repr(self.errors))
 
-    def test_opencam_main_ingestion_and_completion_prompt_can_be_declined(self):
-        # Break caught: dropped project isn't queued, or declining the
-        # completion prompt still writes to an OpenCam player.
+    def test_opencam_completion_has_no_extra_question_or_automatic_write(self):
+        # Break caught: completion queues another modal question, or writes
+        # the player before the user presses the explicit insertion button.
         import test_opencam_integration as fixtures
         from unittest.mock import patch
         import SubtitleTranscriber as desktop
@@ -208,12 +208,50 @@ class DesktopUI(unittest.TestCase):
             deadline = time.monotonic() + .6
             while time.monotonic() < deadline:
                 app.update(); time.sleep(.01)
-            self.assertEqual(question.call_count, 1)
+            self.assertEqual(question.call_count, 0)
+        self.assertFalse(any(isinstance(w, self.ctk.CTkToplevel) and w.title() == 'OpenCam 字幕置入'
+                             for w in app.winfo_children()))
         self.assertEqual((f.folder / 'opencam-player.js').read_bytes(), original)
         self.assertEqual(list(f.folder.glob('*.backup-*.js')), [])
         self.assertFalse(self.errors, repr(self.errors))
 
-    def test_opencam_homepage_entry_and_accepted_completion_open_prefilled_ui(self):
+    def test_opencam_preview_opens_actual_html_on_windows(self):
+        import test_opencam_integration as fixtures
+        from unittest.mock import patch
+        from opencam_dialog import OpenCamSubtitleDialog
+        f = fixtures.OpenCamIntegration(); f.setUp()
+        self.addCleanup(f.doCleanups)
+        dialog = OpenCamSubtitleDialog(self.root, folder=f.folder)
+        self.root.update()
+        launched = []
+        with patch('sys.platform', 'win32'), \
+                patch('os.startfile', side_effect=launched.append, create=True), \
+                patch('webbrowser.open', return_value=True):
+            dialog.preview_button.invoke()
+        self.assertEqual(launched, [str(f.folder / 'index.html')])
+        self.assertFalse(self.errors, repr(self.errors))
+
+    def test_evercam_preview_opens_actual_html_on_windows(self):
+        from unittest.mock import patch
+        import evercam_integration
+        course = self.course()
+        ok, message, _ = evercam_integration.deploy_evercam_player(course)
+        self.assertTrue(ok, message)
+        page = course / 'index.html'
+        self.dialog.courses.append(str(course))
+        self.dialog.refresh_list(); self.root.update()
+        preview = next(w for w in self.widgets(self.dialog.top) if isinstance(w, self.ctk.CTkButton)
+                       and w.cget('text') == '預覽')
+        self.assertEqual(preview.cget('state'), 'normal')
+        launched = []
+        with patch('sys.platform', 'win32'), \
+                patch('os.startfile', side_effect=launched.append, create=True), \
+                patch('webbrowser.open', return_value=True):
+            preview.invoke()
+        self.assertEqual(launched, [str(page)])
+        self.assertFalse(self.errors, repr(self.errors))
+
+    def test_opencam_homepage_and_completion_button_open_prefilled_ui(self):
         import test_opencam_integration as fixtures
         from unittest.mock import patch
         import SubtitleTranscriber as desktop
@@ -228,11 +266,16 @@ class DesktopUI(unittest.TestCase):
                    and w.title() == 'OpenCam 字幕置入')
         self.assert_buttons_visible(top, ['選擇資料夾…', '加入 SRT／VTT 字幕…', '備份並置入字幕'])
         top.destroy()
-        with patch.object(desktop.messagebox, 'askyesno', return_value=True):
+        with patch.object(desktop.messagebox, 'askyesno', return_value=False):
             app.show_completion_dialog(1, [str(f.srt)], {str(f.srt): str(f.folder / 'media.mp4')}, 'en')
             deadline = time.monotonic() + .6
             while time.monotonic() < deadline:
                 app.update(); time.sleep(.01)
+        completion = next(w for w in app.winfo_children() if isinstance(w, self.ctk.CTkToplevel)
+                          and w.title() == '轉錄任務完成')
+        insert = next(w for w in self.widgets(completion) if isinstance(w, self.ctk.CTkButton)
+                      and w.cget('text') == 'OpenCam 置入字幕')
+        insert.invoke(); app.update()
         top = next(w for w in app.winfo_children() if isinstance(w, self.ctk.CTkToplevel)
                    and w.title() == 'OpenCam 字幕置入')
         labels = [w.cget('text') for w in self.widgets(top) if isinstance(w, self.ctk.CTkLabel)]
@@ -241,6 +284,103 @@ class DesktopUI(unittest.TestCase):
         self.assertEqual([w.get() for w in combos], ['英文'])
         self.assertIsNone(app.grab_current())
         self.assertEqual(list(f.folder.glob('*.backup-*.js')), [])
+        self.assertFalse(self.errors, repr(self.errors))
+
+    def test_opencam_completion_badge_is_after_filename_and_actions_fit(self):
+        # Break caught: missing/misplaced badge, or a long filename squeezes
+        # either the badge or right-hand operations out of the result card.
+        import test_opencam_integration as fixtures
+        from unittest.mock import patch
+        import SubtitleTranscriber as desktop
+        f = fixtures.OpenCamIntegration(); f.setUp()
+        self.addCleanup(f.doCleanups)
+        long_subtitle = f.root / ('很長的錄影課程名稱' * 5 + '.zh-TW.srt')
+        long_subtitle.write_bytes(f.srt.read_bytes())
+        app = self.main_app()
+        with patch.object(desktop.messagebox, 'askyesno', return_value=False):
+            app.show_completion_dialog(1, [str(long_subtitle)],
+                                       {str(long_subtitle): str(f.folder / 'media.mp4')})
+            app.update()
+        top = next(w for w in app.winfo_children() if isinstance(w, self.ctk.CTkToplevel)
+                   and w.title() == '轉錄任務完成')
+        badges = [w for w in self.widgets(top) if isinstance(w, self.ctk.CTkLabel)
+                  and w.cget('text') == 'OpenCam 播放器']
+        self.assertEqual(len(badges), 1, 'OpenCam source needs a badge next to its result filename')
+        badge = badges[0]
+        filename = next(w for w in badge.master.winfo_children()
+                        if isinstance(w, self.ctk.CTkLabel) and '.srt' in w.cget('text'))
+        for scale in (1, 1.25, 1.5, 2):
+            self.ctk.set_widget_scaling(scale)
+            self.ctk.set_window_scaling(scale)
+            self.settle_scaling()
+            self.assert_buttons_visible(top, ['開啟字幕', '開啟目錄', '字幕校對', 'OpenCam 置入字幕', '關閉'])
+            self.assertTrue(badge.winfo_ismapped())
+            self.assertGreaterEqual(badge.winfo_width(), badge.winfo_reqwidth() - 2)
+            self.assertGreaterEqual(badge.winfo_rootx(), filename.winfo_rootx() + filename.winfo_width())
+            row = badge.master.master
+            self.assertLessEqual(badge.winfo_rootx() + badge.winfo_width(),
+                                 row.winfo_rootx() + row.winfo_width())
+            first_action = next(w for w in self.widgets(row) if isinstance(w, self.ctk.CTkButton)
+                                and w.cget('text') == '開啟字幕')
+            self.assertLessEqual(badge.winfo_rootx() + badge.winfo_width(), first_action.winfo_rootx())
+        self.assertFalse(self.errors, repr(self.errors))
+
+    def test_completion_badge_uses_source_mapping_not_neighboring_opencam(self):
+        import test_opencam_integration as fixtures
+        from unittest.mock import patch
+        import SubtitleTranscriber as desktop
+        f = fixtures.OpenCamIntegration(); f.setUp()
+        self.addCleanup(f.doCleanups)
+        ordinary = f.folder / 'unrelated.mp4'; ordinary.touch()
+        text_output = f.root / 'media.txt'; text_output.write_text('字幕', encoding='utf-8')
+        app = self.main_app()
+        with patch.object(desktop.messagebox, 'askyesno', return_value=False):
+            app.show_completion_dialog(2, [str(f.srt), str(text_output)],
+                                       {str(f.srt): str(ordinary), str(text_output): str(f.folder / 'media.mp4')})
+            app.update()
+        top = next(w for w in app.winfo_children() if isinstance(w, self.ctk.CTkToplevel)
+                   and w.title() == '轉錄任務完成')
+        badges = [w for w in self.widgets(top) if isinstance(w, self.ctk.CTkLabel)
+                  and w.cget('text') == 'OpenCam 播放器']
+        self.assertEqual(len(badges), 1)
+        sibling_labels = [w.cget('text') for w in badges[0].master.winfo_children()
+                          if isinstance(w, self.ctk.CTkLabel)]
+        self.assertIn('media.txt', sibling_labels)
+        self.assertFalse(any(isinstance(w, self.ctk.CTkButton) and w.cget('text') == 'OpenCam 置入字幕'
+                             for w in self.widgets(top)), 'only timed outputs may be inserted')
+
+    def test_mixed_completion_keeps_each_badge_and_matches_insertion_to_its_row(self):
+        # Break caught: reusing the last loop value attaches the wrong
+        # OpenCam project/subtitle, or the existing EverCam badge disappears.
+        import test_opencam_integration as fixtures
+        from unittest.mock import patch
+        import SubtitleTranscriber as desktop
+        f = fixtures.OpenCamIntegration(); f.setUp()
+        self.addCleanup(f.doCleanups)
+        from web_export_model import SubtitleSource
+        course = self.course()
+        ec_subtitle = course / 'media.srt'; ec_subtitle.write_bytes(f.srt.read_bytes())
+        other_subtitle = f.root / 'media.en.srt'; other_subtitle.write_bytes(f.srt.read_bytes())
+        app = self.main_app()
+        opened = []
+        with patch.object(desktop.messagebox, 'askyesno', return_value=False):
+            app.show_completion_dialog(3, [str(f.srt), str(ec_subtitle), str(other_subtitle)],
+                                       {str(f.srt): str(f.folder / 'media.mp4'),
+                                        str(other_subtitle): str(f.folder / 'media.mp4')}, 'en')
+            app.update()
+        top = next(w for w in app.winfo_children() if isinstance(w, self.ctk.CTkToplevel)
+                   and w.title() == '轉錄任務完成')
+        labels = [w.cget('text') for w in self.widgets(top) if isinstance(w, self.ctk.CTkLabel)]
+        self.assertEqual(labels.count('OpenCam 播放器'), 2)
+        self.assertEqual(labels.count('EverCam 課程'), 1)
+        self.assert_buttons_visible(top, ['開啟字幕', '開啟目錄', '字幕校對',
+                                         'OpenCam 置入字幕', 'EverCam網頁轉換', '關閉'])
+        with patch.object(app, 'open_opencam_tool', side_effect=lambda *args: opened.append(args)):
+            for button in self.widgets(top):
+                if isinstance(button, self.ctk.CTkButton) and button.cget('text') == 'OpenCam 置入字幕':
+                    button.invoke()
+        self.assertEqual(opened, [(str(f.folder), (SubtitleSource(f.srt, 'en'),)),
+                                  (str(f.folder), (SubtitleSource(other_subtitle, 'en'),))])
         self.assertFalse(self.errors, repr(self.errors))
 
     def test_opencam_adding_another_subtitle_keeps_pending_language_edit(self):

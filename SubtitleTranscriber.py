@@ -18,6 +18,7 @@ from app_settings import resolve_settings_path, read_settings, write_settings
 from ui_theme import (install_theme, ui_font, wrap_to_width, BACKGROUND, CARD,
                       SURFACE, BORDER, TEXT, MUTED, ACCENT, HOVER, FONT_FAMILY)
 from ui_drop import dropped_paths, register_file_drop
+from ui_open import open_local_page
 
 # Import core logic from transcriber.py
 from transcriber import (
@@ -30,7 +31,7 @@ from transcriber import (
 # Import EverCam subtitle player integration
 import evercam_integration as evercam
 import opencam_integration as opencam
-from opencam_dialog import OpenCamSubtitleDialog, offer_completed_projects
+from opencam_dialog import OpenCamSubtitleDialog
 
 # 啟動時確保系統環境變數 PATH 包含 FFmpeg 常用路徑 (特別是 macOS Homebrew /opt/homebrew/bin)
 ensure_ffmpeg_path()
@@ -163,7 +164,7 @@ def get_version():
     except Exception as e:
         print(f"DEBUG: Failed to load version from pyproject.toml: {e}")
     
-    return "2.7.15" # Fallback
+    return "2.7.16" # Fallback
 
 # --- 設定外觀 ---
 ctk.set_appearance_mode("System")  # Modes: "System" (standard), "Dark", "Light"
@@ -2342,8 +2343,7 @@ class EverCamConverterDialog:
                 parent=self.top
             )
             if ans and idx_p:
-                web_url = f"file:///{os.path.abspath(idx_p).replace(os.sep, '/')}"
-                webbrowser.open_new(web_url)
+                open_local_page(idx_p, parent=self.top)
             self.refresh_list()
         else:
             messagebox.showerror("轉換失敗", msg, parent=self.top)
@@ -2351,8 +2351,7 @@ class EverCamConverterDialog:
     def preview_course(self, c_path):
         idx_p = os.path.join(c_path, "index.html")
         if os.path.isfile(idx_p):
-            web_url = f"file:///{os.path.abspath(idx_p).replace(os.sep, '/')}"
-            webbrowser.open_new(web_url)
+            open_local_page(idx_p, parent=self.top)
         else:
             messagebox.showinfo("提示", "此課程尚未建立網頁播放器首頁 (index.html)，請先點擊「轉換網頁」。", parent=self.top)
 
@@ -2378,7 +2377,7 @@ class EverCamConverterDialog:
             if ok:
                 success_count += 1
                 if first_preview is None and idx_p:
-                    first_preview = f"file:///{os.path.abspath(idx_p).replace(os.sep, '/')}"
+                    first_preview = idx_p
                 if hasattr(self.parent, "log"):
                     self.parent.log(f"✅ [EverCam] {msg} ({os.path.basename(c_path)})")
             else:
@@ -2393,7 +2392,7 @@ class EverCamConverterDialog:
                 parent=self.top
             )
             if ans and first_preview:
-                webbrowser.open_new(first_preview)
+                open_local_page(first_preview, parent=self.top)
         else:
             messagebox.showerror("轉換失敗", "未能成功轉換任何課程，請檢查檔案權限。", parent=self.top)
 
@@ -4614,8 +4613,7 @@ class App(BaseClass):
             if ok:
                 self.log(f"✅ [EverCam] {msg} ({os.path.basename(target_folder)})")
                 messagebox.showinfo("EverCam 網頁轉換完成", f"{msg}\n\n已成功建立現代化字幕播放器！\n即將於瀏覽器中開啟預覽。", parent=dialog)
-                web_url = f"file:///{os.path.abspath(idx_p).replace(os.sep, '/')}"
-                webbrowser.open_new(web_url)
+                open_local_page(idx_p, parent=dialog)
             else:
                 self.log(f"❌ [EverCam] 轉換失敗: {msg}")
                 messagebox.showerror("EverCam 網頁轉換失敗", msg, parent=dialog)
@@ -4627,14 +4625,14 @@ class App(BaseClass):
             def deploy_all_evercam():
                 target_l = "en" if self.translate_en_var.get() else "zh-TW"
                 success_count = 0
-                first_preview_url = None
+                first_preview_path = None
                 
                 for c_dir, s_file in evercam_projects.items():
                     ok, msg, idx_p = evercam.deploy_evercam_player(c_dir, source_srt=s_file, target_lang=target_l)
                     if ok:
                         success_count += 1
-                        if first_preview_url is None and idx_p:
-                            first_preview_url = f"file:///{os.path.abspath(idx_p).replace(os.sep, '/')}"
+                        if first_preview_path is None and idx_p:
+                            first_preview_path = idx_p
                         self.log(f"✅ [EverCam] {msg} ({os.path.basename(c_dir)})")
                     else:
                         self.log(f"❌ [EverCam] 轉換失敗: {msg} ({os.path.basename(c_dir)})")
@@ -4642,8 +4640,8 @@ class App(BaseClass):
                 if success_count > 0:
                     dialog_text = "共成功轉換 1 個 EverCam 網頁課程！\n\n已成功建立現代化字幕播放器，即將於瀏覽器中開啟預覽。" if success_count == 1 else f"共成功轉換 {success_count} 個 EverCam 網頁課程！\n\n已成功建立現代化字幕播放器，即將於瀏覽器中開啟預覽。"
                     messagebox.showinfo("EverCam 網頁轉換完成", dialog_text, parent=dialog)
-                    if first_preview_url:
-                        webbrowser.open_new(first_preview_url)
+                    if first_preview_path:
+                        open_local_page(first_preview_path, parent=dialog)
                 else:
                     messagebox.showerror("轉換失敗", "未能成功轉換任何 EverCam 網頁課程，請檢查檔案權限。", parent=dialog)
 
@@ -4713,10 +4711,12 @@ class App(BaseClass):
                 border_color=BORDER
             )
             row_frame.pack(fill="x", pady=3, padx=2)
+            row_frame.grid_columnconfigure(0, weight=1)
             
             # 左側資訊區
             info_left = ctk.CTkFrame(row_frame, fg_color="transparent")
-            info_left.pack(side="left", fill="x", expand=True, padx=(8, 4), pady=5)
+            info_left.grid(row=0, column=0, sticky="ew", padx=(8, 4), pady=5)
+            info_left.grid_columnconfigure(1, weight=1)
 
             # 序號標籤
             lbl_idx = ctk.CTkLabel(
@@ -4724,7 +4724,7 @@ class App(BaseClass):
                 font=ui_font(family="Consolas", size=12, weight="bold"),
                 text_color=("#1f538d", "#5dade2"), width=34
             )
-            lbl_idx.pack(side="left")
+            lbl_idx.grid(row=0, column=0)
 
             # 檔名標籤
             short_name = os.path.basename(f_path)
@@ -4733,22 +4733,49 @@ class App(BaseClass):
             else:
                 display_name = short_name
 
-            lbl_name = ctk.CTkLabel(info_left, text=display_name, anchor="w", font=ui_font(size=12, weight="bold"))
-            lbl_name.pack(side="left", padx=4)
+            lbl_name = ctk.CTkLabel(info_left, text=display_name, width=1, anchor="w", font=ui_font(size=12, weight="bold"))
+            lbl_name.grid(row=0, column=1, sticky="ew", padx=4)
+
+            def fit_filename(event, label=lbl_name, name=short_name):
+                available = max(1, event.width / label._get_widget_scaling())
+                font = label.cget('font')
+                text = name
+                if font.measure(text) > available:
+                    suffix = Path(name).suffix
+                    tail = name[-14:]
+                    prefix = name[:-len(tail)]
+                    while prefix and font.measure(prefix + '…' + tail) > available:
+                        prefix = prefix[:-1]
+                    while len(tail) > len(suffix) and font.measure(prefix + '…' + tail) > available:
+                        tail = tail[1:]
+                    text = prefix + '…' + tail
+                label.configure(text=text)
+            lbl_name.bind('<Configure>', fit_filename, add='+')
+
+            # A result's explicit source identifies OpenCam, even for TXT.
+            # Timed SRT/VTT eligibility for insertion is checked separately.
+            is_oc_row, oc_row_dir = opencam.detect_opencam_project(sources.get(str(f_path)))
 
             # 若為 EverCam 專案，顯示精美徽章
             is_ec_row, ec_row_dir = evercam.detect_evercam_project(f_path)
-            if is_ec_row:
+            if is_oc_row:
+                lbl_badge = ctk.CTkLabel(
+                    info_left, text="OpenCam 播放器", font=ui_font(size=10, weight="bold"),
+                    fg_color=("#e3f2fd", "#152836"), text_color=("#1976d2", "#64b5f6"),
+                    corner_radius=4, padx=5, pady=1
+                )
+                lbl_badge.grid(row=0, column=2, padx=(2, 0))
+            elif is_ec_row:
                 lbl_badge = ctk.CTkLabel(
                     info_left, text="EverCam 課程", font=ui_font(size=10, weight="bold"),
                     fg_color=("#e8f5e9", "#1b3820"), text_color=("#2e7d32", "#81c784"),
                     corner_radius=4, padx=5, pady=1
                 )
-                lbl_badge.pack(side="left", padx=(2, 0))
+                lbl_badge.grid(row=0, column=2, padx=(2, 0))
 
             # 右側按鈕群組 (Button Group：精緻化次要按鈕 + 品牌主按鈕，消除雜亂笨重感)
             btn_group = ctk.CTkFrame(row_frame, fg_color="transparent")
-            btn_group.pack(side="right", padx=(4, 6), pady=5)
+            btn_group.grid(row=0, column=1, padx=(4, 6), pady=5)
 
             can_edit = f_path.lower().endswith((".srt", ".vtt", ".txt"))
 
@@ -4787,7 +4814,6 @@ class App(BaseClass):
 
             source_video = completion_video(f_path, sources)
             if source_video:
-                is_oc_row, oc_row_dir = opencam.detect_opencam_project(source_video)
                 if is_oc_row:
                     ctk.CTkButton(
                         btn_group, text='OpenCam 置入字幕', width=116, height=26,
@@ -4814,10 +4840,6 @@ class App(BaseClass):
 
         # 後台渲染完成後一次性置中並平滑呈現 (杜絕閃爍)
         center_and_smooth_show(dialog, self, 780, dialog_h, is_modal=True)
-        if opencam_projects:
-            dialog.after(250, lambda: offer_completed_projects(
-                dialog, opencam_projects, subtitle_language,
-                open_dialog=lambda parent, **options: self.open_opencam_tool(**options)))
 
 if __name__ == "__main__":
     import multiprocessing
@@ -4840,6 +4862,33 @@ if __name__ == "__main__":
     
     # Enable multiprocessing support for frozen executables
     multiprocessing.freeze_support()
+
+    # Disposable CI checks the actual OS file association with the bundled
+    # page opener. Never create a blocking messagebox in this explicit mode.
+    if "--test-open-page" in sys.argv:
+        import argparse
+        from ui_open import open_local_page
+        parser = argparse.ArgumentParser(description='Verify bundled local-page opening')
+        parser.add_argument('--test-open-page', type=Path, required=True)
+        parser.add_argument('--test-report', type=Path, required=True)
+        options, _ = parser.parse_known_args()
+        errors = []
+        original_showerror = messagebox.showerror
+        messagebox.showerror = lambda title, text, **kwargs: errors.append(str(text))
+        try:
+            report = {'success': open_local_page(options.test_open_page)}
+            if errors:
+                report['error'] = '\n'.join(errors)
+        except Exception as error:
+            report = {'success': False, 'error': str(error),
+                      'traceback': traceback.format_exc()}
+        finally:
+            messagebox.showerror = original_showerror
+        try:
+            atomic_write_text(options.test_report, json.dumps(report, ensure_ascii=False, indent=2))
+        except Exception:
+            sys.exit(1)
+        sys.exit(0 if report['success'] else 1)
 
     # Verify the real bundled converter before any model or GUI is created.
     if "--test-traditional-chinese" in sys.argv:

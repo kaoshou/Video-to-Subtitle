@@ -29,6 +29,199 @@ function player(config, {standalone = true, preferences = {}, blockedStorage = f
   return {dom, w, tracks};
 }
 
+// jsdom has no layout engine. Model only list/row geometry, leaving real
+// player handlers, pagination, active cues and scrollTop changes intact.
+function transcriptViewport(w, height = () => 100) {
+  const list = w.document.querySelector('#transcript-list');
+  Object.defineProperty(list, 'clientHeight', {get:height});
+  list.getBoundingClientRect = () => ({top:0,bottom:height(),height:height()});
+  const original = w.HTMLElement.prototype.getBoundingClientRect;
+  w.HTMLElement.prototype.getBoundingClientRect = function () {
+    if (!this.matches('.transcript-item')) return original.call(this);
+    const index = [...list.querySelectorAll('.transcript-item')].indexOf(this);
+    const top = index * 40 - list.scrollTop;
+    return {top,bottom:top+40,height:40};
+  };
+  return list;
+}
+
+function followControl(w) {
+  const checkbox = w.document.querySelector('#transcript-follow');
+  assert.ok(checkbox, 'viewer can opt in to transcript playback following');
+  return checkbox;
+}
+
+function setFollowing(w, checked) {
+  const checkbox = followControl(w);
+  checkbox.checked = checked;
+  checkbox.dispatchEvent(new w.Event('change'));
+}
+
+function showTranscript(w, standalone) {
+  w.document.querySelector(standalone ? '#transcript-toggle' : '#transcript-tab').click();
+}
+
+test('follow is opt-in and scrolls only the transcript when the current cue leaves view', t => {
+  for (const standalone of [true,false]) {
+    const {dom,w}=player({mode:standalone?'standalone':undefined,title:'course',defaultSubtitle:'zh-TW'},
+                         {standalone,subtitles:searchable});
+    t.after(()=>dom.window.close());
+    const list=transcriptViewport(w);
+    showTranscript(w,standalone);
+    assert.equal(followControl(w).checked,false);
+    const video=w.document.querySelector('video');
+    video.currentTime=30.5; video.dispatchEvent(new w.Event('timeupdate'));
+    assert.equal(list.scrollTop,0);
+    const focused=w.document.activeElement;
+    setFollowing(w,true);
+    assert.equal(list.scrollTop,50);
+    assert.match(w.document.querySelector('.transcript-item[aria-current="true"]').textContent,/索引的應用/);
+    assert.equal(w.document.activeElement,focused, 'following never steals keyboard focus');
+    assert.equal(w.document.documentElement.scrollTop,0);
+    video.currentTime=31; video.dispatchEvent(new w.Event('timeupdate'));
+    assert.equal(list.scrollTop,50, 'same visible cue does not move again');
+    setFollowing(w,false);
+    video.currentTime=1; video.dispatchEvent(new w.Event('timeupdate'));
+    assert.equal(list.scrollTop,50, 'unchecking stops following');
+  }
+});
+
+test('follow seeks far beyond the first page and back without rendering the entire transcript', t => {
+  const cues=Array.from({length:10000},(_,i)=>({start:i*2,end:i*2+1,text:`段落 ${i}`}));
+  for (const standalone of [true,false]) {
+    const {dom,w}=player({mode:standalone?'standalone':undefined,title:'long',defaultSubtitle:'en'},
+                         {standalone,subtitles:{tracks:[{language:'en',cues}]}});
+    t.after(()=>dom.window.close());
+    transcriptViewport(w); showTranscript(w,standalone); setFollowing(w,true);
+    const video=w.document.querySelector('video');
+    for (const [time,text] of [[18002.5,'段落 9001'],[10.5,'段落 5'],[19998.5,'段落 9999']]) {
+      video.currentTime=time; video.dispatchEvent(new w.Event('seeked'));
+      const active=w.document.querySelector('.transcript-item[aria-current="true"]');
+      assert.ok(active, 'current cue must be present after seeking');
+      assert.match(active.textContent,new RegExp(text+'$'));
+      assert.ok(w.document.querySelectorAll('.transcript-item').length<=100, 'following remains bounded');
+    }
+  }
+});
+
+test('search suspends following and clearing search resumes at the current playback position', t => {
+  const {dom,w}=player({mode:'standalone',title:'course',defaultSubtitle:'zh-TW'},{subtitles:searchable});
+  t.after(()=>dom.window.close());
+  const list=transcriptViewport(w); showTranscript(w,true); setFollowing(w,true);
+  const input=w.document.querySelector('#transcript-search');
+  input.value='索引'; input.dispatchEvent(new w.Event('input'));
+  list.scrollTop=0;
+  const video=w.document.querySelector('video');
+  video.currentTime=30.5; video.dispatchEvent(new w.Event('timeupdate'));
+  assert.equal(list.scrollTop,0);
+  assert.equal(w.document.querySelectorAll('.transcript-item').length,2);
+  const hint=w.document.querySelector('#transcript-follow-hint');
+  assert.ok(hint); assert.equal(hint.hidden,false);
+  assert.match(hint.textContent,/搜尋/);
+  w.document.querySelector('#transcript-clear').click();
+  assert.equal(list.scrollTop,50);
+  assert.equal(hint.hidden,true);
+  assert.equal(followControl(w).checked,true);
+});
+
+test('hidden transcript never scrolls or opens itself; reopening follows the current cue', t => {
+  for (const standalone of [true,false]) {
+    const {dom,w}=player({mode:standalone?'standalone':undefined,title:'course',defaultSubtitle:'zh-TW'},
+                         {standalone,subtitles:searchable});
+    t.after(()=>dom.window.close());
+    const list=transcriptViewport(w); setFollowing(w,true);
+    const video=w.document.querySelector('video');
+    video.currentTime=30.5; video.dispatchEvent(new w.Event('timeupdate'));
+    assert.equal(w.document.querySelector('#transcript-panel').hidden,true);
+    assert.equal(list.scrollTop,0);
+    showTranscript(w,standalone);
+    assert.equal(list.scrollTop,50);
+    w.document.querySelector(standalone?'#transcript-toggle':'#chapters-tab').click();
+    video.currentTime=1; video.dispatchEvent(new w.Event('timeupdate'));
+    assert.equal(list.scrollTop,50);
+    showTranscript(w,standalone);
+    assert.equal(list.scrollTop,0);
+  }
+});
+
+test('following uses selected transcript language even with captions off and preserves gaps', t => {
+  const data={tracks:[...searchable.tracks.slice(0,1),{language:'en',cues:[
+    {start:0,end:4,text:'Introduction'}, {start:12.5,end:17,text:'Database'}, {start:30,end:34,text:'English current'}]}]};
+  const {dom,w,tracks}=player({mode:'standalone',title:'course',defaultSubtitle:'zh-TW'},{subtitles:data});
+  t.after(()=>dom.window.close());
+  const list=transcriptViewport(w); showTranscript(w,true); setFollowing(w,true);
+  const video=w.document.querySelector('video');
+  video.currentTime=30.5; video.dispatchEvent(new w.Event('timeupdate'));
+  [...w.document.querySelectorAll('#caption-menu button')].find(b=>b.dataset.value==='off').click();
+  const language=w.document.querySelector('#transcript-language');
+  language.value='en'; language.dispatchEvent(new w.Event('change'));
+  assert.match(w.document.querySelector('.transcript-item[aria-current="true"]').textContent,/English current/);
+  assert.deepEqual(tracks.map(track=>track.mode),['disabled','disabled']);
+  const position=list.scrollTop;
+  video.currentTime=20; video.dispatchEvent(new w.Event('timeupdate'));
+  assert.equal(w.document.querySelector('.transcript-item[aria-current="true"]'),null);
+  assert.equal(list.scrollTop,position);
+});
+
+test('after a distant follow jump, manual browsing can reach earlier and later pages', t => {
+  const cues=Array.from({length:1000},(_,i)=>({start:i*2,end:i*2+1,text:`段落 ${i}`}));
+  const {dom,w}=player({mode:'standalone',title:'long',defaultSubtitle:'en'},
+                       {subtitles:{tracks:[{language:'en',cues}]}});
+  t.after(()=>dom.window.close());
+  transcriptViewport(w); showTranscript(w,true); setFollowing(w,true);
+  const video=w.document.querySelector('video');
+  video.currentTime=1200.5; video.dispatchEvent(new w.Event('seeked'));
+  setFollowing(w,false);
+  const earlier=w.document.querySelector('#transcript-previous');
+  assert.ok(earlier); assert.equal(earlier.hidden,false);
+  earlier.click();
+  assert.match(w.document.querySelector('.transcript-item').textContent,/段落 475$/);
+  w.document.querySelector('#transcript-more').click();
+  assert.equal(w.document.querySelectorAll('.transcript-item').length,200);
+  assert.equal(video.currentTime,1200.5);
+});
+
+test('empty transcripts disable follow rather than creating an empty scrolling action', t => {
+  for (const standalone of [true,false]) {
+    const {dom,w}=player({mode:standalone?'standalone':undefined,title:'empty'}, {standalone,subtitles:{tracks:[]}});
+    t.after(()=>dom.window.close());
+    assert.equal(followControl(w).disabled,true);
+  }
+});
+
+test('automatic paging preserves a retained focused cue instead of losing focus to the page', t => {
+  const cues=Array.from({length:300},(_,i)=>({start:i*2,end:i*2+1,text:`段落 ${i}`}));
+  const {dom,w}=player({mode:'standalone',title:'long',defaultSubtitle:'en'},
+                       {subtitles:{tracks:[{language:'en',cues}]}});
+  t.after(()=>dom.window.close());
+  transcriptViewport(w); showTranscript(w,true); setFollowing(w,true);
+  w.document.querySelectorAll('.transcript-item')[99].focus();
+  const video=w.document.querySelector('video');
+  video.currentTime=200.5; video.dispatchEvent(new w.Event('timeupdate'));
+  assert.equal(w.document.activeElement.matches('.transcript-item'),true);
+  assert.match(w.document.activeElement.textContent,/段落 99$/);
+  assert.equal(w.document.querySelectorAll('.transcript-item').length,100);
+  video.currentTime=480.5; video.dispatchEvent(new w.Event('seeked'));
+  assert.equal(w.document.activeElement,followControl(w), 'a removed target has a persistent keyboard fallback');
+  assert.equal(w.document.documentElement.scrollTop,0);
+});
+
+test('viewport shrink and orientation changes keep the same current cue visible', t => {
+  const {dom,w}=player({mode:'standalone',title:'course',defaultSubtitle:'zh-TW'}, {subtitles:searchable});
+  t.after(()=>dom.window.close());
+  let height=100;
+  const list=transcriptViewport(w,()=>height);
+  showTranscript(w,true); setFollowing(w,true);
+  const video=w.document.querySelector('video');
+  video.currentTime=30.5; video.dispatchEvent(new w.Event('timeupdate'));
+  assert.equal(list.scrollTop,50);
+  height=50; w.dispatchEvent(new w.Event('resize'));
+  assert.equal(list.scrollTop,75);
+  height=100; list.scrollTop=0; w.dispatchEvent(new w.Event('orientationchange'));
+  assert.equal(list.scrollTop,50);
+  assert.equal(video.currentTime,30.5);
+});
+
 test('standalone metadata is text, chapter card is hidden', () => {
   const {dom,w} = player({mode:'standalone', packageId:'a', title:'<script>title</script>', organization:'單位', description:'第一行\n<em>原文</em>', defaultSubtitle:'en'});
   assert.equal(w.document.title,'<script>title</script>');

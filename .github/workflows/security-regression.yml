@@ -33,3 +33,19 @@ jobs:
       - run: npm --prefix website ci
       - run: node --test tests/player/*.test.mjs
       - run: npm --prefix website test
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install av
+      - run: npm --prefix tests/browser ci
+      - run: tests/browser/node_modules/.bin/playwright install --with-deps chromium
+      - name: Real Chromium transcript-follow geometry
+        run: |
+          python scripts/make_player_test_media.py "$RUNNER_TEMP/player-media/media.mp4"
+          node scripts/smoke_player_browser.mjs --media "$RUNNER_TEMP/player-media/media.mp4" --report-dir "$RUNNER_TEMP/player-browser-report"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Player-Browser-Validation-${{ github.workflow }}
+          path: ${{ runner.temp }}/player-browser-report/
+          if-no-files-found: warn

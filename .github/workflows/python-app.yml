@@ -22,6 +22,11 @@ on:
       - 'pyproject.toml'
       - 'packaging/windows/**'
       - 'scripts/smoke_windows_installer.py'
+      - 'scripts/smoke_windows_local_page.py'
+      - 'scripts/smoke_player_browser.mjs'
+      - 'scripts/make_player_test_media.py'
+      - 'tests/browser/**'
+      - '.github/workflows/security-regression.yml'
   workflow_dispatch:
     inputs:
       windows_only:

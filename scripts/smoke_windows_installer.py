@@ -148,6 +148,12 @@ def run_smoke(installer, portable, report):
             for exe in (portable, executable):
                 subprocess.run([str(exe), '--test-traditional-chinese'], check=True,
                                env=env, cwd=root, timeout=180)
+            try:
+                from scripts.smoke_windows_local_page import smoke_local_page
+            except ModuleNotFoundError:  # Direct invocation from scripts/.
+                from smoke_windows_local_page import smoke_local_page
+            for label, exe in (('portable', portable), ('installed', executable)):
+                smoke_local_page(exe, report.parent / f'local-page-{label}')
             # Recreate the missing sibling DLL-directory condition only inside
             # our disposable installation. Never touch a real user's install.
             libraries = installed / '_internal/opencc.libs'

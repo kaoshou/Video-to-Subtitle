@@ -66,9 +66,14 @@
     var transcriptList = document.getElementById("transcript-list");
     var transcriptStatus = document.getElementById("transcript-status");
     var transcriptMore = document.getElementById("transcript-more");
+    var transcriptPrevious = document.getElementById("transcript-previous");
+    var transcriptFollow = document.getElementById("transcript-follow");
+    var transcriptFollowHint = document.getElementById("transcript-follow-hint");
     var transcriptTracks = [];
     var transcriptMatches = [];
     var transcriptVisibleCount = 100;
+    var transcriptVisibleStart = 0;
+    var transcriptLastFollowCue = null;
     var transcriptRows = [];
     var chapterButtons = [];
     var nativeTracks = [];
@@ -675,7 +680,7 @@
                 transcriptToggle.setAttribute("aria-label", transcriptPanel.hidden ? "顯示逐字稿與搜尋" : "收合逐字稿與搜尋");
                 transcriptToggle.title = transcriptPanel.hidden ? "顯示逐字稿與搜尋" : "收合逐字稿與搜尋";
                 if (!transcriptPanel.hidden) {
-                    updateTranscriptPosition();
+                    updateTranscriptPosition(true);
                     if (!transcriptSearch.disabled) { transcriptSearch.focus(); }
                 }
                 syncChapterHeight();
@@ -704,7 +709,26 @@
         transcriptSearch.disabled = unavailable;
         transcriptLanguage.disabled = unavailable;
         document.getElementById("transcript-clear").disabled = unavailable;
+        if (transcriptFollow) {
+            transcriptFollow.disabled = unavailable;
+            transcriptFollow.addEventListener("change", function () {
+                syncTranscriptFollowHint();
+                if (transcriptPrevious) {
+                    transcriptPrevious.hidden = transcriptVisibleStart === 0 || transcriptFollow.checked;
+                }
+                updateTranscriptPosition(true);
+            });
+        }
+        if (transcriptPrevious) {
+            transcriptPrevious.addEventListener("click", function () {
+                transcriptVisibleStart = Math.max(0, transcriptVisibleStart - 100);
+                transcriptVisibleCount = 100;
+                transcriptList.scrollTop = 0;
+                renderTranscript();
+            });
+        }
         transcriptSearch.addEventListener("input", function (event) {
+            syncTranscriptFollowHint();
             if (!event.isComposing) { searchTranscript(); }
         });
         transcriptSearch.addEventListener("compositionend", searchTranscript);
@@ -734,9 +758,9 @@
         transcriptTab.setAttribute("aria-selected", String(transcript));
         chaptersTab.tabIndex = transcript ? -1 : 0;
         transcriptTab.tabIndex = transcript ? 0 : -1;
-        if (transcript) { updateTranscriptPosition(); }
-        else { window.requestAnimationFrame(updateChapterTitleOverflow); }
         syncChapterHeight();
+        if (transcript) { updateTranscriptPosition(true); }
+        else { window.requestAnimationFrame(updateChapterTitleOverflow); }
     }
 
     function installReadingTabs() {
@@ -769,7 +793,16 @@
             return !query || cue.searchable.indexOf(query) !== -1;
         }) : [];
         transcriptVisibleCount = 100;
+        transcriptVisibleStart = 0;
+        transcriptList.scrollTop = 0;
+        syncTranscriptFollowHint();
         renderTranscript();
+    }
+
+    function syncTranscriptFollowHint() {
+        if (transcriptFollowHint) {
+            transcriptFollowHint.hidden = !(transcriptFollow && transcriptFollow.checked && transcriptSearch.value.trim());
+        }
     }
 
     function appendTranscriptText(element, text, query) {
@@ -788,12 +821,13 @@
         element.appendChild(document.createTextNode(text.slice(offset)));
     }
 
-    function renderTranscript() {
+    function renderTranscript(skipPositionUpdate) {
         transcriptList.textContent = "";
         transcriptRows = [];
+        transcriptLastFollowCue = null;
         var fragment = document.createDocumentFragment();
         var query = transcriptSearch.value.trim().toLowerCase();
-        transcriptMatches.slice(0, transcriptVisibleCount).forEach(function (cue) {
+        transcriptMatches.slice(transcriptVisibleStart, transcriptVisibleStart + transcriptVisibleCount).forEach(function (cue) {
             var item = document.createElement("li");
             var button = document.createElement("button");
             var time = document.createElement("span");
@@ -816,24 +850,66 @@
             transcriptRows.push({ button: button, cue: cue });
         });
         transcriptList.appendChild(fragment);
-        transcriptMore.hidden = transcriptVisibleCount >= transcriptMatches.length;
+        transcriptMore.hidden = transcriptVisibleStart + transcriptVisibleCount >= transcriptMatches.length;
+        if (transcriptPrevious) {
+            transcriptPrevious.hidden = transcriptVisibleStart === 0 || Boolean(transcriptFollow && transcriptFollow.checked);
+        }
         if (transcriptSearch.disabled) {
             transcriptStatus.textContent = "尚未加入字幕，無法顯示逐字稿。";
         } else if (!transcriptMatches.length) {
             transcriptStatus.textContent = query ? "找不到符合的字幕，請換個關鍵字。" : "此語言沒有可用的字幕內容。";
         } else {
             transcriptStatus.textContent = (query ? "找到 " : "共 ") + transcriptMatches.length +
-                " 段字幕，已顯示 " + transcriptRows.length + " 段。";
+                " 段字幕，" + (transcriptVisibleStart === 0 ? "已顯示 " + transcriptRows.length + " 段。" :
+                    "顯示第 " + (transcriptVisibleStart + 1) + "～" + (transcriptVisibleStart + transcriptRows.length) + " 段。");
         }
-        updateTranscriptPosition();
+        if (!skipPositionUpdate) { updateTranscriptPosition(true); }
     }
 
-    function updateTranscriptPosition() {
+    function updateTranscriptPosition(forceFollow) {
+        var following = transcriptFollow && transcriptFollow.checked && !transcriptFollow.disabled &&
+            !transcriptSearch.value.trim() && !transcriptPanel.hidden && !chapterCard.hidden;
+        if (following) {
+            var activeIndex = transcriptMatches.findIndex(function (cue) {
+                return video.currentTime >= cue.start && video.currentTime < cue.end;
+            });
+            if (activeIndex !== -1 && (activeIndex < transcriptVisibleStart ||
+                    activeIndex >= transcriptVisibleStart + transcriptVisibleCount)) {
+                var focusedRow = transcriptRows.find(function (row) { return row.button === document.activeElement; });
+                // Keep automatic seeking bounded, rather than rendering all
+                // earlier cues in a many-hour transcript. Manual paging remains.
+                transcriptVisibleStart = Math.min(Math.max(0, activeIndex - 25), Math.max(0, transcriptMatches.length - 100));
+                transcriptVisibleCount = 100;
+                transcriptList.scrollTop = 0;
+                renderTranscript(true);
+                if (focusedRow) {
+                    var retainedRow = transcriptRows.find(function (row) { return row.cue === focusedRow.cue; });
+                    // Keep a retained keyboard target; if it left this page,
+                    // leave focus on the persistent follow control, not BODY.
+                    (retainedRow ? retainedRow.button : transcriptFollow).focus({ preventScroll: true });
+                }
+            }
+        }
+        var activeRow = null;
         transcriptRows.forEach(function (row) {
             var active = video.currentTime >= row.cue.start && video.currentTime < row.cue.end;
-            if (active) { row.button.setAttribute("aria-current", "true"); }
+            if (active) {
+                row.button.setAttribute("aria-current", "true");
+                if (!activeRow) { activeRow = row; }
+            }
             else { row.button.removeAttribute("aria-current"); }
         });
+        if (!following || !activeRow) { transcriptLastFollowCue = null; return; }
+        if (!forceFollow && transcriptLastFollowCue === activeRow.cue) { return; }
+        transcriptLastFollowCue = activeRow.cue;
+        var viewport = transcriptList.getBoundingClientRect();
+        var rowBounds = activeRow.button.getBoundingClientRect();
+        if (transcriptList.clientHeight > 0 && (rowBounds.top < viewport.top || rowBounds.bottom > viewport.bottom)) {
+            // Scroll this list only: scrollIntoView would also move the page
+            // and can push the playing video off screen on mobile.
+            transcriptList.scrollTop = Math.max(0, transcriptList.scrollTop + rowBounds.top - viewport.top -
+                Math.max(0, (transcriptList.clientHeight - rowBounds.height) / 2));
+        }
     }
 
     function installSpeedMenu() {
@@ -1107,6 +1183,7 @@
         video.addEventListener("pause", updatePlayState);
         video.addEventListener("ended", updatePlayState);
         video.addEventListener("timeupdate", updateTimeline);
+        video.addEventListener("seeked", function () { updateTranscriptPosition(true); });
         video.addEventListener("durationchange", updateTimeline);
         video.addEventListener("loadedmetadata", function () {
             updateTimeline();
@@ -1150,11 +1227,13 @@
             fitOpenMenus();
             syncChapterHeight();
             updateChapterTitleOverflow();
+            updateTranscriptPosition(true);
         });
         window.addEventListener("orientationchange", function () {
             fitOpenMenus();
             syncChapterHeight();
             updateChapterTitleOverflow();
+            updateTranscriptPosition(true);
         });
         document.addEventListener("fullscreenchange", updateFullscreenState);
         document.addEventListener("webkitfullscreenchange", updateFullscreenState);

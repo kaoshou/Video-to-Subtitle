@@ -138,9 +138,18 @@
                             autocomplete="off" aria-controls="transcript-list">
                         <button id="transcript-clear" type="button" aria-label="清除搜尋">清除</button>
                     </div>
+                    <div class="transcript-follow-control">
+                        <label class="transcript-follow-label" for="transcript-follow">
+                            <input id="transcript-follow" type="checkbox">跟隨播放
+                        </label>
+                        <span id="transcript-follow-hint" aria-live="polite" hidden>搜尋中暫停跟隨</span>
+                    </div>
                     <p id="transcript-status" class="transcript-status" role="status"></p>
                     <ol id="transcript-list" class="transcript-list" aria-label="逐字稿搜尋結果"></ol>
-                    <button id="transcript-more" class="transcript-more" type="button" hidden>顯示更多</button>
+                    <div class="transcript-pagination">
+                        <button id="transcript-previous" class="transcript-more" type="button" hidden>顯示前段</button>
+                        <button id="transcript-more" class="transcript-more" type="button" hidden>顯示更多</button>
+                    </div>
                 </section>
             </aside>
         </div>

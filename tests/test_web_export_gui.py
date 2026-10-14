@@ -61,6 +61,25 @@ class NativeExportDialog(unittest.TestCase):
         (self.folder / ('課程' + suffix)).write_text(
             '1\n00:00:00,000 --> 00:00:00,500\n字幕測試\n', encoding='utf-8')
 
+    def test_export_preview_opens_actual_html_on_windows(self):
+        # Break caught: the real completion button launches a URI handler
+        # without handing Windows the exported page's actual filename.
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        folder = self.folder / '中文 課程 #1 100% & {播放器}'
+        folder.mkdir()
+        page = folder / 'index.html'; page.write_text('<title>課程</title>', encoding='utf-8')
+        self.dialog.exported(SimpleNamespace(folder=folder, index_path=page))
+        self.root.update()
+        button = next(w for w in self.dialog.preview.winfo_children() if w.cget('text') == '開啟網頁')
+        launched = []
+        with patch('sys.platform', 'win32'), \
+                patch('os.startfile', side_effect=launched.append, create=True), \
+                patch('webbrowser.open', return_value=True):
+            button.invoke()
+        self.assertEqual(launched, [str(page.absolute())])
+        self.assertFalse(self.errors, repr(self.errors))
+
     def test_select_auto_discover_export_and_reload(self):
         self.add_subtitle('.srt')
         self.add_subtitle('.en.srt')

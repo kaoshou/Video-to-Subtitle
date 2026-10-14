@@ -5,7 +5,7 @@ import queue
 import subprocess
 import sys
 import threading
-import webbrowser
+from ui_open import open_local_page
 from ui_theme import install_theme, ui_font, wrap_to_width
 from ui_drop import dropped_paths, register_file_drop
 
@@ -529,7 +529,7 @@ class WebExportDialog:
         self.notice = '網頁已建立完成，可以開啟預覽或查看輸出資料夾。'
         self.progressbar.set(1)
         for child in self.preview.winfo_children(): child.destroy()
-        self.ctk.CTkButton(self.preview,text='開啟網頁',command=lambda:webbrowser.open(result.index_path.as_uri())).pack(side='left',padx=4)
+        self.ctk.CTkButton(self.preview,text='開啟網頁',command=lambda:open_local_page(result.index_path, parent=self.top)).pack(side='left',padx=4)
         self.ctk.CTkButton(self.preview,text='開啟輸出資料夾',command=lambda:self.open_folder(result.folder)).pack(side='left',padx=4)
         self.preview.pack(pady=(0,12))
         self.update_flow()

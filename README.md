@@ -16,6 +16,15 @@
 
 本文三張介面截圖均擷取自 **v2.7.12**，使用 Linux 雲端虛擬顯示環境與示範影音／字幕，並非真實轉錄成果。Windows／macOS 的字型與視窗外觀可能略有差異；下載的正式安裝檔仍為 Windows 與 macOS 版本。
 
+## 🚀 v2.7.16 更新說明
+
+- 修正 Windows「開啟網頁」只開啟瀏覽器而未載入輸出網頁的問題，改以原生檔案路徑交由預設應用程式開啟；一般影片、EverCam 與 OpenCam 共用處理。
+- 轉錄結果在檔名旁顯示「OpenCam 播放器」徽章，並保留「OpenCam 置入字幕」操作；不再另外跳出自動詢問框。
+- 一般影片與 EverCam 網頁的逐字稿新增「跟隨播放」，預設關閉；開啟後只捲動逐字稿清單，搜尋期間暫停跟隨。
+- 跳轉至長逐字稿後段時自動載入目前段落，保留手動載入前／後段、語言切換與鍵盤操作。
+- 現有輸出的網頁需重新建立／部署才會取得新功能；OpenCam 原播放器保持原樣。
+- [完整更新說明](docs/releases/v2.7.16.md)。
+
 ## 🚀 v2.7.15 更新說明
 
 - 修正 Windows 安裝版與免安裝版的 OpenCC 相依 DLL 封裝，避免勾選「強制繁體中文」卻仍產出簡體字幕。
@@ -253,7 +262,7 @@
 
 ### Windows 安裝版（自 v2.7.14 起）
 
-新增 `VideoToSubtitle-Setup-v<版本>.exe` 安裝包，採用 PyInstaller 資料夾式封裝；Python 與必要套件在安裝時解壓，之後啟動不需每次重新解壓。既有免安裝 EXE 繼續保留。請從[官方 Releases](https://github.com/kaoshou/Video-to-Subtitle/releases/latest) 下載 `VideoToSubtitle-Setup-v2.7.15.exe` 或後續版本；請勿把編譯器 Inno Setup 的安裝包當成本程式。
+新增 `VideoToSubtitle-Setup-v<版本>.exe` 安裝包，採用 PyInstaller 資料夾式封裝；Python 與必要套件在安裝時解壓，之後啟動不需每次重新解壓。既有免安裝 EXE 繼續保留。請從[官方 Releases](https://github.com/kaoshou/Video-to-Subtitle/releases/latest) 下載 `VideoToSubtitle-Setup-v2.7.16.exe` 或後續版本；請勿把編譯器 Inno Setup 的安裝包當成本程式。
 
 安裝精靈使用繁體中文，預設只安裝給目前使用者，可選安裝位置及桌面捷徑，亦可從「開始」功能表啟動／Windows「已安裝的應用程式」解除安裝。不需事先安裝 Python 或外部 FFmpeg。Windows x64、Windows 10／11 為目標平台；實際自動驗證環境見建置紀錄。
 
@@ -333,7 +342,7 @@ Windows 封裝版的設定保存在 `%LOCALAPPDATA%\VideoToSubtitle\config.json`
 
 「網頁播放器 → 一般影片＋字幕」可將 MP4 與 SRT／VTT 匯出為無章節側欄的離線網頁，自訂標題、作者、單位、簡介與封面，並切換多語字幕。重新編輯會另存新包，不覆寫原始資料。
 
-「網頁播放器 → OpenCam 置入字幕」可將 SRT／VTT 直接加入 OpenCam 的 `opencam-player.js`，不改動原網頁、影片或章節。支援原本沒有字幕的專案與多語字幕；同語系更新、其他語系保留，每次寫入前建立不覆蓋的完整備份。轉錄 OpenCam 的 `media.mp4` 完成後，也會詢問是否置入。詳見[OpenCam 字幕置入手冊](docs/USER_GUIDE.zh-TW.md#opencam-網頁播放器字幕置入)。
+「網頁播放器 → OpenCam 置入字幕」可將 SRT／VTT 直接加入 OpenCam 的 `opencam-player.js`，不改動原網頁、影片或章節。支援原本沒有字幕的專案與多語字幕；同語系更新、其他語系保留，每次寫入前建立不覆蓋的完整備份。轉錄 OpenCam 的 `media.mp4` 完成後，結果清單會在檔名後顯示「OpenCam 播放器」徽章；需要時按該列的「OpenCam 置入字幕」，不再額外跳出詢問，也不會自動修改播放器。詳見[OpenCam 字幕置入手冊](docs/USER_GUIDE.zh-TW.md#opencam-網頁播放器字幕置入)。
 
 選擇 MP4 後，自動載入同資料夾內的同檔名字幕與帶語系碼字幕（例如 `課程.vtt`、`課程.zh-TW.srt`、`課程.en.vtt`）；同語系優先 VTT，無語系顯示「預設字幕」，不必逐軌設定。主畫面只需選影片並建立網頁，其他參數保留在「進階設定」。
 

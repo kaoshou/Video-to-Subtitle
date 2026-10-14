@@ -1,7 +1,7 @@
 """Small subtitle-only editor for an existing OpenCam web player."""
 from pathlib import Path
 import queue
-import webbrowser
+from ui_open import open_local_page
 
 import opencam_integration as opencam
 from ui_drop import dropped_paths, register_file_drop
@@ -292,7 +292,7 @@ class OpenCamSubtitleDialog:
 
     def preview(self):
         if self.state.project and not self.job:
-            webbrowser.open((self.state.project.folder / 'index.html').as_uri())
+            open_local_page(self.state.project.folder / 'index.html', parent=self.top)
 
     def close(self):
         if self.job:
