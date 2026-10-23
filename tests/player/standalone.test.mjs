@@ -61,6 +61,183 @@ function showTranscript(w, standalone) {
   w.document.querySelector(standalone ? '#transcript-toggle' : '#transcript-tab').click();
 }
 
+function changeValue(w, selector, value) {
+  const control=w.document.querySelector(selector);
+  assert.ok(control, `Missing viewer control ${selector}`);
+  control.value=value; control.dispatchEvent(new w.Event('change'));
+  return control;
+}
+
+test('reading controls are opt-in, preserve captions, restore defaults and survive blocked storage', t => {
+  for (const standalone of [true,false]) {
+    const {dom,w}=player({mode:standalone?'standalone':undefined,title:'course',defaultSubtitle:'zh-TW'},
+      {standalone,blockedStorage:true}); t.after(()=>dom.window.close());
+    const settings=w.document.querySelector('#reading-settings');
+    assert.ok(settings, 'Reading settings are available without replacing the player');
+    assert.equal(settings.open,false);
+    assert.equal(w.document.body.dataset.readingContrast,'normal');
+    const originalCaption=w.document.querySelector('#caption-text').style.fontSize;
+    changeValue(w,'#reading-font-size','150');
+    changeValue(w,'#reading-line-height','2');
+    changeValue(w,'#reading-contrast','high');
+    assert.equal(w.document.querySelector('#transcript-list').style.getPropertyValue('--reading-size'),'1.5');
+    assert.equal(w.document.querySelector('#transcript-list').style.getPropertyValue('--reading-line-height'),'2');
+    assert.equal(w.document.body.dataset.readingContrast,'high');
+    assert.equal(w.document.querySelector('#caption-text').style.fontSize,originalCaption);
+    w.document.querySelector('#reading-reset').click();
+    assert.equal(w.document.body.dataset.readingContrast,'normal');
+    assert.equal(w.document.querySelector('#reading-font-size').value,'100');
+    assert.equal(w.document.querySelector('#reading-line-height').value,'1.5');
+  }
+});
+
+test('reading preferences are validated and reused without changing follow or language', t => {
+  const {dom,w}=player({mode:'standalone',title:'course',defaultSubtitle:'en'},
+    {preferences:{'vts.readingAppearance':JSON.stringify({size:'200',lineHeight:'1.8',contrast:'high'})}});
+  t.after(()=>dom.window.close());
+  assert.ok(w.document.querySelector('#reading-font-size'), 'Reading settings must load saved values');
+  assert.equal(w.document.querySelector('#reading-font-size').value,'200');
+  assert.equal(w.document.querySelector('#reading-line-height').value,'1.8');
+  assert.equal(w.document.body.dataset.readingContrast,'high');
+  assert.equal(w.document.querySelector('#transcript-follow').checked,false);
+  assert.equal(w.document.querySelector('#transcript-language').value,'en');
+  const invalid=player({mode:'standalone'}, {preferences:{'vts.readingAppearance':'{"size":"99999","contrast":"red","lineHeight":"0"}'}});
+  t.after(()=>invalid.dom.window.close());
+  assert.equal(invalid.w.document.querySelector('#reading-font-size').value,'100');
+  assert.equal(invalid.w.document.body.dataset.readingContrast,'normal');
+});
+
+async function downloadedText(w, button) {
+  let blob,filename;
+  // Only the browser's disk-download boundary is replaced. Read the actual
+  // production Blob using FileReader, keeping all transcript generation real.
+  w.URL.createObjectURL=value=>{blob=value;return 'blob:synthetic-download';};
+  w.URL.revokeObjectURL=()=>{};
+  const click=w.HTMLAnchorElement.prototype.click;
+  w.HTMLAnchorElement.prototype.click=function(){filename=this.download;};
+  try { button.click(); } finally { w.HTMLAnchorElement.prototype.click=click; }
+  assert.ok(blob,'The download must contain a generated document');
+  const text=await new Promise((resolve,reject)=>{
+    const reader=new w.FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsText(blob);
+  });
+  return {text,filename,blob};
+}
+
+test('reading downloads contain the whole selected language, not search results or the first page', async t => {
+  for (const standalone of [true,false]) {
+    const cues=Array.from({length:260},(_,i)=>({start:i*2,end:i*2+1,text:`English unique${i} <img src=x onerror=alert(1)>`}));
+    const {dom,w}=player({mode:standalone?'standalone':undefined,title:'課程 <script>alert(1)</script>',defaultSubtitle:'zh-TW',
+      index:[{time:0,title:'第一章 <b>原樣</b>'},{time:300,title:'第二章'}]},
+      {standalone,subtitles:{tracks:[{language:'zh-TW',cues:[{start:0,end:1,text:'不是英文內容'}]},{language:'en',cues}]}});
+    t.after(()=>dom.window.close());
+    const htmlButton=w.document.querySelector('#transcript-download-html');
+    assert.ok(htmlButton,'A full reading-version download is provided');
+    showTranscript(w,standalone); changeValue(w,'#transcript-language','en');
+    const search=w.document.querySelector('#transcript-search');search.value='unique2';search.dispatchEvent(new w.Event('input'));
+    const result=await downloadedText(w,htmlButton);
+    const reading=new JSDOM(result.text);t.after(()=>reading.window.close());
+    const doc=reading.window.document;
+    assert.equal(doc.documentElement.lang,'en');
+    assert.equal(doc.querySelector('title').lang,'zh-TW','Fixed Chinese document labels identify their language');
+    assert.ok([...doc.querySelectorAll('header p')].every(p=>p.lang==='zh-TW'));
+    assert.equal(doc.querySelector('article').lang,'zh-TW','The Chinese accessible name has its own language');
+    assert.equal(doc.querySelector('article > div').lang,'en','Transcript content retains its selected language');
+    assert.match(doc.querySelector('h1').textContent,/課程 <script>/);
+    assert.equal(doc.querySelectorAll('script,img,iframe').length,0,'Subtitle text never becomes active HTML');
+    for (const index of [0,150,259]) assert.ok(doc.body.textContent.includes(`unique${index} `));
+    assert.ok(!doc.body.textContent.includes('不是英文內容'));
+    assert.equal(doc.querySelectorAll('time').length,0,'Reading defaults omit timestamp clutter');
+    if (!standalone) assert.ok([...doc.querySelectorAll('h2')].some(h=>h.textContent==='第二章'));
+    assert.ok(!/[\\/:*?"<>|]/.test(result.filename),'Generated filenames are portable');
+    const timestamps=w.document.querySelector('#reading-timestamps');timestamps.checked=true;
+    const timed=await downloadedText(w,htmlButton);assert.match(timed.text,/<time\b/);
+    const plain=await downloadedText(w,w.document.querySelector('#transcript-download-txt'));
+    assert.match(plain.blob.type,/text\/plain/);assert.ok(plain.text.includes('unique259 '));
+    assert.ok(plain.text.includes('<img src=x onerror=alert(1)>'),'Plain text preserves literal content');
+  }
+});
+
+test('empty selected tracks disable downloads without preventing reading settings', t => {
+  const {dom,w}=player({mode:'standalone',defaultSubtitle:'en'}, {subtitles:{tracks:[
+    {language:'en',cues:[{start:0,end:1,text:'hello'}]},{language:'zh-TW',cues:[]}]}});
+  t.after(()=>dom.window.close());
+  const button=w.document.querySelector('#transcript-download-html');assert.ok(button);
+  assert.equal(button.disabled,false);changeValue(w,'#transcript-language','zh-TW');
+  assert.equal(button.disabled,true);assert.equal(w.document.querySelector('#transcript-download-txt').disabled,true);
+  assert.equal(w.document.querySelector('#reading-font-size').disabled,false);
+});
+
+test('Escape closes settings from form controls and returns focus without changing playback', t => {
+  const {dom,w}=player({mode:'standalone',defaultSubtitle:'en'});t.after(()=>dom.window.close());
+  const caption=w.document.querySelector('#caption-button');caption.click();
+  const selected=w.document.activeElement;
+  selected.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+  assert.equal(w.document.querySelector('#caption-menu').hidden,true,'Escape works even when a menu button has focus');
+  assert.equal(w.document.activeElement,caption);
+  showTranscript(w,true);const details=w.document.querySelector('#reading-settings');assert.ok(details);details.open=true;
+  const select=w.document.querySelector('#reading-font-size');select.focus();
+  select.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+  assert.equal(details.open,false);assert.equal(w.document.activeElement,details.querySelector('summary'));
+});
+
+test('player shortcuts respect focus, modifiers and typing; seek slider exposes understandable time', t => {
+  const {dom,w}=player({mode:'standalone',duration:120,defaultSubtitle:'en'});t.after(()=>dom.window.close());
+  const video=w.document.querySelector('video');video.currentTime=30;
+  w.document.body.dispatchEvent(new w.KeyboardEvent('keydown',{key:'m',bubbles:true}));
+  assert.equal(video.muted,false,'Single-character shortcuts are not global screen-reader conflicts');
+  const stage=w.document.querySelector('#video-stage');stage.focus();
+  assert.equal(w.document.activeElement,stage,'Keyboard users can enter the player');
+  stage.dispatchEvent(new w.KeyboardEvent('keydown',{key:'m',bubbles:true}));assert.equal(video.muted,true);
+  stage.dispatchEvent(new w.KeyboardEvent('keydown',{key:'m',ctrlKey:true,bubbles:true}));assert.equal(video.muted,true);
+  video.dispatchEvent(new w.Event('timeupdate'));
+  assert.match(w.document.querySelector('#seek-slider').getAttribute('aria-valuetext'),/0:30.*2:00/);
+  const field=w.document.querySelector('#transcript-search');field.focus();
+  field.dispatchEvent(new w.KeyboardEvent('keydown',{key:'m',bubbles:true}));assert.equal(video.muted,true);
+});
+
+test('skip-to-transcript reveals the correct panel and gives it a stable keyboard target', t => {
+  for (const standalone of [true,false]) {
+    const {dom,w}=player({mode:standalone?'standalone':undefined},{standalone});t.after(()=>dom.window.close());
+    const skip=w.document.querySelector('a[href="#transcript-heading"]');assert.ok(skip,'Hidden-by-default transcripts remain keyboard-discoverable');
+    skip.click();assert.equal(w.document.querySelector('#transcript-panel').hidden,false);
+    assert.equal(w.document.querySelector('.chapter-card').hidden,false);
+    assert.equal(w.document.activeElement,w.document.querySelector('#transcript-heading'));
+  }
+});
+
+test('leaving a nonmodal settings panel closes it without pulling focus back', t => {
+  const {dom,w}=player({mode:'standalone',defaultSubtitle:'en'});t.after(()=>dom.window.close());
+  showTranscript(w,true);
+  const details=w.document.querySelector('#reading-settings');details.open=true;
+  w.document.querySelector('#reading-font-size').focus();
+  const language=w.document.querySelector('#transcript-language');language.focus();
+  assert.equal(details.open,false,'Tabbing out must not leave settings covering the next field');
+  assert.equal(w.document.activeElement,language);
+  w.document.querySelector('#caption-button').click();
+  w.document.querySelector('#speed-button').focus();
+  assert.equal(w.document.querySelector('#caption-menu').hidden,true);
+  assert.equal(w.document.activeElement,w.document.querySelector('#speed-button'));
+});
+
+test('choosing a caption or playback speed returns keyboard focus to its opener', t => {
+  const {dom,w}=player({mode:'standalone',defaultSubtitle:'en'});t.after(()=>dom.window.close());
+  for (const [opener, menu, value] of [['#caption-button','#caption-menu','zh-TW'],['#speed-button','#speed-menu','1.5']]) {
+    w.document.querySelector(opener).click();
+    const item=w.document.querySelector(`${menu} button[data-value="${value}"]`);item.focus();item.click();
+    assert.equal(w.document.querySelector(menu).hidden,true);
+    assert.equal(w.document.activeElement,w.document.querySelector(opener),'Hidden menu items must not retain focus');
+  }
+});
+
+test('named player tool containers expose valid grouping semantics', t => {
+  for (const standalone of [true,false]) {
+    const {dom,w}=player({mode:standalone?'standalone':undefined},{standalone});t.after(()=>dom.window.close());
+    for (const selector of ['.time-display',...(standalone?['.player-tools']:[])]) {
+      assert.equal(w.document.querySelector(selector).getAttribute('role'),'group',`${selector} must not label a generic div`);
+    }
+  }
+});
+
 test('follow is opt-in and scrolls only the transcript when the current cue leaves view', t => {
   for (const standalone of [true,false]) {
     const {dom,w}=player({mode:standalone?'standalone':undefined,title:'course',defaultSubtitle:'zh-TW'},

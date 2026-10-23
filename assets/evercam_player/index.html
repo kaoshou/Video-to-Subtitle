@@ -15,6 +15,8 @@
     <link rel="stylesheet" href="css/evercam-modern.css">
 </head>
 <body>
+    <a class="player-skip-link" href="#video-stage">跳至播放器</a>
+    <a class="player-skip-link" href="#transcript-heading">跳至逐字稿</a>
     <main class="page-shell">
         <header class="course-header">
             <span class="course-mark" aria-hidden="true"><span></span></span>
@@ -29,8 +31,8 @@
 
         <div class="learning-layout">
             <section class="player-card" aria-label="課程影片">
-                <div id="video-stage" class="video-stage">
-                    <video id="course-video" playsinline preload="metadata">
+                <div id="video-stage" class="video-stage" tabindex="0" role="group" aria-label="影片播放器" aria-describedby="player-keyboard-help">
+                    <video id="course-video" playsinline preload="metadata" aria-label="課程影片">
                         您的瀏覽器不支援 HTML5 影片播放。
                     </video>
 
@@ -62,7 +64,7 @@
                                 <input id="volume-slider" class="volume-slider" type="range" min="0" max="1" value="1" step="0.05">
                             </div>
 
-                            <div class="time-display" aria-label="播放時間">
+                            <div class="time-display" role="group" aria-label="播放時間">
                                 <span id="current-time">0:00</span>
                                 <span aria-hidden="true">/</span>
                                 <span id="total-time">0:00</span>
@@ -110,9 +112,27 @@
                 </section>
                 <section id="transcript-panel" class="transcript-card reading-panel" role="tabpanel" aria-labelledby="transcript-tab" hidden>
                     <div class="transcript-header">
-                        <div>
-                            <h2 id="transcript-heading" class="sr-only">逐字稿與搜尋</h2>
+                        <div class="transcript-heading-row">
+                            <h2 id="transcript-heading" class="sr-only" tabindex="-1">逐字稿與搜尋</h2>
                             <p>點選字幕，跳到影片對應時間。</p>
+                            <details id="reading-settings" class="reading-settings">
+                                <summary>閱讀設定</summary>
+                                <div class="reading-settings-panel">
+                                    <label for="reading-font-size">逐字稿字級</label>
+                                    <select id="reading-font-size"><option value="100">標準（100%）</option><option value="125">稍大（125%）</option><option value="150">大（150%）</option><option value="200">特大（200%）</option></select>
+                                    <label for="reading-line-height">逐字稿行距</label>
+                                    <select id="reading-line-height"><option value="1.5">標準（1.5 倍）</option><option value="1.8">寬鬆（1.8 倍）</option><option value="2">加寬（2 倍）</option></select>
+                                    <label for="reading-contrast">頁面對比</label>
+                                    <select id="reading-contrast"><option value="normal">原有配色</option><option value="high">高對比</option></select>
+                                    <button id="reading-reset" type="button">恢復預設</button>
+                                    <fieldset class="reading-downloads">
+                                        <legend>下載完整逐字稿</legend>
+                                        <label class="reading-timestamps"><input id="reading-timestamps" type="checkbox">包含時間標記</label>
+                                        <div class="reading-download-actions"><button id="transcript-download-html" type="button">閱讀版 HTML</button><button id="transcript-download-txt" type="button">純文字 TXT</button></div>
+                                        <p>下載目前所選語言的全部內容，不受搜尋與分頁限制。</p>
+                                    </fieldset>
+                                </div>
+                            </details>
                         </div>
                         <div class="transcript-language-field">
                             <label for="transcript-language">逐字稿語言</label>
@@ -143,7 +163,8 @@
 
 
         <footer class="course-footer" aria-label="播放器操作提示">
-            <p class="keyboard-hints">
+            <p id="player-keyboard-help" class="keyboard-hints">
+                <span>聚焦播放器時：</span>
                 <span><kbd>Space</kbd> 播放／暫停</span>
                 <span><kbd>← →</kbd> 快退／快轉</span>
                 <span><kbd>M</kbd> 靜音</span>

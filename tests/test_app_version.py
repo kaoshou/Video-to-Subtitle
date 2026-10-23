@@ -4,6 +4,7 @@ from functools import lru_cache
 import os
 from pathlib import Path
 import tempfile
+import tomllib
 import unittest
 
 
@@ -52,6 +53,12 @@ class AppVersion(unittest.TestCase):
         self.assertEqual(read(), '9.8.0')
         self.toml.write_text('[project', encoding='utf-8')
         self.assertEqual(read(), '9.8.0')
+
+    def test_first_launch_without_metadata_uses_packaged_release_version(self):
+        metadata = Path(__file__).resolve().parents[1] / 'pyproject.toml'
+        with metadata.open('rb') as source:
+            release_version = tomllib.load(source)['project']['version']
+        self.assertEqual(self.new_process_reader()(), release_version)
 
 
 if __name__ == '__main__':

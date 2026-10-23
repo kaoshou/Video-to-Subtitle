@@ -43,6 +43,15 @@ jobs:
         run: |
           python scripts/make_player_test_media.py "$RUNNER_TEMP/player-media/media.mp4"
           node scripts/smoke_player_browser.mjs --media "$RUNNER_TEMP/player-media/media.mp4" --report-dir "$RUNNER_TEMP/player-browser-report"
+      - run: npm --prefix website run build
+      - name: Real Chromium accessibility and reading downloads
+        run: node scripts/smoke_accessibility_browser.mjs --media "$RUNNER_TEMP/player-media/media.mp4" --report-dir "$RUNNER_TEMP/player-accessibility-report" --site-dir website/dist
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Player-Accessibility-Validation-${{ github.workflow }}
+          path: ${{ runner.temp }}/player-accessibility-report/
+          if-no-files-found: warn
       - uses: actions/upload-artifact@v4
         if: always()
         with:

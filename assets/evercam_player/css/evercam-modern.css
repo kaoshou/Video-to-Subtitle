@@ -507,10 +507,13 @@ h1 {
 .seek-slider,
 .volume-slider {
     --progress: 0%;
-    height: 4px;
+    height: 24px;
     margin: 0;
     padding: 0;
     background: linear-gradient(to right, var(--accent) var(--progress), rgba(255, 255, 255, 0.44) var(--progress));
+    background-size: 100% 4px;
+    background-position: center;
+    background-repeat: no-repeat;
     border-radius: 999px;
     outline: none;
     appearance: none;
@@ -521,12 +524,14 @@ h1 {
     display: block;
     width: 100%;
     cursor: pointer;
-    transition: height 120ms ease;
+    /* Grow the hit area upwards without moving the lower control row. */
+    margin-top: -20px;
 }
 
 .seek-slider:hover,
 .seek-slider:focus-visible {
-    height: 6px;
+    height: 24px;
+    background-size: 100% 6px;
 }
 
 .seek-slider::-webkit-slider-thumb,
@@ -975,6 +980,50 @@ body.frame-fullscreen-active {
    pagination: shrinking the page would clamp scrollY and move the video. */
 .reading-panel .transcript-pagination { min-height: 54px; }
 
+/* Viewer preferences are opt-in. The header, video and columns retain their
+   original geometry; this small disclosure uses the existing hint row. */
+.player-skip-link { position: fixed; z-index: 100; top: 8px; left: 8px; transform: translateY(-160%); padding: 10px 14px; border-radius: 8px; background: var(--surface); color: var(--active); border: 2px solid var(--active); }
+.player-skip-link:focus { transform: none; }
+.transcript-heading-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.transcript-heading-row > p { min-width: 0; }
+.reading-settings { position: relative; flex: 0 0 auto; }
+.reading-settings summary { min-height: 24px; padding: 2px 5px; border-radius: 5px; color: var(--active); font-size: 12px; cursor: pointer; white-space: nowrap; }
+.reading-settings summary:hover { background: #eaf5f4; }
+.reading-settings-panel { position: absolute; right: 0; top: calc(100% + 6px); z-index: 25; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px 12px; width: min(280px, calc(100vw - 52px)); max-height: min(360px, 55vh); overflow: auto; overscroll-behavior: contain; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink); box-shadow: 0 12px 30px #172c3033; font-size: 13px; }
+.reading-settings-panel > label { display: block; margin: 0; }
+.reading-settings-panel select { display: block; width: 100%; min-height: 36px; padding: 6px 8px; border: 1px solid #868d92; border-radius: 7px; background: var(--surface); color: var(--ink); font: inherit; }
+.reading-settings-panel button { min-height: 36px; padding: 6px 10px; border: 1px solid #868d92; border-radius: 7px; background: var(--surface); color: var(--active); font: inherit; }
+.reading-settings-panel button:hover { background: #eaf5f4; }
+#reading-reset { grid-column: 2; justify-self: end; }
+.reading-downloads { grid-column: 1 / -1; min-width: 0; margin: 4px 0 0; padding: 10px 0 0; border: 0; border-top: 1px solid var(--line); }
+.reading-downloads legend { padding: 0 4px 0 0; font-weight: 600; }
+.reading-timestamps { display: flex; align-items: center; gap: 6px; margin: 0 0 10px; }
+.reading-timestamps input { width: 16px; height: 16px; accent-color: var(--active); }
+.reading-download-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.reading-panel .reading-downloads p { margin: 10px 0 0; color: var(--muted); font-size: 12px; }
+.reading-panel .transcript-item { font-size: calc(14px * var(--reading-size, 1)); line-height: var(--reading-line-height, 1.5); }
+.reading-panel .transcript-time { font-size: calc(12px * var(--reading-size, 1)); }
+.caption-appearance-note { margin: 12px 0 0; max-width: 240px; font-size: 12px; line-height: 1.6; color: #e4e8e9; }
+body[data-reading-contrast="high"] { --ink: #111; --muted: #333; --line: #646b70; --active: #0b5053; }
+body[data-reading-contrast="high"] .course-header { background: #fff; }
+body[data-reading-contrast="high"] :is(.reading-tabs button[aria-selected="true"], .transcript-item[aria-current="true"]) { background: #d9eeec; }
+body[data-reading-contrast="high"] .transcript-item { border-bottom-color: #747b7e; }
+body[data-reading-contrast="high"] .keyboard-hints { color: var(--muted); }
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+@media (forced-colors: active) {
+    body, .course-header, .player-card, .chapter-card, .reading-settings-panel { background: Canvas; color: CanvasText; border-color: CanvasText; }
+    .course-header::before, .course-header::after { display: none; }
+    :is(button, select, input, summary) { forced-color-adjust: auto; }
+    .caption-text { forced-color-adjust: none; }
+    .video-controls, .player-menu { background: Canvas; color: CanvasText; border: 1px solid CanvasText; }
+    .control-button, .menu-item { color: ButtonText; }
+    .reading-tabs button[aria-selected="true"], .transcript-item[aria-current="true"], .chapter-item[aria-current] { outline: 2px solid Highlight; outline-offset: -2px; }
+    :focus-visible { outline-color: Highlight !important; }
+}
+
 .chapter-header {
     display: flex;
     align-items: center;
@@ -1279,7 +1328,7 @@ body.frame-fullscreen-active {
     justify-content: center;
     gap: 5px 0;
     margin: 0;
-    color: #8a8e92;
+    color: #62696f;
     font-size: 11px;
     letter-spacing: 0.01em;
 }
@@ -1298,7 +1347,7 @@ body.frame-fullscreen-active {
 
 .keyboard-hints kbd {
     margin-right: 4px;
-    color: #73787c;
+    color: inherit;
     font: inherit;
     font-weight: 650;
 }
@@ -1315,8 +1364,9 @@ body.frame-fullscreen-active {
 }
 
 :focus-visible {
-    outline: 3px solid var(--accent);
+    outline: 3px solid var(--active);
     outline-offset: 2px;
+    box-shadow: 0 0 0 2px #fff;
 }
 
 @media (max-width: 1040px) {

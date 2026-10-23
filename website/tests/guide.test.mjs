@@ -45,7 +45,7 @@ test('guide renders language filename examples and common language codes as a ta
   const { html, toc } = renderGuide(source);
   assert.ok(toc.some(item => item.label === '字幕檔名與自動配對規則'));
   assert.ok(toc.some(item => item.label === '常見語系代碼對照表'));
-  const languageTable = html.match(/<table>[\s\S]*?<th>字幕語言<\/th>[\s\S]*?<\/table>/)?.[0];
+  const languageTable = html.match(/<table>[\s\S]*?<th(?:\s[^>]*)?>字幕語言<\/th>[\s\S]*?<\/table>/)?.[0];
   assert.ok(languageTable, 'language reference must render as a native HTML table');
   for (const code of ['zh-TW', 'zh-CN', 'en', 'ja', 'ko', 'vi', 'id', 'th', 'my', 'es', 'pt', 'ru', 'fr', 'de', 'it', 'ms', 'fil', 'hi', 'ar']) {
     assert.ok(languageTable.includes(`<code>media.${code}.srt</code>`), code);
