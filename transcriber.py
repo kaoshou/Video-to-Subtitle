@@ -7,6 +7,8 @@ import time
 from tqdm.auto import tqdm
 import json
 import logging
+import stat
+from dataclasses import dataclass
 
 def ensure_ffmpeg_path():
     """
@@ -191,6 +193,136 @@ class CorruptedModelError(RuntimeError):
         self.cache_dir = cache_dir
 
 
+@dataclass(frozen=True)
+class ModelCacheInspection:
+    """Read-only cache status shared by the model manager and loader."""
+    state: str
+    path: str | None
+    message: str
+    missing_files: tuple = ()
+
+
+def effective_model_cache_root(download_root=None):
+    """Resolve the same Hub cache directory for status, download and logging."""
+    if download_root:
+        root = os.fspath(download_root)
+    else:
+        hf_home = os.environ.get('HF_HOME') or os.path.join(
+            os.environ.get('XDG_CACHE_HOME') or os.path.expanduser('~/.cache'), 'huggingface')
+        root = (os.environ.get('HF_HUB_CACHE') or os.environ.get('HUGGINGFACE_HUB_CACHE')
+                or os.path.join(hf_home, 'hub'))
+    return os.path.abspath(os.path.expanduser(root))
+
+
+def _model_repo_id(model_size, device):
+    info = MODEL_INFO.get(model_size, {})
+    if device in ('mps', 'mlx'):
+        return info.get('mlx_repo', f'mlx-community/whisper-{model_size}')
+    if info.get('repo_id'):
+        return info['repo_id']
+    try:
+        from faster_whisper.utils import _MODELS
+    except ImportError:
+        _MODELS = {}
+    return _MODELS.get(model_size) or info.get('repo_id', f'Systran/faster-whisper-{model_size}')
+
+
+def _inspect_model_directory(path, model_size, device):
+    """Validate only files the selected inference backend actually consumes."""
+    is_mlx = device in ('mps', 'mlx')
+    required = ['config.json'] if is_mlx else ['config.json', 'tokenizer.json', 'model.bin']
+    # Match the engines' precedence; unused legacy alternatives need not be valid.
+    alternatives = ('model.safetensors', 'weights.safetensors', 'weights.npz') if is_mlx else ('vocabulary.json', 'vocabulary.txt')
+    try:
+        present = set()
+        for name in required:
+            try:
+                if stat.S_ISREG(os.stat(os.path.join(path, name)).st_mode):
+                    present.add(name)
+            except FileNotFoundError:
+                pass
+        missing = [name for name in required if name not in present]
+        available = []
+        for name in alternatives:
+            try:
+                if stat.S_ISREG(os.stat(os.path.join(path, name)).st_mode):
+                    available.append(name)
+                    break
+            except FileNotFoundError:
+                pass
+        if not available:
+            missing.extend(alternatives)
+        if missing:
+            return ModelCacheInspection('incomplete', path,
+                f'模型快取不完整，缺少：{", ".join(missing)}。可重新下載以續傳缺少的檔案。\n路徑：{path}', tuple(missing))
+        for name in required + available:
+            filename = os.path.join(path, name)
+            with open(filename, 'rb') as handle:
+                first_byte = handle.read(1)
+            if not first_byte:
+                raise ValueError(f'{name} 是空檔案')
+            if name == 'model.bin' and os.path.getsize(filename) < 5 * 1024 * 1024:
+                raise ValueError('model.bin 權重檔案過小，可能未完整寫入')
+            if name.endswith('.json'):
+                with open(filename, encoding='utf-8') as handle:
+                    try:
+                        data = json.load(handle)
+                    except (ValueError, UnicodeError) as error:
+                        raise ValueError(f'{name} 不是有效的 JSON：{error}') from error
+                if not isinstance(data, dict) and not (name == 'vocabulary.json' and isinstance(data, list)):
+                    raise ValueError(f'{name} 的 JSON 格式無效')
+                if name == 'config.json':
+                    identity = str(data.get('_name_or_path', '')).replace('\\', '/').rstrip('/').split('/')[-1]
+                    for known_size in MODEL_INFO:
+                        if identity in (f'whisper-{known_size}', f'faster-whisper-{known_size}') and known_size != model_size:
+                            raise ValueError(f'config.json 指定模型 {known_size}，與所選模型 {model_size} 不符')
+        return ModelCacheInspection('ready', path, f'模型快取就緒。\n路徑：{path}')
+    except (OSError, UnicodeError) as error:
+        return ModelCacheInspection('unavailable', path, f'無法讀取模型快取 {name}：{error}\n路徑：{path}')
+    except ValueError as error:
+        return ModelCacheInspection('incomplete', path,
+            f'模型快取無法通過檢查：{error}\n路徑：{path}\n原有檔案已保留，請檢查檔案或選擇其他模型目錄。')
+
+
+def inspect_model_cache(model_size, download_root=None, device='cpu'):
+    """Inspect a direct model folder or Hub's current snapshot without network I/O.
+
+    Resolve refs/main directly so readiness and inference use the same concrete
+    snapshot path. Validate the inference files without a second Hub lookup.
+    """
+    clean_size = model_size.split()[0].strip()
+    root = effective_model_cache_root(download_root)
+    repo = os.path.join(root, 'models--' + _model_repo_id(clean_size, device).replace('/', '--'))
+    try:
+        # An explicit folder containing model files is also a supported input.
+        if download_root:
+            try:
+                root_files = os.listdir(root)
+            except FileNotFoundError:
+                root_files = []
+            if any(name in root_files for name in ('config.json', 'model.bin', 'weights.npz', 'model.safetensors', 'weights.safetensors')):
+                return _inspect_model_directory(root, clean_size, device)
+        try:
+            repo_mode = os.stat(repo).st_mode
+        except FileNotFoundError:
+            return ModelCacheInspection('missing', None, f'尚未下載模型。\n儲存目錄：{root}')
+        if not stat.S_ISDIR(repo_mode):
+            return ModelCacheInspection('unavailable', repo, f'模型快取路徑不是資料夾：{repo}')
+        ref = os.path.join(repo, 'refs', 'main')
+        try:
+            with open(ref, encoding='utf-8') as handle:
+                revision = handle.read().strip()
+        except FileNotFoundError:
+            return ModelCacheInspection('incomplete', repo,
+                f'模型快取缺少版本索引 refs/main，可重新下載以補齊。\n路徑：{repo}', ('refs/main',))
+        if not revision or '/' in revision or '\\' in revision or revision in ('.', '..'):
+            return ModelCacheInspection('incomplete', repo, f'模型快取版本索引無效。\n路徑：{ref}')
+        snapshot = os.path.join(repo, 'snapshots', revision)
+        return _inspect_model_directory(snapshot, clean_size, device)
+    except (OSError, UnicodeError) as error:
+        return ModelCacheInspection('unavailable', repo, f'無法檢查模型快取：{error}\n路徑：{repo}')
+
+
 def clear_model_cache(model_size, download_root=None, device="cpu"):
     """
     清除指定模型的本地快取資料夾，以便重新乾淨下載
@@ -204,7 +336,7 @@ def clear_model_cache(model_size, download_root=None, device="cpu"):
         import faster_whisper
         repo_id = faster_whisper.utils._MODELS.get(clean_size) or MODEL_INFO.get(clean_size, {}).get("repo_id", f"Systran/faster-whisper-{clean_size}")
         
-    cache_dir = download_root if download_root else os.path.expanduser("~/.cache/huggingface/hub")
+    cache_dir = effective_model_cache_root(download_root)
     repo_folder = os.path.join(cache_dir, "models--" + repo_id.replace("/", "--"))
     
     deleted = False
@@ -234,42 +366,7 @@ def check_model_downloaded(model_size, download_root=None, device="cpu"):
     快速檢測指定模型是否已下載至本地（含基礎大小完整性檢查，不發送網路請求）
     返回 True 表示已下載/離線可用，False 表示未下載或檔案損毀
     """
-    clean_size = model_size.split()[0].strip()
-    if device in ["mps", "mlx"]:
-        try:
-            import huggingface_hub
-            repo_id = f"mlx-community/whisper-{clean_size}"
-            huggingface_hub.snapshot_download(repo_id, local_files_only=True, cache_dir=download_root)
-            return True
-        except Exception:
-            return False
-    else:
-        try:
-            import faster_whisper
-            # 若為自訂目錄直接存放檔案
-            if download_root and os.path.isdir(download_root):
-                direct_files = ["model.bin", "config.json"]
-                if all(os.path.exists(os.path.join(download_root, f)) for f in direct_files):
-                    # 檔案完整性檢查：model.bin 至少需大於 5MB (最小的 tiny 模型也有 75MB)
-                    m_bin = os.path.join(download_root, "model.bin")
-                    if os.path.getsize(m_bin) > 5 * 1024 * 1024:
-                        return True
-                    else:
-                        return False
-            
-            # 使用 faster_whisper 快取檢查
-            snapshot_dir = faster_whisper.download_model(clean_size, cache_dir=download_root, local_files_only=True)
-            if snapshot_dir and os.path.isdir(snapshot_dir):
-                m_bin = os.path.join(snapshot_dir, "model.bin")
-                # 核心權重檔案必須確實存在，且大小必須大於 5MB (避免 incomplete 或剛建立目錄之元數據)
-                if not os.path.exists(m_bin):
-                    return False
-                if os.path.getsize(m_bin) < 5 * 1024 * 1024:
-                    return False
-                return True
-            return False
-        except Exception:
-            return False
+    return inspect_model_cache(model_size, download_root, device).state == 'ready'
 
 
 
@@ -387,20 +484,19 @@ def download_model_with_progress(model_size, download_root=None, device="cpu", l
     clean_size = model_size.split()[0].strip()
     is_mlx = device in ["mps", "mlx"]
     
-    # 決定 Hugging Face Repo ID
-    if is_mlx:
-        repo_id = MODEL_INFO.get(clean_size, {}).get("mlx_repo", f"mlx-community/whisper-{clean_size}")
-    else:
-        import faster_whisper
-        repo_id = faster_whisper.utils._MODELS.get(clean_size) or MODEL_INFO.get(clean_size, {}).get("repo_id", f"Systran/faster-whisper-{clean_size}")
-        
-    cache_dir = download_root if download_root else os.path.expanduser("~/.cache/huggingface/hub")
+    repo_id = _model_repo_id(clean_size, device)
+    cache_dir = effective_model_cache_root(download_root)
     
     # 1. 檢查是否已下載
-    if check_model_downloaded(clean_size, download_root=download_root, device=device):
+    status = inspect_model_cache(clean_size, download_root=download_root, device=device)
+    if cancel_check_callback and cancel_check_callback():
+        raise InterruptedError("使用者已手動取消模型下載。")
+    if status.state == 'ready':
         if log_callback:
             log_callback(f"[快取就緒] 模型 '{clean_size}' 已存在於本地快取中，無須重新下載。")
-        return cache_dir
+        return status.path
+    if status.state == 'unavailable' or (status.state == 'incomplete' and not status.missing_files):
+        raise CorruptedModelError(status.message, clean_size, cache_dir)
 
     # 2. 檢查磁碟剩餘空間
     approx_mb = MODEL_INFO.get(clean_size, {}).get("approx_size_mb", 1500)
@@ -443,14 +539,24 @@ def download_model_with_progress(model_size, download_root=None, device="cpu", l
             raise InterruptedError("使用者已手動取消模型下載。")
             
         kwargs = {
-            "cache_dir": download_root,
+            "cache_dir": cache_dir,
             "tqdm_class": _DownloadProgressTqdm,
             "etag_timeout": 15,
         }
         if allow_patterns:
             kwargs["allow_patterns"] = allow_patterns
+        # Preserve a manually supplied direct folder; normal Hub resume fetches
+        # only the absent core files and does not remove existing weights.
+        if status.path == cache_dir:
+            kwargs['local_dir'] = cache_dir
+            kwargs['allow_patterns'] = list(status.missing_files)
             
         snapshot_path = huggingface_hub.snapshot_download(repo_id, **kwargs)
+        if cancel_check_callback and cancel_check_callback():
+            raise InterruptedError("使用者已手動取消模型下載。")
+        validated = _inspect_model_directory(os.path.abspath(snapshot_path), clean_size, device)
+        if validated.state != 'ready':
+            raise CorruptedModelError(validated.message, clean_size, cache_dir)
         
         # 下載完成回呼 100%
         if progress_callback:
@@ -469,7 +575,7 @@ def download_model_with_progress(model_size, download_root=None, device="cpu", l
         if log_callback:
             log_callback(f"[成功] 模型 '{clean_size}' 下載完成！正在校驗與載入中...")
             
-        return snapshot_path
+        return validated.path
 
     except InterruptedError as e:
         if log_callback:
@@ -585,7 +691,7 @@ class SubtitleTranscriber:
             return
         
         # 1. 確保模型已下載 (若尚未下載，先呼叫帶進度回饋與例外防護的下載器)
-        download_model_with_progress(
+        snapshot_path = download_model_with_progress(
             self.model_size,
             download_root=self.download_root,
             device=self.device,
@@ -596,8 +702,7 @@ class SubtitleTranscriber:
         
         if log_callback:
             log_callback(f"正在載入模型核心: {self.model_size} (Device: {self.device})...")
-            model_path = os.path.abspath(self.download_root) if self.download_root else os.path.abspath(os.path.expanduser("~/.cache/huggingface/hub"))
-            log_callback(f"模型儲存路徑: {model_path}")
+            log_callback(f"模型儲存路徑: {snapshot_path}")
 
         try:
             if self.device in ["mps", "mlx"]:
@@ -620,7 +725,7 @@ class SubtitleTranscriber:
                     raise RuntimeError(msg)
                 
                 self.model_type = "mlx-whisper"
-                self.mlx_model_path = f"mlx-community/whisper-{self.model_size}"
+                self.mlx_model_path = snapshot_path
                 if log_callback:
                     log_callback(f"MLX 框架準備就緒，預計使用模型: {self.mlx_model_path}")
                 print("DEBUG: MLX whisper config ready.")
@@ -628,11 +733,11 @@ class SubtitleTranscriber:
                 print("DEBUG: Initializing WhisperModel...")
                 from faster_whisper import WhisperModel
                 self.model = WhisperModel(
-                    self.model_size, 
+                    snapshot_path,
                     device=self.device, 
                     compute_type=self.compute_type,
                     cpu_threads=self.cpu_threads,
-                    download_root=self.download_root,
+                    download_root=effective_model_cache_root(self.download_root),
                     local_files_only=True # 已由前置下載器下載完成，這裡強制離線載入避免靜默阻塞
                 )
                 self.model_type = "faster-whisper"
@@ -663,11 +768,12 @@ class SubtitleTranscriber:
             if any(k in error_str for k in corrupted_keywords):
                 friendly_msg = (
                     f"模型載入失敗：本地模型檔案損毀或未完整寫入！\n"
-                    f"模型規格: {self.model_size}\n\n"
+                    f"模型規格: {self.model_size}\n模型路徑: {snapshot_path}\n\n"
                     f"【原因】\n"
                     f"上次下載被異常強制中斷、非正常關機或防毒軟體鎖定，導致快取檔案不完整。\n\n"
                     f"【建議修復方式】\n"
-                    f"可點選「清除快取並重新下載」自動修復損毀檔案。"
+                    f"原有快取已保留。請檢查模型檔案與存取權限，或於「模型儲存管理」選擇其他目錄重新下載。\n"
+                    f"技術資訊: {e}"
                 )
                 if log_callback:
                     log_callback(f"[錯誤] 模型檔案損毀或無法開啟: {e}")
@@ -733,7 +839,7 @@ class SubtitleTranscriber:
             log_callback(f"任務開始時間: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
             log_callback(f"處理檔案: {os.path.basename(file_path)}")
             
-            model_path = os.path.abspath(self.download_root) if self.download_root else os.path.abspath(os.path.expanduser("~/.cache/huggingface/hub"))
+            model_path = effective_model_cache_root(self.download_root)
             log_callback(f"模型存放路徑: {model_path}")
             
             mode_text = "翻譯成英文 (Translate to English)" if task == "translate" else "原語轉錄 (Transcribe)"
@@ -809,18 +915,6 @@ class SubtitleTranscriber:
                 
                 # 優先使用本地快取之絕對路徑，確保離線環境與自訂目錄下 100% 穩定讀取
                 target_model = self.mlx_model_path
-                try:
-                    import huggingface_hub
-                    cached_dir = huggingface_hub.snapshot_download(
-                        repo_id=self.mlx_model_path,
-                        local_files_only=True,
-                        cache_dir=self.download_root
-                    )
-                    if cached_dir and os.path.isdir(cached_dir):
-                        target_model = cached_dir
-                        print(f"DEBUG: Using local MLX model snapshot: {target_model}")
-                except Exception as cache_e:
-                    print(f"DEBUG: Local snapshot lookup notice: {cache_e}")
 
                 result = mlx_whisper.transcribe(
                     audio_input, 

@@ -16,6 +16,15 @@
 
 本文三張介面截圖均擷取自 **v2.7.12**，使用 Linux 雲端虛擬顯示環境與示範影音／字幕，並非真實轉錄成果。Windows／macOS 的字型與視窗外觀可能略有差異；下載的正式安裝檔仍為 Windows 與 macOS 版本。
 
+## 🚀 v2.8.1 更新說明
+
+- 改善模型下載與載入流程，直接使用檢查完成的模型資料夾，減少下載後仍無法載入的情況。
+- 模型狀態區分「已下載」「下載未完成」「未下載」與「無法讀取」，缺少檔案時可接續下載，保留原有模型快取。
+- 避免模型管理視窗與主畫面同時下載；統一模型儲存路徑的顯示、開啟及載入行為。
+- 改善 Windows 在 SD 卡與 FAT／exFAT 磁碟上的 EverCam 網頁轉換相容性，保留安全檢查與原始網頁備份。
+- 官網並列 Windows 免安裝版與安裝版下載，另提供 macOS 版，並補充安裝版啟動方式說明。
+- [完整更新說明](docs/releases/v2.8.1.md)。
+
 ## 🚀 v2.8.0 更新說明
 
 - 一般 MP4＋字幕與 EverCam 網頁播放器新增收合式「閱讀設定」，保留原有版面與藍綠配色。
@@ -221,7 +230,7 @@
 
 ### Windows 安裝版（自 v2.7.14 起）
 
-新增 `VideoToSubtitle-Setup-v<版本>.exe` 安裝包，採用 PyInstaller 資料夾式封裝；Python 與必要套件在安裝時解壓，之後啟動不需每次重新解壓。既有免安裝 EXE 繼續保留。請從[官方 Releases](https://github.com/kaoshou/Video-to-Subtitle/releases/latest) 下載 `VideoToSubtitle-Setup-v2.8.0.exe` 或後續版本；請勿把編譯器 Inno Setup 的安裝包當成本程式。
+新增 `VideoToSubtitle-Setup-v<版本>.exe` 安裝包，採用 PyInstaller 資料夾式封裝；Python 與必要套件在安裝時解壓，之後啟動不需每次重新解壓。既有免安裝 EXE 繼續保留。請從[官方 Releases](https://github.com/kaoshou/Video-to-Subtitle/releases/latest) 下載 `VideoToSubtitle-Setup-v2.8.1.exe` 或後續版本；請勿把編譯器 Inno Setup 的安裝包當成本程式。
 
 安裝精靈使用繁體中文，預設只安裝給目前使用者，可選安裝位置及桌面捷徑，亦可從「開始」功能表啟動／Windows「已安裝的應用程式」解除安裝。不需事先安裝 Python 或外部 FFmpeg。Windows x64、Windows 10／11 為目標平台；實際自動驗證環境見建置紀錄。
 

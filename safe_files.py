@@ -74,23 +74,40 @@ def _win_open(path, directory=False, rename_access=False):
     create.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
                        wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
     create.restype = wintypes.HANDLE
-    # No FILE_SHARE_DELETE: prevents replacing the opened directory/file.
-    handle = create(path, 0x80000000 | (0x10000 if rename_access else 0), 3 if directory else 1, None, 3,
-                    0x00200000 | (0x02000000 if directory else 0), None)
-    if handle == wintypes.HANDLE(-1).value:
-        raise ctypes.WinError(ctypes.get_last_error())
-    class TagInfo(ctypes.Structure):
-        _fields_ = [('attributes', wintypes.DWORD), ('tag', wintypes.DWORD)]
-    get_info = kernel.GetFileInformationByHandleEx
-    get_info.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
+    class FileTime(ctypes.Structure):
+        _fields_ = [('low', ctypes.c_uint32), ('high', ctypes.c_uint32)]
+
+    class FileInformation(ctypes.Structure):
+        # BY_HANDLE_FILE_INFORMATION: DWORDs remain 32-bit on Win32/Win64.
+        _fields_ = [('attributes', ctypes.c_uint32),
+                    ('creation_time', FileTime), ('access_time', FileTime),
+                    ('write_time', FileTime), ('volume_serial', ctypes.c_uint32),
+                    ('size_high', ctypes.c_uint32), ('size_low', ctypes.c_uint32),
+                    ('links', ctypes.c_uint32), ('index_high', ctypes.c_uint32),
+                    ('index_low', ctypes.c_uint32)]
+
+    # FAT/exFAT can reject FileAttributeTagInfo (error 87). Basic handle
+    # information supplies the same attributes needed here, including the
+    # reparse bit, without requiring that optional information class.
+    get_info = kernel.GetFileInformationByHandle
+    get_info.argtypes = [wintypes.HANDLE, ctypes.POINTER(FileInformation)]
     get_info.restype = wintypes.BOOL
     close = kernel.CloseHandle
     close.argtypes = [wintypes.HANDLE]
     close.restype = wintypes.BOOL
-    info = TagInfo()
+    info = FileInformation()
+    # No FILE_SHARE_DELETE: prevents replacing the opened directory/file.
+    handle = create(path, 0x80000000 | (0x10000 if rename_access else 0), 3 if directory else 1, None, 3,
+                    0x00200000 | (0x02000000 if directory else 0), None)
+    if handle == wintypes.HANDLE(-1).value:
+        error = ctypes.WinError(ctypes.get_last_error())
+        error.filename = path
+        raise error
     try:
-        if not get_info(handle, 9, ctypes.byref(info), ctypes.sizeof(info)):
-            raise ctypes.WinError(ctypes.get_last_error())
+        if not get_info(handle, ctypes.byref(info)):
+            error = ctypes.WinError(ctypes.get_last_error())
+            error.filename = path
+            raise error
         if info.attributes & 0x400 or bool(info.attributes & 0x10) != directory:
             raise UnsafePathError(f"拒絕連結或非預期檔案類型：{path}")
     except BaseException:

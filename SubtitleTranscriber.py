@@ -23,6 +23,7 @@ from ui_open import open_local_page
 # Import core logic from transcriber.py
 from transcriber import (
     SubtitleTranscriber, check_model_downloaded, download_model_with_progress,
+    inspect_model_cache, effective_model_cache_root,
     MODEL_INFO, CorruptedModelError, clear_model_cache,
     ensure_ffmpeg_path, check_ffmpeg_available, require_traditional_converter,
     TraditionalChineseConversionError
@@ -164,7 +165,7 @@ def get_version():
     except Exception as e:
         print(f"DEBUG: Failed to load version from pyproject.toml: {e}")
     
-    return "2.8.0" # Fallback
+    return "2.8.1" # Fallback
 
 # --- 設定外觀 ---
 ctk.set_appearance_mode("System")  # Modes: "System" (standard), "Dark", "Light"
@@ -3217,8 +3218,10 @@ class App(BaseClass):
         matched_item = None
         
         for m in self.available_models:
-            is_downloaded = check_model_downloaded(m, download_root=current_download_root, device=device)
-            tag = " [已下載]" if is_downloaded else " [未下載]"
+            inspection = inspect_model_cache(m, download_root=current_download_root, device=device)
+            status = {"ready": "已下載", "missing": "未下載", "incomplete": "下載未完成",
+                      "unavailable": "無法讀取"}[inspection.state]
+            tag = f" [{status}]"
             item_label = f"{m}{tag}"
             new_values.append(item_label)
             if m == current_clean:
@@ -3247,7 +3250,8 @@ class App(BaseClass):
         current_download_root = self.model_path_var.get().strip() or None
         device = self.device_var.get().strip()
         
-        is_dl = check_model_downloaded(clean_name, download_root=current_download_root, device=device)
+        inspection = inspect_model_cache(clean_name, download_root=current_download_root, device=device)
+        is_dl = inspection.state == "ready"
         
         if self.is_running:
             return
@@ -3261,7 +3265,7 @@ class App(BaseClass):
             )
         else:
             self.btn_download_model.configure(
-                text="下載模型", 
+                text="繼續下載" if inspection.state == "incomplete" else "下載模型",
                 fg_color=("#1f538d", "#14375e"), 
                 hover_color=("#14375e", "#0e2440"),
                 state="normal"
@@ -3269,7 +3273,7 @@ class App(BaseClass):
 
     def manual_download_model(self):
         """主介面手動預先下載模型"""
-        if self.is_running:
+        if self.is_running or getattr(self, "_storage_current_target", None):
             messagebox.showwarning("提示", "目前已有任務正在執行中，請稍候再試。")
             return
             
@@ -3454,7 +3458,7 @@ class App(BaseClass):
         
         def get_current_root():
             current_path = self.model_path_var.get().strip()
-            return current_path if current_path else os.path.expanduser("~/.cache/huggingface/hub")
+            return effective_model_cache_root(current_path or None)
 
         def update_path_and_disk():
             target_p = get_current_root()
@@ -3477,7 +3481,7 @@ class App(BaseClass):
         btn_path_frame.pack(fill="x", padx=15, pady=(0, 10))
         
         def on_change():
-            if is_downloading[0]:
+            if is_downloading[0] or self.is_running or getattr(self, "_storage_current_target", None):
                 messagebox.showwarning("提示", "正在下載模型中，請先等待下載完成或取消下載再更換路徑。", parent=self.storage_window)
                 return
             self.browse_model_path()
@@ -3564,9 +3568,11 @@ class App(BaseClass):
                     model_action_btns[m] = btn_act
                     continue
 
-                is_dl = check_model_downloaded(m, download_root=download_root, device=device)
+                inspection = inspect_model_cache(m, download_root=download_root, device=device)
+                is_dl = inspection.state == "ready"
                 
-                status_text = "已下載" if is_dl else "未下載"
+                status_text = {"ready": "已下載", "missing": "未下載", "incomplete": "下載未完成",
+                               "unavailable": "無法讀取"}[inspection.state]
                 status_color = ("#1f8b4c", "#2ecc71") if is_dl else "gray"
                 lbl_st = ctk.CTkLabel(row, text=status_text, font=ui_font(size=12, weight="bold"), text_color=status_color, width=70)
                 lbl_st.pack(side="left", padx=5, pady=6)
@@ -3580,7 +3586,7 @@ class App(BaseClass):
                     btn_del.configure(command=lambda mod=m: delete_model_cache(mod))
                     btn_del.pack(side="right", padx=(2, 10), pady=6)
 
-                btn_text = "重新下載" if is_dl else "立即下載"
+                btn_text = "重新下載" if is_dl else ("繼續下載" if inspection.state == "incomplete" else "立即下載")
                 btn_color = "gray" if is_dl else ("#1f538d", "#14375e")
                 btn_act = ctk.CTkButton(row, text=btn_text, width=80, height=26, font=ui_font(size=11), fg_color=btn_color)
                 btn_act.configure(command=lambda mod=m: start_download_model(mod))
@@ -3588,7 +3594,7 @@ class App(BaseClass):
                 model_action_btns[m] = btn_act
 
         def delete_model_cache(target_model):
-            if is_downloading[0]:
+            if is_downloading[0] or self.is_running or getattr(self, "_storage_current_target", None):
                 messagebox.showwarning("提示", "目前正在進行下載，請稍候再清除。", parent=self.storage_window)
                 return
             if messagebox.askyesno("清除快取確認", f"確定要清除模型 [{target_model}] 的本地快取檔案嗎？\n\n清除後可釋放硬碟空間，若日後需要使用可隨時重新下載。", parent=self.storage_window):
@@ -3606,13 +3612,17 @@ class App(BaseClass):
 
 
         def start_download_model(target_model):
-            if is_downloading[0]:
+            if is_downloading[0] or self.is_running or getattr(self, "_storage_current_target", None):
                 messagebox.showwarning("提示", "目前已有模型正在下載中，請等待完成或取消後再試。", parent=self.storage_window)
                 return
             
             is_downloading[0] = True
             storage_cancel_flag[0] = False
             self._storage_current_target = target_model
+            # Capture Tk values on the UI thread; keep this download bound to
+            # the same backend and directory even if other settings change.
+            device = self.device_var.get().strip()
+            download_root = self.model_path_var.get().strip() or None
             btn_dl_cancel.configure(state="normal")
             
             refresh_models_list()
@@ -3622,9 +3632,6 @@ class App(BaseClass):
             self.log(f"--- 開始下載模型: {target_model} ---")
 
             def _dl_worker():
-                device = self.device_var.get().strip()
-                download_root = self.model_path_var.get().strip() or None
-
                 def _progress_cb(fraction, info_dict):
                     pct = info_dict.get("percent", fraction * 100.0)
                     dl_mb = info_dict.get("downloaded_mb", 0.0)
@@ -3709,10 +3716,7 @@ class App(BaseClass):
             self.refresh_model_menu()
 
     def open_model_path(self):
-        path = self.model_path_var.get().strip()
-        if not path:
-            # 預設路徑 (faster-whisper 預設)
-            path = os.path.expanduser("~/.cache/huggingface/hub")
+        path = effective_model_cache_root(self.model_path_var.get().strip() or None)
             
         if not os.path.exists(path):
             try:
@@ -4140,6 +4144,9 @@ class App(BaseClass):
 
     def start_thread(self):
         if self.is_running: return
+        if getattr(self, "_storage_current_target", None):
+            messagebox.showwarning("提示", "目前正在下載模型，請等待完成或取消後再開始轉錄。")
+            return
         if not self.file_list:
             messagebox.showerror(
                 "錯誤", 

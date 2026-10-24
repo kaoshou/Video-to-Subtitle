@@ -311,7 +311,7 @@ def deploy_evercam_player(course_folder, source_srt=None, target_lang="zh-TW"):
             if not ok:
                 return False, msg, ""
     except (OSError, ValueError) as exc:
-        return False, f"部署中止，請檢查檔案權限及符號連結：{exc}", ""
+        return False, f"部署中止（課程目錄：{course_folder}）：{exc}", ""
     return True, "EverCam 字幕播放器部署成功！", os.path.join(course_folder, "index.html")
 
 
