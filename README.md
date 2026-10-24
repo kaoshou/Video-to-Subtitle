@@ -16,6 +16,13 @@
 
 本文三張介面截圖均擷取自 **v2.7.12**，使用 Linux 雲端虛擬顯示環境與示範影音／字幕，並非真實轉錄成果。Windows／macOS 的字型與視窗外觀可能略有差異；下載的正式安裝檔仍為 Windows 與 macOS 版本。
 
+## 🚀 v2.8.2 更新說明
+
+- 改善 Windows 安裝完成後的自動啟動流程，透過桌面啟動程式。
+- 模型因權限或系統限制暫時無法讀取時，顯示明確的存取提示，不再誤判為快取損毀或要求清除模型。
+- 保留已下載模型、安全防護與原有 CPU／CUDA／MLX 轉錄流程。
+- [完整更新說明](docs/releases/v2.8.2.md)。
+
 ## 🚀 v2.8.1 更新說明
 
 - 改善模型下載與載入流程，直接使用檢查完成的模型資料夾，減少下載後仍無法載入的情況。
@@ -230,7 +237,7 @@
 
 ### Windows 安裝版（自 v2.7.14 起）
 
-新增 `VideoToSubtitle-Setup-v<版本>.exe` 安裝包，採用 PyInstaller 資料夾式封裝；Python 與必要套件在安裝時解壓，之後啟動不需每次重新解壓。既有免安裝 EXE 繼續保留。請從[官方 Releases](https://github.com/kaoshou/Video-to-Subtitle/releases/latest) 下載 `VideoToSubtitle-Setup-v2.8.1.exe` 或後續版本；請勿把編譯器 Inno Setup 的安裝包當成本程式。
+新增 `VideoToSubtitle-Setup-v<版本>.exe` 安裝包，採用 PyInstaller 資料夾式封裝；Python 與必要套件在安裝時解壓，之後啟動不需每次重新解壓。既有免安裝 EXE 繼續保留。請從[官方 Releases](https://github.com/kaoshou/Video-to-Subtitle/releases/latest) 下載 `VideoToSubtitle-Setup-v2.8.2.exe` 或後續版本；請勿把編譯器 Inno Setup 的安裝包當成本程式。
 
 安裝精靈使用繁體中文，預設只安裝給目前使用者，可選安裝位置及桌面捷徑，亦可從「開始」功能表啟動／Windows「已安裝的應用程式」解除安裝。不需事先安裝 Python 或外部 FFmpeg。Windows x64、Windows 10／11 為目標平台；實際自動驗證環境見建置紀錄。
 

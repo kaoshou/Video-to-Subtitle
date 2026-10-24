@@ -162,6 +162,73 @@ class ModelCacheTests(unittest.TestCase):
         self.assertEqual(result.state, 'unavailable')
         self.assertIn('config.json', result.message)
 
+    def test_blocked_snapshot_never_becomes_corruption_or_starts_a_download(self):
+        self.files()
+        config = str(self.snapshot / 'config.json')
+        weight = self.snapshot / 'model.bin'
+        before = (weight.stat().st_ino, weight.stat().st_size, weight.stat().st_mtime_ns)
+        original = os.stat
+        for code in (5, 32, 448):
+            with self.subTest(winerror=code):
+                def blocked(path, *args, **kwargs):
+                    if os.fspath(path) == config:
+                        error = PermissionError(13, 'untrusted mount point or blocked access', config)
+                        error.winerror = code
+                        raise error
+                    return original(path, *args, **kwargs)
+                with patch('os.stat', side_effect=blocked):
+                    with self.assertRaises(RuntimeError) as caught:
+                        transcriber.download_model_with_progress('medium', str(self.cache))
+                self.assertNotIsInstance(caught.exception, transcriber.CorruptedModelError)
+                self.assertIn('快取已保留', str(caught.exception))
+                self.assertEqual((weight.stat().st_ino, weight.stat().st_size, weight.stat().st_mtime_ns), before)
+
+    def test_engine_access_denial_is_not_reclassified_by_cannot_open_text(self):
+        self.files()
+        def blocked(*args, **kwargs):
+            error = PermissionError(13, 'cannot open model.bin: untrusted mount point')
+            error.winerror = 448
+            raise error
+        self.faster.WhisperModel = blocked
+        worker = transcriber.SubtitleTranscriber('medium', download_root=str(self.cache))
+        with self.assertRaises(RuntimeError) as caught:
+            worker.load_model()
+        self.assertNotIsInstance(caught.exception, transcriber.CorruptedModelError)
+        self.assertIn('快取已保留', str(caught.exception))
+
+    def test_unreadable_download_result_is_not_reported_as_corruption(self):
+        self.hub.snapshot_download = lambda *a, **k: str(self.files())
+        original = open
+        def blocked(path, *args, **kwargs):
+            if os.fspath(path) == str(self.snapshot / 'config.json'):
+                raise PermissionError('config.json access denied after download')
+            return original(path, *args, **kwargs)
+        with patch('builtins.open', blocked):
+            with self.assertRaises(RuntimeError) as caught:
+                transcriber.download_model_with_progress('medium', str(self.cache))
+        self.assertNotIsInstance(caught.exception, transcriber.CorruptedModelError)
+
+    def test_engine_cannot_open_message_does_not_prove_corruption(self):
+        self.files()
+        def blocked(*args, **kwargs):
+            raise RuntimeError('Unable to open file model.bin')
+        self.faster.WhisperModel = blocked
+        worker = transcriber.SubtitleTranscriber('medium', download_root=str(self.cache))
+        with self.assertRaises(RuntimeError) as caught:
+            worker.load_model()
+        self.assertNotIsInstance(caught.exception, transcriber.CorruptedModelError)
+
+    def test_missing_gpu_library_keeps_cpu_fallback_guidance(self):
+        self.files()
+        def missing_gpu(*args, **kwargs):
+            raise RuntimeError('cannot open file cudnn64.dll')
+        self.faster.WhisperModel = missing_gpu
+        worker = transcriber.SubtitleTranscriber('medium', device='cuda', download_root=str(self.cache))
+        with self.assertRaises(RuntimeError) as caught:
+            worker.load_model()
+        self.assertIn('cpu', str(caught.exception).lower())
+        self.assertNotIsInstance(caught.exception, transcriber.ModelCacheAccessError)
+
     def test_corrupt_weights_remain_on_disk_when_engine_rejects_them(self):
         self.files()
         self.faster.download_model = lambda *a, **k: str(self.snapshot)

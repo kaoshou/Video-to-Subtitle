@@ -24,7 +24,7 @@ from ui_open import open_local_page
 from transcriber import (
     SubtitleTranscriber, check_model_downloaded, download_model_with_progress,
     inspect_model_cache, effective_model_cache_root,
-    MODEL_INFO, CorruptedModelError, clear_model_cache,
+    MODEL_INFO, CorruptedModelError, ModelCacheAccessError, clear_model_cache,
     ensure_ffmpeg_path, check_ffmpeg_available, require_traditional_converter,
     TraditionalChineseConversionError
 )
@@ -165,7 +165,7 @@ def get_version():
     except Exception as e:
         print(f"DEBUG: Failed to load version from pyproject.toml: {e}")
     
-    return "2.8.1" # Fallback
+    return "2.8.2" # Fallback
 
 # --- 設定外觀 ---
 ctk.set_appearance_mode("System")  # Modes: "System" (standard), "Dark", "Light"
@@ -3265,7 +3265,8 @@ class App(BaseClass):
             )
         else:
             self.btn_download_model.configure(
-                text="繼續下載" if inspection.state == "incomplete" else "下載模型",
+                text=("檢查存取" if inspection.state == "unavailable" else
+                      "繼續下載" if inspection.state == "incomplete" else "下載模型"),
                 fg_color=("#1f538d", "#14375e"), 
                 hover_color=("#14375e", "#0e2440"),
                 state="normal"
@@ -3354,6 +3355,9 @@ class App(BaseClass):
                     messagebox.showinfo("已取消", f"已取消模型 [{clean_name}] 的下載。\n下次再次點擊時將自動從中斷處繼續下載。")
                 self.after(0, _on_cancel)
                 
+            except ModelCacheAccessError as access_error:
+                self.log(f"\n⚠️ 模型快取無法存取：{access_error}")
+                self.after(0, lambda err=access_error: self.show_model_cache_access_error(err))
             except CorruptedModelError as c_err:
                 self.log(f"\n❌ 模型 [{clean_name}] 快取損毀: {c_err}")
                 def _on_corrupted(err=c_err):
@@ -3394,6 +3398,12 @@ class App(BaseClass):
                 self.after(0, _cleanup)
 
         threading.Thread(target=_worker, daemon=True).start()
+
+    def show_model_cache_access_error(self, error, parent=None):
+        """Report access restrictions without offering destructive repair."""
+        self.status_label.configure(text="模型暫時無法存取，原有快取已保留")
+        target = parent if parent is not None and parent.winfo_exists() else self
+        messagebox.showerror("模型快取無法存取", str(error), parent=target)
 
     def change_appearance_mode_event(self, new_appearance_mode: str):
         ctk.set_appearance_mode(new_appearance_mode)
@@ -3586,7 +3596,8 @@ class App(BaseClass):
                     btn_del.configure(command=lambda mod=m: delete_model_cache(mod))
                     btn_del.pack(side="right", padx=(2, 10), pady=6)
 
-                btn_text = "重新下載" if is_dl else ("繼續下載" if inspection.state == "incomplete" else "立即下載")
+                btn_text = ("重新下載" if is_dl else "檢查存取" if inspection.state == "unavailable"
+                            else "繼續下載" if inspection.state == "incomplete" else "立即下載")
                 btn_color = "gray" if is_dl else ("#1f538d", "#14375e")
                 btn_act = ctk.CTkButton(row, text=btn_text, width=80, height=26, font=ui_font(size=11), fg_color=btn_color)
                 btn_act.configure(command=lambda mod=m: start_download_model(mod))
@@ -3674,6 +3685,14 @@ class App(BaseClass):
                             dl_status_label.configure(text="已取消下載。支援斷點續傳。")
                     self.after(0, _on_cancel)
 
+                except ModelCacheAccessError as access_error:
+                    self.log(f"⚠️ 模型快取無法存取：{access_error}")
+                    def _on_access_error(err=access_error):
+                        if self.storage_window.winfo_exists():
+                            dl_bar.set(0)
+                            dl_status_label.configure(text="模型暫時無法存取，原有快取已保留")
+                        self.show_model_cache_access_error(err, parent=self.storage_window)
+                    self.after(0, _on_access_error)
                 except Exception as e:
                     self.log(f"❌ 模型 [{target_model}] 下載失敗: {e}")
                     def _on_error(err=e):
@@ -4278,6 +4297,10 @@ class App(BaseClass):
                 self.log("\n⚠️ 模型下載已被手動取消。下次執行支援斷點續傳。")
                 self.after(0, lambda: messagebox.showinfo("已取消", "模型下載任務已取消。\n\n本程式支援斷點續傳，下次再次點擊時，將自動從上次進度繼續下載。"))
                 return
+            except ModelCacheAccessError as access_error:
+                self.log(f"\n⚠️ 模型快取無法存取：{access_error}")
+                self.after(0, lambda err=access_error: self.show_model_cache_access_error(err))
+                return
             except CorruptedModelError as c_err:
                 self.log(f"\n❌ 模型快取檔案損毀: {c_err}")
                 def _handle_corrupted(err=c_err):
@@ -4848,7 +4871,32 @@ class App(BaseClass):
         # 後台渲染完成後一次性置中並平滑呈現 (杜絕閃爍)
         center_and_smooth_show(dialog, self, 780, dialog_h, is_modal=True)
 
+def launch_after_install():
+    """Ask the existing desktop to launch the installed app, then exit.
+
+    This bootstrap never creates App or opens a model cache. The desktop's
+    normal launch path is used without altering any process security policy.
+    """
+    try:
+        if sys.platform != 'win32' or not getattr(sys, 'frozen', False):
+            raise RuntimeError('安裝後啟動只適用於 Windows 封裝程式')
+        from ui_installer_launch import launch_via_desktop
+        executable = os.path.abspath(sys.executable)
+        launch_via_desktop(executable, os.path.dirname(executable))
+        return 0
+    except Exception as error:
+        messagebox.showwarning(
+            '請由捷徑開啟程式',
+            '安裝已完成，但目前無法交由桌面啟動程式。\n'
+            '請關閉安裝程式，再從桌面捷徑或「開始」功能表開啟 Video to Subtitle。\n'
+            '已下載的模型不會被清除，也不需要停用安全防護。\n\n'
+            f'技術資訊：{error}')
+        return 1
+
+
 if __name__ == "__main__":
+    if '--from-installer' in sys.argv:
+        sys.exit(launch_after_install())
     import multiprocessing
     import sys
     import traceback

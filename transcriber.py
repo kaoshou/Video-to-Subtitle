@@ -193,6 +193,21 @@ class CorruptedModelError(RuntimeError):
         self.cache_dir = cache_dir
 
 
+class ModelCacheAccessError(RuntimeError):
+    """A blocked/unreadable model is not evidence of damaged model data."""
+    def __init__(self, message, model_size, cache_dir=None):
+        super().__init__(
+            '模型快取目前無法存取，這不代表模型檔案已損毀。\n'
+            '原有快取已保留，不需要清除或重新下載模型。\n\n'
+            '如果剛從安裝完成畫面啟動，請先關閉程式與安裝程式，'
+            '再從桌面捷徑或「開始」功能表開啟。\n'
+            '若仍無法存取，請確認模型目錄權限及磁碟是否可讀取；'
+            '不要關閉 Windows 安全防護。\n\n'
+            f'技術資訊：{message}')
+        self.model_size = model_size
+        self.cache_dir = cache_dir
+
+
 @dataclass(frozen=True)
 class ModelCacheInspection:
     """Read-only cache status shared by the model manager and loader."""
@@ -495,7 +510,9 @@ def download_model_with_progress(model_size, download_root=None, device="cpu", l
         if log_callback:
             log_callback(f"[快取就緒] 模型 '{clean_size}' 已存在於本地快取中，無須重新下載。")
         return status.path
-    if status.state == 'unavailable' or (status.state == 'incomplete' and not status.missing_files):
+    if status.state == 'unavailable':
+        raise ModelCacheAccessError(status.message, clean_size, cache_dir)
+    if status.state == 'incomplete' and not status.missing_files:
         raise CorruptedModelError(status.message, clean_size, cache_dir)
 
     # 2. 檢查磁碟剩餘空間
@@ -555,6 +572,8 @@ def download_model_with_progress(model_size, download_root=None, device="cpu", l
         if cancel_check_callback and cancel_check_callback():
             raise InterruptedError("使用者已手動取消模型下載。")
         validated = _inspect_model_directory(os.path.abspath(snapshot_path), clean_size, device)
+        if validated.state == 'unavailable':
+            raise ModelCacheAccessError(validated.message, clean_size, cache_dir)
         if validated.state != 'ready':
             raise CorruptedModelError(validated.message, clean_size, cache_dir)
         
@@ -582,6 +601,8 @@ def download_model_with_progress(model_size, download_root=None, device="cpu", l
             log_callback("[已取消] 使用者已手動取消模型下載。")
         raise e
         
+    except ModelCacheAccessError:
+        raise
     except Exception as e:
         error_str = str(e).lower()
         logging.debug("Model download failed: %s", e)
@@ -748,7 +769,7 @@ class SubtitleTranscriber:
         except Exception as e:
             logging.debug("Model loading failed: %s", e)
             error_str = str(e).lower()
-            
+
             # 1. 檢查 GPU 驅動/cuDNN 相關錯誤
             if "cudnn" in error_str or "cublas" in error_str or "load symbol" in error_str or "dll" in error_str:
                 friendly_msg = (
@@ -760,10 +781,19 @@ class SubtitleTranscriber:
                     log_callback("錯誤: 缺少 GPU 函式庫，請切換至 CPU 模式。")
                 raise RuntimeError(friendly_msg)
 
+            # Access failures (including blocked reparse traversal) must never
+            # enter the destructive corruption-repair prompt. Keep the GPU
+            # dependency classification above this generic file-open handling.
+            if (isinstance(e, PermissionError) or getattr(e, 'winerror', None) in (5, 32, 33, 448)
+                    or any(text in error_str for text in (
+                        'unable to open file', 'cannot open', 'access is denied',
+                        'permission denied', 'untrusted mount point', '[winerror 448]'))):
+                raise ModelCacheAccessError(str(e), self.model_size, self.download_root) from e
+
             # 2. 檢查模型快取是否損毀或檔案不完整
             corrupted_keywords = [
-                "unable to open file", "corrupted", "invalid load key", "bad file", 
-                "magic number", "unexpected end of file", "cannot open", "badzipfile", "eof"
+                "corrupted", "invalid load key", "bad file",
+                "magic number", "unexpected end of file", "badzipfile", "eof"
             ]
             if any(k in error_str for k in corrupted_keywords):
                 friendly_msg = (

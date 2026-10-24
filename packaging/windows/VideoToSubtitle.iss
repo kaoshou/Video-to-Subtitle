@@ -56,6 +56,6 @@ Name: "{userprograms}\Video to Subtitle"; Filename: "{app}\VideoToSubtitle.exe";
 Name: "{userdesktop}\Video to Subtitle"; Filename: "{app}\VideoToSubtitle.exe"; WorkingDir: "{app}"; Tasks: desktopicon; AppUserModelID: "kaoshou.subtitletranscriber.v2"
 
 [Run]
-Filename: "{app}\VideoToSubtitle.exe"; Description: "啟動 Video to Subtitle"; Flags: nowait postinstall skipifsilent unchecked
+Filename: "{app}\VideoToSubtitle.exe"; Parameters: "--from-installer"; WorkingDir: "{app}"; Description: "啟動 Video to Subtitle"; Flags: nowait postinstall skipifsilent unchecked
 
 ; Intentionally no UninstallDelete: settings and model caches are user data.
