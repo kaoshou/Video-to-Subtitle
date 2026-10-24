@@ -3,7 +3,7 @@ import { join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { escapeHtml, renderLayout } from './src/layout.mjs';
 import { renderGuide } from './src/guide.mjs';
-import { content, renderHome } from './src/content.mjs';
+import { content, renderHome, publishedReleaseVersion } from './src/content.mjs';
 
 const websiteRoot = fileURLToPath(new URL('.', import.meta.url));
 const requiredAssets = [
@@ -75,7 +75,7 @@ export async function validateOutput(outputRoot) {
   await required(join(root, 'assets', 'site.css'));
 }
 
-export async function buildSite({ repositoryRoot = resolve(websiteRoot, '..'), outputRoot = join(websiteRoot, 'dist') } = {}) {
+export async function buildSite({ repositoryRoot = resolve(websiteRoot, '..'), outputRoot = join(websiteRoot, 'dist'), releaseVersion = publishedReleaseVersion } = {}) {
   const guidePath = join(repositoryRoot, 'docs/USER_GUIDE.zh-TW.md');
   await required(guidePath);
   await required(join(websiteRoot, 'src/site.css'));
@@ -86,7 +86,7 @@ export async function buildSite({ repositoryRoot = resolve(websiteRoot, '..'), o
   }
   await copyFile(join(websiteRoot, 'src/site.css'), join(outputRoot, 'assets/site.css'));
   await copyFile(join(websiteRoot, 'src/lightbox.js'), join(outputRoot, 'assets/lightbox.js'));
-  await writePage(outputRoot, '', renderLayout({ title: '本地語音轉字幕工具', description: content.heroText, page: 'home', body: renderHome() }));
+  await writePage(outputRoot, '', renderLayout({ title: '本地語音轉字幕工具', description: content.heroText, page: 'home', body: renderHome(releaseVersion) }));
   const source = await readFile(guidePath, 'utf8');
   const guide = renderGuide(source);
   const toc = guide.toc.map(item => `<li class="toc-level-${item.level}"><a href="#${escapeHtml(item.id)}">${escapeHtml(item.label)}</a></li>`).join('');

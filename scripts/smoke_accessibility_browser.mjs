@@ -508,6 +508,30 @@ async function runWebsite(browser, siteDir, opts, report, axeSource) {
                 await step(result, 'built-stylesheet-loaded', async () => {
                     assert.ok(await page.evaluate(() => [...document.styleSheets].some(sheet => sheet.href && sheet.cssRules.length > 0)), 'Built CSS loads before accessibility inspection');
                 });
+                if (file === 'index.html') await step(result, 'direct-downloads-responsive-layout', async () => {
+                    const links = page.locator('.home-hero .hero-actions a');
+                    assert.equal(await links.count(), 3, 'All desktop downloads have a primary-area entry');
+                    for (const width of [1440, 1024, 820, 800, 540, 390, 320]) {
+                        await page.setViewportSize({ width, height: 1000 });
+                        await settle(page);
+                        const boxes = await links.evaluateAll(nodes => nodes.map(node => {
+                            const box = node.getBoundingClientRect();
+                            return { x: box.x, y: box.y, width: box.width, height: box.height, right: box.right,
+                                clipped: node.scrollWidth > node.clientWidth + 1 };
+                        }));
+                        assert.ok(boxes.every(box => !box.clipped && box.x >= 0 && box.right <= width && box.height >= 44), `Downloads remain legible at ${width}px`);
+                        if (width > 540) {
+                            assert.ok(Math.abs(boxes[0].y - boxes[1].y) <= 1, 'Windows downloads share the first row');
+                            assert.ok(Math.abs(boxes[0].width - boxes[1].width) <= 1 && Math.abs(boxes[0].height - boxes[1].height) <= 1, 'Windows buttons have equal size');
+                            assert.ok(boxes[2].y >= boxes[0].y + boxes[0].height && Math.abs(boxes[2].x - boxes[0].x) <= 1, 'macOS starts a second left-aligned row');
+                        } else {
+                            assert.ok(boxes[1].y >= boxes[0].y + boxes[0].height && boxes[2].y >= boxes[1].y + boxes[1].height, 'Narrow screens stack the downloads in their original order');
+                        }
+                        await noOverflow(page, `downloads at ${width}px`);
+                    }
+                    await page.setViewportSize(profile.viewport);
+                    await settle(page);
+                });
                 await step(result, 'axe-built-website', () => axeScan(page, 'website-default', result, axeSource));
                 await step(result, 'skip-link-keyboard-focus', async () => {
                     await page.keyboard.press('Tab');

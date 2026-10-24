@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { JSDOM } from 'jsdom';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { buildSite } from '../build.mjs';
@@ -22,6 +23,34 @@ test('homepage gives a concise first-run path and uses genuine screenshots', asy
   }
 });
 
+test('hero pins all downloads to the published release while newer source versions are being built', async () => {
+  const root = resolve(import.meta.dirname, '../..');
+  const fixture = await mkdtemp(join(tmpdir(), 'video-subtitle-downloads-'));
+  try {
+    await mkdir(join(fixture, 'docs'));
+    await copyFile(join(root, 'docs/USER_GUIDE.zh-TW.md'), join(fixture, 'docs/USER_GUIDE.zh-TW.md'));
+    for (const asset of ['app_icon.png', 'screenshot_main.png', 'screenshot_editor.png', 'screenshot_models.png']) {
+      await copyFile(join(root, asset), join(fixture, asset));
+    }
+    for (const version of ['9.1.2', '9.1.3']) {
+      await writeFile(join(fixture, 'pyproject.toml'), '[project]\nversion = "9.2.0"\n');
+      const outputRoot = join(fixture, version);
+      await buildSite({ repositoryRoot: fixture, outputRoot, releaseVersion: version });
+      const dom = new JSDOM(await readFile(join(outputRoot, 'index.html'), 'utf8'));
+      try {
+        const buttons = [...dom.window.document.querySelectorAll('.home-hero .hero-actions a')];
+        assert.equal(buttons.length, 3, 'The installer must be directly available next to the portable download');
+        assert.deepEqual(buttons.map(a => a.href), [
+          `https://github.com/kaoshou/Video-to-Subtitle/releases/download/v${version}/VideoToSubtitle.exe`,
+          `https://github.com/kaoshou/Video-to-Subtitle/releases/download/v${version}/VideoToSubtitle-Setup-v${version}.exe`,
+          `https://github.com/kaoshou/Video-to-Subtitle/releases/download/v${version}/VideoToSubtitle.dmg`
+        ]);
+        assert.ok(buttons.every(a => a.textContent.trim().startsWith('下載')));
+      } finally { dom.window.close(); }
+    }
+  } finally { await rm(fixture, { recursive: true, force: true }); }
+});
+
 test('homepage task entries lead directly to quickstart, proofreading and web-export instructions', async () => {
   const out = await mkdtemp(join(tmpdir(), 'video-subtitle-tasks-'));
   try {
@@ -32,9 +61,12 @@ test('homepage task entries lead directly to quickstart, proofreading and web-ex
     for (const href of ['#quickstart', '/Video-to-Subtitle/guide/#字幕校對器', '/Video-to-Subtitle/guide/#一般-mp4-字幕匯出網頁']) {
       assert.ok(tasks.includes(`href="${href}"`), `missing task destination ${href}`);
     }
-    for (const file of ['VideoToSubtitle.exe', 'VideoToSubtitle.dmg']) {
-      assert.ok(html.includes(`href="https://github.com/kaoshou/Video-to-Subtitle/releases/latest/download/${file}"`));
-    }
+    const dom = new JSDOM(html);
+    try {
+      for (const anchor of dom.window.document.querySelectorAll('.hero-actions a')) {
+        assert.match(anchor.href, /\/releases\/download\/v\d+\.\d+\.\d+\//);
+      }
+    } finally { dom.window.close(); }
     assert.match(html, /<a[^>]*href="\/Video-to-Subtitle\/assets\/screenshot_main.png"[^>]*>[\s\S]*?<img/);
   } finally {
     await rm(out, { recursive: true, force: true });

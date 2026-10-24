@@ -1,6 +1,9 @@
 import { assetPath, routeFor } from './paths.mjs';
 import { escapeHtml } from './layout.mjs';
 
+// Advance after the matching Release and all three assets are published.
+export const publishedReleaseVersion = '2.8.0';
+
 const latest = 'https://github.com/kaoshou/Video-to-Subtitle/releases/latest';
 const guide = routeFor('guide');
 const chapter = id => guide + '#' + id;
@@ -17,6 +20,7 @@ export const content = {
   questions: [
     ['沒有顯示卡也能使用嗎？', '可以，選 CPU 即可轉錄，不需要獨立顯示卡。相容的 NVIDIA 環境可用 CUDA，Apple Silicon Mac 可用 MLX 加速；速度依硬體、模型與影音長度而異。', '運算單元'],
     ['第一次為什麼要下載模型？', '模型是用來辨識聲音的資料。第一次使用或切換到尚未下載的模型時，需要網路與足夠磁碟空間；先下載並試轉一段短片，再帶到離線環境使用。', '模型儲存管理'],
+    ['模型顯示「下載未完成」怎麼辦？', '可在模型管理或主畫面按「繼續下載」，補齊缺少的檔案，原有模型快取會保留。v2.8.1 改善模型下載與載入路徑，並避免重複啟動下載。若顯示「無法讀取」，請先確認儲存路徑與檔案存取權限。', '模型儲存管理'],
     ['產生的字幕存在哪裡？', '預設儲存在原影音的同一個資料夾。例如「課程.mp4」會搭配「課程.srt」。轉錄完成後，可按「開啟目錄」查看結果。', '第一次轉錄'],
     ['影片會被上傳到網路嗎？', '桌面程式的轉錄在本機執行，不會把影音送到雲端辨識。下載模型與檢查更新需要網路；建立字幕網頁也只是產生本機檔案，不會自動發布。', '離線使用'],
     ['已經有 SRT，還需要重新轉錄嗎？', '不需要。可以直接用「編輯現有字幕」校對；要製作網頁，將 MP4 與同主檔名的 SRT／VTT 放在同一資料夾，再開啟一般影片＋字幕工具。', '一般-mp4-字幕匯出網頁']
@@ -39,7 +43,8 @@ function imageLink(file, alt, className = '', eager = false) {
   return '<a class="image-zoom ' + className + '" href="' + assetPath(file) + '" aria-label="放大查看：' + escapeHtml(alt) + '"><img src="' + assetPath(file) + '" alt="' + escapeHtml(alt) + '"' + (eager ? ' fetchpriority="high"' : ' loading="lazy"') + '></a>';
 }
 
-export function renderHome() {
+export function renderHome(releaseVersion = publishedReleaseVersion) {
+  const downloadBase = 'https://github.com/kaoshou/Video-to-Subtitle/releases/download/v' + encodeURIComponent(releaseVersion);
   const tasks = [
     ['video', '我有影片，想產生字幕', '從短片開始，完成第一份 SRT。', '#quickstart'],
     ['edit', '我已有字幕，想修改', '直接開啟字幕，不必重新轉錄。', chapter('字幕校對器')],
@@ -50,8 +55,9 @@ export function renderHome() {
   return '<div class="home-page">' +
 '<section class="home-hero"><div class="container home-hero-grid">' +
   '<div class="home-hero-copy"><p class="eyebrow">' + escapeHtml(content.eyebrow) + '</p><h1><span>影片留在電腦，</span><em>字幕安心生成。</em></h1><p class="home-lead">' + escapeHtml(content.heroText) + '</p>' +
-  '<div class="hero-actions"><a class="button button-primary" href="' + latest + '/download/VideoToSubtitle.exe">下載 Windows 免安裝版 <span aria-hidden="true">↓</span></a><a class="button button-secondary" href="' + latest + '/download/VideoToSubtitle.dmg">下載 macOS 版 <span aria-hidden="true">↓</span></a></div>' +
-  '<div class="home-hero-links"><a href="#quickstart">看快速上手 →</a><a href="' + latest + '">v2.8.0 · 安裝版／更新內容 ↗</a></div><ul class="home-trust" aria-label="工具特色"><li>免費・開放原始碼</li><li>本機轉錄</li><li>無顯卡也能用</li></ul></div>' +
+  '<div class="hero-actions"><a class="button button-primary" href="' + downloadBase + '/VideoToSubtitle.exe">下載 Windows 免安裝版</a><a class="button button-primary" href="' + downloadBase + '/VideoToSubtitle-Setup-v' + encodeURIComponent(releaseVersion) + '.exe">下載 Windows 安裝版</a><a class="button button-secondary" href="' + downloadBase + '/VideoToSubtitle.dmg">下載 macOS 版</a></div>' +
+  '<p class="home-download-note">安裝版通常啟動較快：執行環境在安裝時一次展開，之後開啟不必像免安裝版一樣重新解壓。</p>' +
+  '<div class="home-hero-links"><a href="#quickstart">看快速上手 →</a><a href="' + latest + '">v' + escapeHtml(releaseVersion) + ' 更新內容 ↗</a></div><ul class="home-trust" aria-label="工具特色"><li>免費・開放原始碼</li><li>本機轉錄</li><li>無顯卡也能用</li></ul></div>' +
   '<figure class="home-hero-visual"><div class="preview-label"><span>你的字幕工作台</span><span>DESKTOP APP</span></div>' + imageLink('screenshot_main.png', 'Video to Subtitle 主畫面，顯示影片清單與轉錄設定', '', true) + '<figcaption><span>v2.7.12 主操作介面 · Linux 示範</span><span>點擊圖片放大 ↗</span></figcaption></figure>' +
 '</div><div class="container home-output-line"><span class="output-label">從一段影片開始</span><span>影片／音訊</span>' + icon('arrow') + '<span>字幕初稿</span>' + icon('arrow') + '<span>人工校對</span>' + icon('arrow') + '<span>字幕檔／網頁教材</span></div></section>' +
 
