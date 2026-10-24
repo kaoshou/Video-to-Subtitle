@@ -2,7 +2,7 @@ import { assetPath, routeFor } from './paths.mjs';
 import { escapeHtml } from './layout.mjs';
 
 // Advance after the matching Release and all three assets are published.
-export const publishedReleaseVersion = '2.8.1';
+export const publishedReleaseVersion = '2.8.2';
 
 const latest = 'https://github.com/kaoshou/Video-to-Subtitle/releases/latest';
 const guide = routeFor('guide');
@@ -20,7 +20,7 @@ export const content = {
   questions: [
     ['沒有顯示卡也能使用嗎？', '可以，選 CPU 即可轉錄，不需要獨立顯示卡。相容的 NVIDIA 環境可用 CUDA，Apple Silicon Mac 可用 MLX 加速；速度依硬體、模型與影音長度而異。', '運算單元'],
     ['第一次為什麼要下載模型？', '模型是用來辨識聲音的資料。第一次使用或切換到尚未下載的模型時，需要網路與足夠磁碟空間；先下載並試轉一段短片，再帶到離線環境使用。', '模型儲存管理'],
-    ['模型顯示「下載未完成」怎麼辦？', '可在模型管理或主畫面按「繼續下載」，補齊缺少的檔案，原有模型快取會保留。v2.8.1 改善模型下載與載入路徑，並避免重複啟動下載。若顯示「無法讀取」，請先確認儲存路徑與檔案存取權限。', '模型儲存管理'],
+    ['模型顯示「下載未完成」或「無法讀取」怎麼辦？', '下載未完成時可按「繼續下載」補齊缺少檔案，原有模型快取會保留。v2.8.2 改善 Windows 安裝後啟動，並將模型存取問題與快取損毀分開處理。若顯示「無法讀取」，請先確認路徑與權限；剛安裝完成時可關閉程式與安裝器，再從桌面或開始選單開啟，不需清除模型或停用安全防護。', '模型儲存管理'],
     ['產生的字幕存在哪裡？', '預設儲存在原影音的同一個資料夾。例如「課程.mp4」會搭配「課程.srt」。轉錄完成後，可按「開啟目錄」查看結果。', '第一次轉錄'],
     ['影片會被上傳到網路嗎？', '桌面程式的轉錄在本機執行，不會把影音送到雲端辨識。下載模型與檢查更新需要網路；建立字幕網頁也只是產生本機檔案，不會自動發布。', '離線使用'],
     ['已經有 SRT，還需要重新轉錄嗎？', '不需要。可以直接用「編輯現有字幕」校對；要製作網頁，將 MP4 與同主檔名的 SRT／VTT 放在同一資料夾，再開啟一般影片＋字幕工具。', '一般-mp4-字幕匯出網頁']
