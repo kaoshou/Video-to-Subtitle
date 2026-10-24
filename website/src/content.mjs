@@ -2,7 +2,7 @@ import { assetPath, routeFor } from './paths.mjs';
 import { escapeHtml } from './layout.mjs';
 
 // Advance after the matching Release and all three assets are published.
-export const publishedReleaseVersion = '2.8.0';
+export const publishedReleaseVersion = '2.8.1';
 
 const latest = 'https://github.com/kaoshou/Video-to-Subtitle/releases/latest';
 const guide = routeFor('guide');
