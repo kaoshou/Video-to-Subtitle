@@ -1,5 +1,7 @@
 """Offline cache lifecycle tests; only Hub transfer and ASR engines are replaced."""
 import json
+import io
+from contextlib import redirect_stdout
 import os
 from pathlib import Path
 import tempfile
@@ -110,6 +112,34 @@ class ModelCacheTests(unittest.TestCase):
                 progress_callback=lambda value, info: progress.append(value))
         self.assertNotIn(1.0, progress)
         self.assertTrue((self.snapshot / 'model.bin').is_file())
+
+    def test_windows_console_encoding_cannot_hide_incomplete_cache_error(self):
+        self.hub.snapshot_download = lambda *a, **k: str(self.files(missing=('config.json',)))
+        with io.TextIOWrapper(io.BytesIO(), encoding='cp1252') as console:
+            with redirect_stdout(console):
+                with self.assertRaisesRegex(transcriber.CorruptedModelError, 'config.json'):
+                    transcriber.download_model_with_progress('medium', str(self.cache))
+        self.assertTrue((self.snapshot / 'model.bin').is_file())
+
+    def test_windows_console_encoding_cannot_hide_engine_error(self):
+        self.files()
+        def reject(*args, **kwargs):
+            raise RuntimeError('invalid magic number: 權重不完整')
+        self.faster.WhisperModel = reject
+        worker = transcriber.SubtitleTranscriber('medium', download_root=str(self.cache))
+        with io.TextIOWrapper(io.BytesIO(), encoding='cp1252') as console:
+            with redirect_stdout(console):
+                with self.assertRaisesRegex(transcriber.CorruptedModelError, '權重不完整'):
+                    worker.load_model()
+
+    def test_windows_console_accepts_chinese_model_directory(self):
+        direct = self.files(self.root / '模型')
+        self.faster.WhisperModel = lambda *args, **kwargs: SimpleNamespace()
+        worker = transcriber.SubtitleTranscriber('medium', download_root=str(direct))
+        with io.TextIOWrapper(io.BytesIO(), encoding='cp1252') as console:
+            with redirect_stdout(console):
+                worker.load_model()
+        self.assertIsNotNone(worker.model)
 
     def test_inspection_reports_bad_json_and_preserves_files(self):
         self.files()

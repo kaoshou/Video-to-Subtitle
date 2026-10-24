@@ -584,7 +584,7 @@ def download_model_with_progress(model_size, download_root=None, device="cpu", l
         
     except Exception as e:
         error_str = str(e).lower()
-        print(f"DEBUG: Download error: {e}")
+        logging.debug("Model download failed: %s", e)
         
         # 1. SSL 安全憑證錯誤 (公司內網/防毒軟體干擾)
         ssl_keywords = ["certificate_verify_failed", "sslcerterror", "self signed", "certificate verify failed"]
@@ -684,7 +684,7 @@ class SubtitleTranscriber:
 
     def load_model(self, log_callback=None, progress_callback=None, cancel_check_callback=None):
         """載入模型 (第一次執行會自動下載，支援進度百分比、速度、ETA 與取消控制)"""
-        print(f"DEBUG: load_model called. Model size: {self.model_size}, Device: {self.device}, Root: {self.download_root}")
+        logging.debug("Loading model %s, device=%s, root=%s", self.model_size, self.device, self.download_root)
         # 如果模型已經載入，直接返回
         if self.model: 
             print("DEBUG: Model already loaded.")
@@ -746,7 +746,7 @@ class SubtitleTranscriber:
             if log_callback:
                 log_callback("模型載入完成！")
         except Exception as e:
-            print(f"DEBUG: Error in load_model: {e}")
+            logging.debug("Model loading failed: %s", e)
             error_str = str(e).lower()
             
             # 1. 檢查 GPU 驅動/cuDNN 相關錯誤
