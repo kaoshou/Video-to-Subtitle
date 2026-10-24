@@ -241,14 +241,75 @@ async function runPlayer(browser, folder, baselineFolder, mode, profile, opts, r
             assert.equal(await page.locator('#transcript-panel').evaluate(el => el.hidden), false);
             assert.equal(await page.evaluate(() => document.activeElement.id), 'transcript-heading');
         });
+        await step(result, 'section-navigation-and-complete-collapsible-help', async () => {
+            assert.equal(await page.locator('.player-navigation').count(), 0, 'Quick navigation has no persistent visible bar');
+            assert.ok(await page.locator('.player-skip-link').evaluateAll(links => links.every(link =>
+                getComputedStyle(link).display === 'none' || (document.activeElement !== link && getComputedStyle(link).clipPath !== 'none'))),
+                'Navigation links stay concealed until keyboard focus');
+            const accessModifier = process.platform === 'darwin' ? 'Control+Alt' : 'Alt';
+            await page.keyboard.press(`${accessModifier}+c`);
+            assert.equal(await page.evaluate(() => document.activeElement.id), 'video-stage', 'Documented access key C enters the player');
+            await page.keyboard.press(`${accessModifier}+t`);
+            assert.equal(await page.evaluate(() => document.activeElement.id), 'transcript-heading', 'Documented access key T opens transcript and moves focus');
+            if (mode === 'evercam') {
+                await page.keyboard.press(`${accessModifier}+i`);
+                assert.equal(await page.locator('#chapters-panel').evaluate(el => el.hidden), false);
+                assert.equal(await page.evaluate(() => document.activeElement.id), 'chapters-heading');
+                await page.keyboard.press('Tab');
+                assert.ok(await page.evaluate(() => document.activeElement.matches('.chapter-item')), 'Chapter destination leads into actual chapter buttons');
+                await page.keyboard.press('Enter');
+                await page.waitForFunction(() => !document.querySelector('video').paused);
+                await page.locator('video').evaluate(v => v.pause());
+            } else {
+                for (const link of await page.locator('a[href="#chapters-heading"]').all())
+                    assert.equal(await link.isVisible(), false, 'No chapter destination is offered for plain MP4');
+            }
+            const help = page.locator('#player-help');
+            assert.equal(await help.evaluate(el => el.open), false, 'Help starts collapsed');
+            await page.keyboard.press(`${accessModifier}+h`);
+            assert.equal(await help.evaluate(el => el.open), true);
+            assert.ok(await page.evaluate(() => document.activeElement.matches('#player-help > summary')));
+            const topics = help.locator('.help-topic');
+            assert.equal(await topics.count(), 4);
+            for (const topic of await topics.all()) {
+                assert.equal(await topic.evaluate(el => el.open), false);
+                await topic.locator('summary').focus();
+                await page.keyboard.press('Enter');
+                assert.equal(await topic.evaluate(el => el.open), true);
+            }
+            const ax = await help.ariaSnapshot();
+            assert.ok(ax.includes('快速定位與基本操作') && ax.includes('播放、音量與全螢幕'), 'Help topics expose accessible names');
+            await page.locator('#player-help > summary').focus();
+            await noOverflow(page, 'expanded keyboard help');
+            await axeScan(page, 'expanded-keyboard-help', result, axeSource);
+            await screenshot(page, result, opts, 'keyboard-help-preview', true);
+            await page.setViewportSize({width:320,height:900});
+            await noOverflow(page, '320px expanded keyboard help');
+            await page.setViewportSize(profile.viewport);
+            await page.keyboard.press('Escape');
+            assert.equal(await help.evaluate(el => el.open), false);
+            await page.keyboard.press('Space');
+            assert.equal(await help.evaluate(el => el.open), true, 'Native summary opens with Space');
+            for (let i = 0; i < 5; i++) { await page.keyboard.press('Tab'); }
+            assert.ok(await page.evaluate(() => !document.activeElement.closest('#player-help')), 'Tab can leave all four help topics without trapping focus');
+            await page.locator('#player-help > summary').focus();
+            await page.keyboard.press('Escape');
+            assert.equal(await help.evaluate(el => el.open), false);
+            await page.locator('a[href="#transcript-heading"]').first().focus();
+            await page.keyboard.press('Enter');
+            assert.equal(await page.evaluate(() => document.activeElement.id), 'transcript-heading');
+            await page.keyboard.press('Tab');
+            assert.ok(await page.evaluate(() => document.activeElement.matches('#reading-settings > summary')), 'Transcript destination leads into its actual controls');
+        });
         await openTranscript(page, mode);
         await screenshot(page, result, opts, 'transcript-preview');
         await step(result, 'axe-transcript', () => axeScan(page, 'transcript', result, axeSource));
         await step(result, 'native-cue-seek-and-follow', async () => {
-            await page.locator('.transcript-item').nth(5).click();
+            await page.locator('.transcript-item').nth(5).press('Enter');
             await page.waitForFunction(() => Math.abs(document.querySelector('video').currentTime - 5) < 2);
             await page.locator('video').evaluate(v => v.pause());
-            await page.locator('#transcript-follow').check();
+            await page.locator('#transcript-follow').press('Space');
+            assert.equal(await page.locator('#transcript-follow').isChecked(), true);
             await seek(page, 250.5);
             const active = page.locator('.transcript-item[aria-current="true"]');
             assert.ok((await active.textContent()).includes('[ZH250]'));
@@ -290,6 +351,30 @@ async function runPlayer(browser, folder, baselineFolder, mode, profile, opts, r
                 await settle(page);
             }
         });
+        await step(result, 'video-click-controls-focus-and-central-play', async () => {
+            await page.locator('video').evaluate(v => {v.pause();v.muted=false;});
+            await page.locator('#big-play').focus();
+            await page.keyboard.press('Enter');
+            // paused flips synchronously; the native play event that updates
+            // the controls is queued separately. Wait for the user-visible
+            // result, not merely the decoder's immediate property change.
+            await page.waitForFunction(() => !document.querySelector('video').paused && document.activeElement.id === 'play-toggle');
+            assert.equal(await page.evaluate(() => document.activeElement.id), 'play-toggle');
+            assert.equal(await page.locator('#big-play').isVisible(), false);
+            await page.keyboard.press('Space');
+            await page.waitForFunction(() => document.querySelector('video').paused);
+            await page.keyboard.press('m');
+            assert.equal(await page.locator('video').evaluate(v=>v.muted),true);
+            await page.locator('#video-stage').click({position:{x:15,y:15}});
+            assert.equal(await page.evaluate(() => document.activeElement.id), 'video-stage');
+            await page.waitForFunction(() => !document.querySelector('video').paused);
+            await page.waitForFunction(() => document.querySelector('#video-stage').classList.contains('controls-hidden'), null, {timeout:5000});
+            await page.keyboard.press('m');
+            await page.waitForTimeout(2700);
+            assert.equal(await page.locator('#video-stage').evaluate(el=>el.classList.contains('controls-hidden')),false,'Controls remain visible during keyboard interaction');
+            await page.keyboard.press('Space');
+            await page.waitForFunction(() => document.querySelector('video').paused);
+        });
         await step(result, 'form-controls-and-native-range-keys', async () => {
             await page.locator('video').evaluate(v => { v.pause(); v.muted = false; });
             await seek(page, 100);
@@ -308,7 +393,7 @@ async function runPlayer(browser, folder, baselineFolder, mode, profile, opts, r
         });
         await step(result, 'speed-menu-keyboard-and-escape', async () => {
             await page.locator('#speed-button').focus();
-            await page.keyboard.press('Enter');
+            await page.keyboard.press('ArrowDown');
             const first = await page.evaluate(() => document.activeElement.dataset.value);
             assert.ok(await page.evaluate(() => Boolean(document.activeElement.closest('#speed-menu'))), 'Opening speed menu places focus inside');
             await page.keyboard.press('ArrowDown');
@@ -327,8 +412,8 @@ async function runPlayer(browser, folder, baselineFolder, mode, profile, opts, r
             await page.locator('video').evaluate(v => v.pause());
         });
         await step(result, 'axe-caption-styles-and-escape', async () => {
-            await page.locator('#caption-button').click();
-            await page.locator('#caption-menu .menu-link').click();
+            await page.locator('#caption-button').press('Enter');
+            await page.locator('#caption-menu .menu-link').press('Enter');
             await axeScan(page, 'caption-styles', result, axeSource);
             await page.keyboard.press('Escape');
             assert.equal(await page.locator('#caption-menu').evaluate(el => el.hidden), true);
@@ -343,7 +428,7 @@ async function runPlayer(browser, folder, baselineFolder, mode, profile, opts, r
             assert.equal(await page.locator('#reading-line-height').inputValue(), '1.5');
             assert.equal(await page.locator('#reading-contrast').inputValue(), 'normal');
             assert.equal(await page.locator('#reading-timestamps').isChecked(), false);
-            await page.locator('#reading-settings > summary').click();
+            await page.locator('#reading-settings > summary').press('Enter');
             if (!profile.mobile) assert.ok(await page.locator('.reading-settings-panel').evaluate(el => el.scrollHeight <= el.clientHeight + 1), 'Desktop settings should show all controls without unnecessary internal scrolling');
             await screenshot(page, result, opts, 'reading-panel-preview');
             await axeScan(page, 'reading-settings-open', result, axeSource);
@@ -365,7 +450,7 @@ async function runPlayer(browser, folder, baselineFolder, mode, profile, opts, r
             await page.locator('#reading-contrast').selectOption('high');
             assert.equal(await page.locator('body').getAttribute('data-reading-contrast'), 'high');
             await screenshot(page, result, opts, 'large-font-high-contrast-preview');
-            await page.locator('#reading-reset').click();
+            await page.locator('#reading-reset').press('Enter');
             assert.equal(await page.locator('#reading-font-size').inputValue(), '100');
             assert.equal(await page.locator('#reading-line-height').inputValue(), '1.5');
             assert.equal(await page.locator('#reading-contrast').inputValue(), 'normal');

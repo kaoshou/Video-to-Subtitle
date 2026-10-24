@@ -195,6 +195,129 @@ test('player shortcuts respect focus, modifiers and typing; seek slider exposes 
   field.dispatchEvent(new w.KeyboardEvent('keydown',{key:'m',bubbles:true}));assert.equal(video.muted,true);
 });
 
+test('clicking the video establishes playback focus and controls retain scoped shortcuts', t => {
+  for (const standalone of [true, false]) {
+    const {dom,w}=player({mode:standalone?'standalone':undefined,duration:120},{standalone});
+    t.after(()=>dom.window.close());
+    const doc=w.document, video=doc.querySelector('video'), stage=doc.querySelector('#video-stage');
+    video.click();
+    assert.equal(doc.activeElement,stage,'A mouse-started session can immediately use playback keys');
+    const button=doc.querySelector('#play-toggle');button.focus();
+    const press=(target,key,extra={})=>target.dispatchEvent(new w.KeyboardEvent('keydown',
+      {key,bubbles:true,cancelable:true,...extra}));
+    press(button,'m');assert.equal(video.muted,true);
+    press(button,'m',{repeat:true});assert.equal(video.muted,true,'Holding a toggle key must not flicker');
+    press(button,'f');assert.equal(stage.classList.contains('is-frame-fullscreen'),true);
+    press(button,'Escape');assert.equal(stage.classList.contains('is-frame-fullscreen'),false);
+    assert.equal(press(button,'Enter'),true,'Native button activation remains available');
+    assert.equal(press(button,' ',{code:'Space'}),true,'Space on a button uses that button');
+    const range=doc.querySelector('#volume-slider');range.focus();press(range,'m');
+    assert.equal(video.muted,true,'Form and range controls keep their own keyboard behavior');
+    doc.querySelector('#caption-button').click();press(doc.activeElement,'m');
+    assert.equal(video.muted,true,'Subtitle dialog controls do not trigger playback letters');
+  }
+});
+
+test('chapter and help navigation reveal their destinations and establish useful focus', t => {
+  const {dom,w}=player({title:'course',index:[{time:0,title:'開始'},{time:10000,title:'操作'}]},
+    {standalone:false});t.after(()=>dom.window.close());
+  const doc=w.document;
+  doc.querySelector('a[href="#transcript-heading"]').click();
+  const links=[...doc.querySelectorAll('a[href="#chapters-heading"]')];
+  assert.ok(links.length,'Chapter navigation is discoverable without traversing every player control');
+  for (const link of links) {
+    link.click();assert.equal(doc.querySelector('#chapters-panel').hidden,false);
+    assert.equal(doc.activeElement,doc.querySelector('#chapters-heading'));
+    doc.querySelector('a[href="#transcript-heading"]').click();
+  }
+  const help=doc.querySelector('#player-help');assert.ok(help);assert.equal(help.open,false);
+  doc.querySelector('a[href="#player-help"]').click();
+  assert.equal(help.open,true);assert.equal(doc.activeElement,help.querySelector('summary'));
+  help.querySelector('summary').focus();
+  doc.activeElement.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+  assert.equal(help.open,false);assert.equal(doc.activeElement,help.querySelector('summary'));
+});
+
+test('every transcript navigation entry opens the standalone panel, including empty subtitles', t => {
+  const {dom,w}=player({mode:'standalone'},{subtitles:{tracks:[]}});t.after(()=>dom.window.close());
+  const doc=w.document;
+  const links=[...doc.querySelectorAll('a[href="#transcript-heading"]')];
+  assert.ok(links.length,'The keyboard skip link offers transcript navigation');
+  for (const link of links) {
+    link.click();assert.equal(doc.querySelector('.chapter-card').hidden,false);
+    assert.equal(doc.querySelector('#transcript-panel').hidden,false);
+    assert.equal(doc.activeElement,doc.querySelector('#transcript-heading'));
+    doc.querySelector('#transcript-toggle').click();
+  }
+  assert.ok([...doc.querySelectorAll('a[href="#chapters-heading"]')].every(link=>link.hidden),
+    'Plain MP4 does not offer a nonexistent chapter index');
+});
+
+test('access keys target the player, chapters, transcript and help without a visible navigation bar', t => {
+  for (const standalone of [true,false]) {
+    const {dom,w}=player({mode:standalone?'standalone':undefined,index:[{time:0,title:'開始'}]}, {standalone});
+    t.after(()=>dom.window.close());const doc=w.document;
+    assert.equal(doc.querySelector('.player-navigation'),null,'Default layout has no quick-navigation bar');
+    for (const [key,href] of [['c','#video-stage'],['i','#chapters-heading'],['t','#transcript-heading'],['h','#player-help']]) {
+      const link=doc.querySelector(`a[href="${href}"]`);assert.ok(link);
+      assert.equal(link.accessKey,standalone&&key==='i'?'':key);
+      if (!(standalone&&key==='i')) {
+        assert.equal(link.classList.contains('player-skip-link'),true,'Access keys use focus-revealed skip links');
+        link.click();
+        assert.equal(doc.activeElement,href==='#player-help'?doc.querySelector('#player-help > summary'):doc.querySelector(href));
+      }
+    }
+  }
+});
+
+test('documented navigation combinations work across platforms without intercepting AltGr or composition', t => {
+  for (const platform of ['Win32','MacIntel']) {
+    const {dom,w}=player({index:[{time:0,title:'開始'}]},{standalone:false});
+    t.after(()=>dom.window.close());const doc=w.document;
+    Object.defineProperty(w.navigator,'platform',{value:platform,configurable:true});
+    const press=(key,modifiers)=>doc.activeElement.dispatchEvent(new w.KeyboardEvent('keydown',
+      {key,bubbles:true,cancelable:true,...modifiers}));
+    const modifiers=platform==='MacIntel'?{ctrlKey:true,altKey:true}:{altKey:true};
+    for (const [key,target] of [['c','#video-stage'],['i','#chapters-heading'],['t','#transcript-heading'],['h','#player-help > summary']]) {
+      press(key,modifiers);assert.equal(doc.activeElement,doc.querySelector(target));
+    }
+    doc.querySelector('#transcript-search').focus();const input=doc.activeElement;
+    for(const extra of [{isComposing:true},{repeat:true},{metaKey:true}]) {
+      press('c',{...modifiers,...extra});assert.equal(doc.activeElement,input);
+    }
+    if(platform==='Win32') {
+      press('c',{ctrlKey:true,altKey:true});assert.equal(doc.activeElement,input,'AltGr keeps input intact');
+      press('c',{altKey:true,shiftKey:true});assert.equal(doc.activeElement,doc.querySelector('#video-stage'),'Firefox combination works');
+    }
+  }
+});
+
+test('menu openers support the expected down arrow while input methods are left alone', t => {
+  const {dom,w}=player({mode:'standalone'});t.after(()=>dom.window.close());
+  for (const [buttonId,menuId] of [['speed-button','speed-menu'],['caption-button','caption-menu']]) {
+    const button=w.document.getElementById(buttonId),menu=w.document.getElementById(menuId);
+    button.focus();button.dispatchEvent(new w.KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true,cancelable:true}));
+    assert.equal(menu.hidden,false);assert.ok(menu.contains(w.document.activeElement));
+    w.document.activeElement.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+    assert.equal(w.document.activeElement,button);
+    button.dispatchEvent(new w.KeyboardEvent('keydown',{key:'ArrowDown',isComposing:true,bubbles:true}));
+    assert.equal(menu.hidden,true);
+  }
+});
+
+test('starting with the central play button moves focus to a visible playback control', t => {
+  const {dom,w}=player({mode:'standalone'});t.after(()=>dom.window.close());
+  const doc=w.document,video=doc.querySelector('video'),central=doc.querySelector('#big-play');
+  central.focus();
+  // jsdom does not decode media: expose only the native playing-state boundary.
+  Object.defineProperty(video,'paused',{value:false,configurable:true});
+  video.dispatchEvent(new w.Event('play'));
+  assert.equal(doc.activeElement,doc.querySelector('#play-toggle'));
+  assert.equal(central.hidden,true,'An invisible central overlay must not remain in the Tab order');
+  Object.defineProperty(video,'paused',{value:true,configurable:true});
+  video.dispatchEvent(new w.Event('pause'));assert.equal(central.hidden,false);
+});
+
 test('skip-to-transcript reveals the correct panel and gives it a stable keyboard target', t => {
   for (const standalone of [true,false]) {
     const {dom,w}=player({mode:standalone?'standalone':undefined},{standalone});t.after(()=>dom.window.close());

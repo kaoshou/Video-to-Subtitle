@@ -15,8 +15,10 @@
     <link rel="stylesheet" href="css/evercam-modern.css">
 </head>
 <body>
-    <a class="player-skip-link" href="#video-stage">跳至播放器</a>
-    <a class="player-skip-link" href="#transcript-heading">跳至逐字稿</a>
+    <a class="player-skip-link" href="#video-stage" accesskey="c">跳至播放器（C）</a>
+    <a class="player-skip-link" href="#chapters-heading" accesskey="i">跳至章節（I）</a>
+    <a class="player-skip-link" href="#transcript-heading" accesskey="t">跳至逐字稿（T）</a>
+    <a class="player-skip-link" href="#player-help" accesskey="h">操作說明與鍵盤快捷鍵（H）</a>
     <main class="page-shell">
         <header class="course-header">
             <span class="course-mark" aria-hidden="true"><span></span></span>
@@ -32,6 +34,7 @@
         <div class="learning-layout">
             <section class="player-card" aria-label="課程影片">
                 <div id="video-stage" class="video-stage" tabindex="0" role="group" aria-label="影片播放器" aria-describedby="player-keyboard-help">
+                    <p id="player-keyboard-help" class="sr-only">影片畫面取得焦點時，Space 播放或暫停，左右方向鍵快退或快轉 10 秒；M 靜音，F 全螢幕。按 Tab 移至控制按鈕。頁面下方有完整操作說明。</p>
                     <video id="course-video" playsinline preload="metadata" aria-label="課程影片">
                         您的瀏覽器不支援 HTML5 影片播放。
                     </video>
@@ -106,7 +109,7 @@
                         aria-selected="false" tabindex="-1">逐字稿</button>
                 </div>
                 <section id="chapters-panel" class="reading-panel" role="tabpanel" aria-labelledby="chapters-tab">
-                    <h2 id="chapters-heading" class="sr-only">章節索引</h2>
+                    <h2 id="chapters-heading" class="sr-only" tabindex="-1">章節索引</h2>
                     <nav id="chapter-list" class="chapter-list" aria-label="影片章節"></nav>
                     <p id="chapter-empty" class="empty-state" hidden>尚無章節索引。</p>
                 </section>
@@ -162,14 +165,61 @@
         </div>
 
 
-        <footer class="course-footer" aria-label="播放器操作提示">
-            <p id="player-keyboard-help" class="keyboard-hints">
-                <span>聚焦播放器時：</span>
-                <span><kbd>Space</kbd> 播放／暫停</span>
-                <span><kbd>← →</kbd> 快退／快轉</span>
-                <span><kbd>M</kbd> 靜音</span>
-                <span><kbd>F</kbd> 全螢幕</span>
-            </p>
+        <footer class="course-footer" aria-label="播放器操作指南">
+            <details id="player-help" class="player-help">
+                <summary>操作說明與鍵盤快捷鍵</summary>
+                <div class="keyboard-hints">
+                    <details class="help-topic">
+                        <summary>快速定位與基本操作</summary>
+                        <div class="help-topic-content">
+                        <p>按 <kbd>Tab</kbd> 移至下一個連結或控制項，<kbd>Shift + Tab</kbd> 回到上一項；焦點所在位置會有外框。按 <kbd>Enter</kbd> 啟用連結；按鈕可用 <kbd>Enter</kbd> 或 <kbd>Space</kbd>。</p>
+                        <p>定位連結平時隱藏，從頁面第一個 Tab 停留點可依序選取，取得鍵盤焦點時才會顯示；按 Enter 跳至對應區域。也可直接使用下列瀏覽器定位快捷鍵，會自動切換分頁或展開逐字稿，再按 Tab 即可操作內容。</p>
+                        <table class="shortcut-table">
+                            <caption>定位快捷鍵代碼（Accesskey）</caption>
+                            <thead><tr><th scope="col">代碼</th><th scope="col">定位區域</th></tr></thead>
+                            <tbody><tr><th scope="row"><kbd>C</kbd></th><td>播放器</td></tr><tr><th scope="row"><kbd>I</kbd></th><td>章節（有章節的 EverCam 課程）</td></tr><tr><th scope="row"><kbd>T</kbd></th><td>逐字稿與搜尋</td></tr><tr><th scope="row"><kbd>H</kbd></th><td>展開本操作說明</td></tr></tbody>
+                        </table>
+                        <p>Windows 的 Chrome／Edge：<kbd>Alt + 代碼</kbd>；Firefox：<kbd>Alt + Shift + 代碼</kbd>。macOS 的 Chrome／Safari／Firefox：<kbd>Control + Option + 代碼</kbd>。例如 Windows Chrome 用 Alt + T 定位逐字稿。若組合鍵由瀏覽器或輔助工具使用，可改用 Tab 選取定位連結。</p>
+                        <p>一般 MP4 或沒有章節的課程不提供章節定位快捷鍵。沒有字幕時，逐字稿會顯示提示，相關搜尋與下載功能停用。</p>
+                        </div>
+                    </details>
+                    <details class="help-topic">
+                        <summary>播放、音量與全螢幕</summary>
+                        <div class="help-topic-content">
+                        <p>先用定位快捷鍵或 Tab 選取「跳至播放器」，也可直接點影片畫面，讓焦點進入播放器。點影片可播放／暫停；下列按鍵的生效位置各有不同。</p>
+                        <table class="shortcut-table">
+                            <caption>播放快捷鍵與生效位置</caption>
+                            <thead><tr><th scope="col">按鍵</th><th scope="col">功能與生效位置</th></tr></thead>
+                            <tbody>
+                                <tr><th scope="row"><kbd>Space</kbd></th><td>影片畫面取得焦點時播放／暫停；焦點在按鈕上時，執行該按鈕功能。</td></tr>
+                                <tr><th scope="row"><kbd>←</kbd> / <kbd>→</kbd></th><td>影片畫面取得焦點時快退／快轉 10 秒。</td></tr>
+                                <tr><th scope="row"><kbd>M</kbd></th><td>影片畫面或一般控制按鈕取得焦點時，切換靜音。</td></tr>
+                                <tr><th scope="row"><kbd>F</kbd></th><td>影片畫面或一般控制按鈕取得焦點時，切換全螢幕。</td></tr>
+                                <tr><th scope="row"><kbd>Esc</kbd></th><td>關閉播放器選單或閱讀設定並返回開啟按鈕；在全螢幕時離開全螢幕。於本說明區可收合說明。</td></tr>
+                            </tbody>
+                        </table>
+                        <p>搜尋欄、下拉選單、滑桿及字幕設定內保留原本的鍵盤操作，不觸發上述播放快捷鍵。在頁面其他區域按 M 或 F 不會控制影片。</p>
+                        <p>進度與音量滑桿：用 Tab 移入後，以方向鍵增減、Home／End 移至最小／最大值；時間及音量百分比會提供給輔助工具。窄螢幕未顯示音量滑桿時，可使用裝置音量鍵。子母畫面按鈕只在瀏覽器支援時顯示。</p>
+                        </div>
+                    </details>
+                    <details class="help-topic">
+                        <summary>字幕、速度與選單</summary>
+                        <div class="help-topic-content">
+                        <p>在 CC 或播放速度按鈕按 Enter、Space 或 ↓ 開啟選單。播放速度清單以 ↑／↓ 移動、Home／End 選到第一／最後一項，Enter 或 Space 套用；套用後回到開啟按鈕。</p>
+                        <p>CC 字幕設定使用 Tab／Shift + Tab 巡覽，Enter 或 Space 選擇字幕語言、關閉字幕或進入「字幕外觀」。字級、底色與位置可在字幕外觀內調整。Esc 關閉並返回 CC 按鈕；Tab 也可離開選單。</p>
+                        </div>
+                    </details>
+                    <details class="help-topic">
+                        <summary>章節、逐字稿與閱讀設定</summary>
+                        <div class="help-topic-content">
+                        <p>EverCam 的「章節／逐字稿」分頁以 ←／→ 切換，Home／End 移至第一／最後分頁；按 Tab 進入分頁內容。章節按鈕以 Enter 或 Space 跳到對應時間。一般 MP4 可按「逐字稿與搜尋」展開或收合。</p>
+                        <p>逐字稿先選語言，輸入關鍵字可即時搜尋；「清除」還原全部內容。逐字稿段落以 Enter 或 Space 跳到對應時間並播放；「顯示更多／顯示前段」可瀏覽其他段落。</p>
+                        <p>「跟隨播放」預設關閉，按 Space 勾選後，自動捲動到播放中的字幕；搜尋期間暫停跟隨。跟隨不會搶走鍵盤焦點。</p>
+                        <p>在「閱讀設定」按 Enter 或 Space 展開，以 Tab 巡覽字級、行距、高對比及下載選項；下拉選單用方向鍵選擇。Esc 收合並回到「閱讀設定」；Tab 可直接離開。下載閱讀版 HTML 或 TXT 會包含所選語言的全部逐字稿，亦可勾選時間標記。</p>
+                        </div>
+                    </details>
+                </div>
+            </details>
         </footer>
     </main>
 

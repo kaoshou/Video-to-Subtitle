@@ -265,14 +265,50 @@
         document.addEventListener("click", function (event) {
             if (!readingSettings.contains(event.target)) { readingSettings.open = false; }
         });
-        document.querySelector('a[href="#transcript-heading"]').addEventListener("click", function (event) {
-            event.preventDefault();
-            var toggle = document.getElementById("transcript-toggle");
-            if (standalone && chapterCard.hidden && toggle) { toggle.click(); }
-            else { activateReadingTab("transcript"); }
-            document.getElementById("transcript-heading").focus();
-        });
         applyReadingAppearance(); syncTranscriptDownloads();
+    }
+
+    function installPlayerNavigation() {
+        var help = document.getElementById("player-help");
+        var navigationKeys = Object.create(null);
+        document.querySelectorAll('a[href="#video-stage"], a[href="#chapters-heading"], a[href="#transcript-heading"], a[href="#player-help"]').forEach(function (link) {
+            var destination = link.getAttribute("href").slice(1);
+            if (destination === "chapters-heading" && (standalone || chapters.length === 0)) {
+                link.hidden = true;
+                link.removeAttribute("accesskey");
+                return;
+            }
+            if (link.accessKey) { navigationKeys[link.accessKey.toLowerCase()] = link; }
+            link.addEventListener("click", function (event) {
+                event.preventDefault();
+                closeMenus();
+                if (readingSettings) { readingSettings.open = false; }
+                if (destination === "transcript-heading") {
+                    var toggle = document.getElementById("transcript-toggle");
+                    if (standalone && chapterCard.hidden && toggle) { toggle.click(); }
+                    else { activateReadingTab("transcript"); }
+                } else if (destination === "chapters-heading") {
+                    activateReadingTab("chapters");
+                } else if (destination === "player-help") {
+                    help.open = true;
+                }
+                var target = destination === "player-help" ? help.querySelector("summary") : document.getElementById(destination);
+                target.focus();
+                if (target.scrollIntoView) { target.scrollIntoView({ block: "nearest" }); }
+            });
+        });
+        // Keep the documented access-key combinations consistent when the
+        // browser does not activate native accesskeys. Cancel the default only
+        // for an available destination, so it is never activated twice.
+        document.addEventListener("keydown", function (event) {
+            if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.repeat || event.metaKey || !event.altKey) { return; }
+            var apple = /Mac|iPhone|iPad/.test(navigator.platform || "");
+            if (apple ? !event.ctrlKey : event.ctrlKey) { return; } // Preserve Windows/Linux AltGr typing.
+            var link = navigationKeys[event.key.toLowerCase()];
+            if (!link || link.hidden) { return; }
+            event.preventDefault();
+            link.click();
+        });
     }
 
     function setCourseMetadata() {
@@ -1101,6 +1137,8 @@
 
     function updatePlayState() {
         var isPlaying = !video.paused && !video.ended;
+        if (isPlaying && document.activeElement === bigPlay) { playToggle.focus({ preventScroll: true }); }
+        bigPlay.hidden = isPlaying;
         videoStage.classList.toggle("is-playing", isPlaying);
         playToggle.setAttribute("aria-label", isPlaying ? "暫停" : "播放");
         bigPlay.setAttribute("aria-label", isPlaying ? "暫停影片" : "播放影片");
@@ -1183,7 +1221,7 @@
         videoStage.classList.remove("controls-hidden");
         if (!video.paused && !video.ended && !menusAreOpen()) {
             controlsTimer = window.setTimeout(function () {
-                if (!document.getElementById("video-controls").contains(document.activeElement)) {
+                if (!document.getElementById("video-controls").contains(document.activeElement) && !videoStage.matches(":focus-visible")) {
                     videoStage.classList.add("controls-hidden");
                 }
             }, 2500);
@@ -1314,13 +1352,16 @@
     }
 
     function isTypingTarget(target) {
-        return target.matches("input, textarea, select, button, [contenteditable='true']");
+        return Boolean(target.closest("input, textarea, select, summary, a, [contenteditable], [role='menu'], [role='dialog']"));
     }
 
     function bindEvents() {
         bigPlay.addEventListener("click", togglePlayback);
         playToggle.addEventListener("click", togglePlayback);
-        video.addEventListener("click", togglePlayback);
+        video.addEventListener("click", function () {
+            videoStage.focus({ preventScroll: true });
+            togglePlayback();
+        });
         video.addEventListener("play", updatePlayState);
         video.addEventListener("pause", updatePlayState);
         video.addEventListener("ended", updatePlayState);
@@ -1398,12 +1439,17 @@
         });
 
         document.addEventListener("keydown", function (event) {
-            if (event.defaultPrevented) { return; }
+            if (event.defaultPrevented || event.isComposing || event.keyCode === 229) { return; }
             if (event.key === "Escape") {
                 if (readingSettings && readingSettings.open && readingSettings.contains(event.target)) {
                     readingSettings.open = false;
                     readingSettings.querySelector("summary").focus();
                 } else if (menusAreOpen()) { closeMenus(true); }
+                else if (event.target.closest("#player-help") && document.getElementById("player-help").open) {
+                    var help = document.getElementById("player-help");
+                    help.open = false;
+                    help.querySelector("summary").focus();
+                }
                 else if (frameFullscreenIsActive()) { exitFrameFullscreen(); }
                 else { return; }
                 event.preventDefault(); showControls(); return;
@@ -1418,22 +1464,38 @@
                 if (items[index]) { items[index].focus(); event.preventDefault(); }
                 return;
             }
-            if (event.ctrlKey || event.metaKey || event.altKey || event.isComposing || event.target !== videoStage) { return; }
+            if (event.ctrlKey || event.metaKey || event.altKey || !videoStage.contains(event.target)) { return; }
+            if ((event.target === captionButton || event.target === speedButton) && event.key === "ArrowDown") {
+                event.preventDefault();
+                if ((event.target === captionButton ? captionMenu : speedMenu).hidden) { event.target.click(); }
+                return;
+            }
             if (isTypingTarget(event.target)) {
                 return;
             }
+            // Space/Enter keep native button activation; arrows on a form or
+            // menu keep that control's behavior. Letters are scoped to the
+            // player group, including its ordinary control buttons.
+            var onButton = event.target.closest("button");
             if (event.code === "Space") {
+                if (onButton) { return; }
                 event.preventDefault();
                 togglePlayback();
             } else if (event.key === "ArrowLeft") {
+                if (onButton) { return; }
                 event.preventDefault();
                 video.currentTime = Math.max(0, video.currentTime - 10);
             } else if (event.key === "ArrowRight") {
+                if (onButton) { return; }
                 event.preventDefault();
-                video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 10);
+                video.currentTime = Math.min(video.duration || Number(courseConfig.duration) || Infinity, video.currentTime + 10);
             } else if (event.key.toLowerCase() === "m") {
+                if (event.repeat) { return; }
+                event.preventDefault();
                 video.muted = !video.muted;
             } else if (event.key.toLowerCase() === "f") {
+                if (event.repeat) { return; }
+                event.preventDefault();
                 toggleFullscreen();
             } else if (event.key === "Escape") {
                 if (frameFullscreenIsActive()) {
@@ -1451,6 +1513,7 @@
     installTranscript();
     installReadingTabs();
     installReadingSettings();
+    installPlayerNavigation();
     installSpeedMenu();
     installPictureInPicture();
     bindEvents();
