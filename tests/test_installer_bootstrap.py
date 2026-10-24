@@ -23,13 +23,16 @@ class InstallerBootstrap(unittest.TestCase):
 
     def test_installer_bootstrap_dispatches_only_the_current_installed_executable(self):
         broker = Mock()
+        # Use a fully qualified native path on both Windows and POSIX hosts.
+        installed_directory = Path.cwd() / 'installed app'
+        installed_executable = installed_directory / 'VideoToSubtitle.exe'
         with patch.dict('sys.modules', {'ui_installer_launch': SimpleNamespace(launch_via_desktop=broker)}), \
                 patch.object(desktop.sys, 'platform', 'win32'), \
                 patch.object(desktop.sys, 'frozen', True, create=True), \
-                patch.object(desktop.sys, 'executable', '/installed app/VideoToSubtitle.exe'):
+                patch.object(desktop.sys, 'executable', str(installed_executable)):
             result = desktop.launch_after_install()
         self.assertEqual(result, 0)
-        broker.assert_called_once_with('/installed app/VideoToSubtitle.exe', '/installed app')
+        broker.assert_called_once_with(str(installed_executable), str(installed_directory))
 
     def test_shell_failure_is_actionable_and_does_not_fall_back_to_child_start(self):
         broker = Mock(side_effect=RuntimeError('desktop shell unavailable'))
