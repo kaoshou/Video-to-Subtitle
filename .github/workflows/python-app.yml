@@ -301,6 +301,11 @@ jobs:
           name: VideoToSubtitle-Windows-Setup
           path: output-windows-setup
 
+      - name: 建立最新版固定檔名安裝包
+        env:
+          RELEASE_VERSION: ${{ steps.get_version.outputs.version }}
+        run: cp "output-windows-setup/VideoToSubtitle-Setup-v${RELEASE_VERSION}.exe" output-windows-setup/VideoToSubtitle-Setup.exe
+
       - name: 建立 Github Release 並上傳檔案
         uses: softprops/action-gh-release@v2
         with:
@@ -315,6 +320,7 @@ jobs:
           files: |
             output-windows/VideoToSubtitle.exe
             output-windows-setup/VideoToSubtitle-Setup-v${{ steps.get_version.outputs.version }}.exe
+            output-windows-setup/VideoToSubtitle-Setup.exe
             output-mac/VideoToSubtitle.dmg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

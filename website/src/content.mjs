@@ -1,9 +1,6 @@
 import { assetPath, routeFor } from './paths.mjs';
 import { escapeHtml } from './layout.mjs';
 
-// Advance after the matching Release and all three assets are published.
-export const publishedReleaseVersion = '2.8.3';
-
 const latest = 'https://github.com/kaoshou/Video-to-Subtitle/releases/latest';
 const guide = routeFor('guide');
 const chapter = id => guide + '#' + id;
@@ -43,8 +40,8 @@ function imageLink(file, alt, className = '', eager = false) {
   return '<a class="image-zoom ' + className + '" href="' + assetPath(file) + '" aria-label="放大查看：' + escapeHtml(alt) + '"><img src="' + assetPath(file) + '" alt="' + escapeHtml(alt) + '"' + (eager ? ' fetchpriority="high"' : ' loading="lazy"') + '></a>';
 }
 
-export function renderHome(releaseVersion = publishedReleaseVersion) {
-  const downloadBase = 'https://github.com/kaoshou/Video-to-Subtitle/releases/download/v' + encodeURIComponent(releaseVersion);
+export function renderHome() {
+  const downloadBase = latest + '/download';
   const tasks = [
     ['video', '我有影片，想產生字幕', '從短片開始，完成第一份 SRT。', '#quickstart'],
     ['edit', '我已有字幕，想修改', '直接開啟字幕，不必重新轉錄。', chapter('字幕校對器')],
@@ -55,7 +52,7 @@ export function renderHome(releaseVersion = publishedReleaseVersion) {
   return '<div class="home-page">' +
 '<section class="home-hero"><div class="container home-hero-grid">' +
   '<div class="home-hero-copy"><p class="eyebrow">' + escapeHtml(content.eyebrow) + '</p><h1><span>影片留在電腦，</span><em>字幕安心生成。</em></h1><p class="home-lead">' + escapeHtml(content.heroText) + '</p>' +
-  '<div class="hero-actions"><a class="button button-primary" href="' + downloadBase + '/VideoToSubtitle.exe">下載 Windows 免安裝版</a><a class="button button-primary" href="' + downloadBase + '/VideoToSubtitle-Setup-v' + encodeURIComponent(releaseVersion) + '.exe">下載 Windows 安裝版</a><a class="button button-secondary" href="' + downloadBase + '/VideoToSubtitle.dmg">下載 macOS 版</a></div>' +
+  '<div class="hero-actions"><a class="button button-primary" href="' + downloadBase + '/VideoToSubtitle.exe">下載 Windows 免安裝版</a><a class="button button-primary" href="' + downloadBase + '/VideoToSubtitle-Setup.exe">下載 Windows 安裝版</a><a class="button button-secondary" href="' + downloadBase + '/VideoToSubtitle.dmg">下載 macOS 版</a></div>' +
   '<p class="home-download-note">安裝版通常啟動較快：執行環境在安裝時一次展開，之後開啟不必像免安裝版一樣重新解壓。</p>' +
   '<div class="home-hero-links"><a href="#quickstart">看快速上手 →</a><a href="' + latest + '">版本更新內容 ↗</a></div><ul class="home-trust" aria-label="工具特色"><li>免費・開放原始碼</li><li>本機轉錄</li><li>無顯卡也能用</li></ul></div>' +
   '<figure class="home-hero-visual"><div class="preview-label"><span>你的字幕工作台</span><span>DESKTOP APP</span></div>' + imageLink('screenshot_main.png', 'Video to Subtitle 主畫面，顯示影片清單與轉錄設定', '', true) + '<figcaption><span>v2.7.12 主操作介面 · Linux 示範</span><span>點擊圖片放大 ↗</span></figcaption></figure>' +

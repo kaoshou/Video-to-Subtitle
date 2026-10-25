@@ -8,4 +8,4 @@ README 更新摘要、GitHub Release 介紹與官方網站的版本重點，統�
 - 建置紀錄、測試進度、待辦、驗證矩陣等工程資訊留在 Actions 或開發紀錄，不混入版本介紹。
 - 必要的系統需求、使用限制、資料備份及安全提醒放在完整手冊的對應章節；不以沒有依據的相容性或認證宣稱取代說明。
 - 更新歷史 Release 時只調整介紹文字，保留原標籤、發布日期及下載成品。
-- 官網下載區的 `website/src/content.mjs` 中，`publishedReleaseVersion` 只在對應 Release 與三個成品均公開後更新；三個按鈕使用同一個固定標籤，避免來源版本超前、或 `latest` 切換時讓帶版號的安裝包連結失效。
+- 官網三個下載按鈕固定使用 `releases/latest/download/`，不隨版本修改網址。每次 Release 必須提供 `VideoToSubtitle.exe`、`VideoToSubtitle.dmg` 與固定檔名 `VideoToSubtitle-Setup.exe`；安裝版另保留帶版號的檔案。固定檔名安裝包由相同成品複製，內容必須一致。

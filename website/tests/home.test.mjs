@@ -23,7 +23,7 @@ test('homepage gives a concise first-run path and uses genuine screenshots', asy
   }
 });
 
-test('hero pins all downloads to the published release while newer source versions are being built', async () => {
+test('hero always links to latest downloads regardless of source version', async () => {
   const root = resolve(import.meta.dirname, '../..');
   const fixture = await mkdtemp(join(tmpdir(), 'video-subtitle-downloads-'));
   try {
@@ -33,17 +33,17 @@ test('hero pins all downloads to the published release while newer source versio
       await copyFile(join(root, asset), join(fixture, asset));
     }
     for (const version of ['9.1.2', '9.1.3']) {
-      await writeFile(join(fixture, 'pyproject.toml'), '[project]\nversion = "9.2.0"\n');
+      await writeFile(join(fixture, 'pyproject.toml'), '[project]\nversion = "' + version + '"\n');
       const outputRoot = join(fixture, version);
-      await buildSite({ repositoryRoot: fixture, outputRoot, releaseVersion: version });
+      await buildSite({ repositoryRoot: fixture, outputRoot });
       const dom = new JSDOM(await readFile(join(outputRoot, 'index.html'), 'utf8'));
       try {
         const buttons = [...dom.window.document.querySelectorAll('.home-hero .hero-actions a')];
         assert.equal(buttons.length, 3, 'The installer must be directly available next to the portable download');
         assert.deepEqual(buttons.map(a => a.href), [
-          `https://github.com/kaoshou/Video-to-Subtitle/releases/download/v${version}/VideoToSubtitle.exe`,
-          `https://github.com/kaoshou/Video-to-Subtitle/releases/download/v${version}/VideoToSubtitle-Setup-v${version}.exe`,
-          `https://github.com/kaoshou/Video-to-Subtitle/releases/download/v${version}/VideoToSubtitle.dmg`
+          'https://github.com/kaoshou/Video-to-Subtitle/releases/latest/download/VideoToSubtitle.exe',
+          'https://github.com/kaoshou/Video-to-Subtitle/releases/latest/download/VideoToSubtitle-Setup.exe',
+          'https://github.com/kaoshou/Video-to-Subtitle/releases/latest/download/VideoToSubtitle.dmg'
         ]);
         assert.ok(buttons.every(a => a.textContent.trim().startsWith('下載')));
       } finally { dom.window.close(); }
@@ -64,7 +64,7 @@ test('homepage task entries lead directly to quickstart, proofreading and web-ex
     const dom = new JSDOM(html);
     try {
       for (const anchor of dom.window.document.querySelectorAll('.hero-actions a')) {
-        assert.match(anchor.href, /\/releases\/download\/v\d+\.\d+\.\d+\//);
+        assert.match(anchor.href, /\/releases\/latest\/download\//);
       }
     } finally { dom.window.close(); }
     assert.match(html, /<a[^>]*href="\/Video-to-Subtitle\/assets\/screenshot_main.png"[^>]*>[\s\S]*?<img/);
