@@ -18,5 +18,5 @@ ${page === 'home' ? `<script src="${assetPath('lightbox.js')}" defer></script>` 
 </head><body><a class="skip-link" href="#main">跳至主要內容</a>
 <header class="site-header"><nav class="nav-wrap" aria-label="主要導覽"><a class="brand" href="${home}"><img src="${assetPath('app_icon.png')}" alt="Video to Subtitle 圖示" width="34" height="34">Video to Subtitle</a><div class="nav-links"><a href="${home}"${current('home')}>首頁</a><a href="${guide}"${current('guide')}>完整手冊</a><a href="https://github.com/kaoshou/Video-to-Subtitle">GitHub</a><a class="nav-download" href="https://github.com/kaoshou/Video-to-Subtitle/releases/latest">下載</a></div></nav></header>
 <main id="main" tabindex="-1">${body}</main>
-<footer class="site-footer"><div class="container"><span>© Video to Subtitle</span><a href="https://github.com/kaoshou/Video-to-Subtitle">GitHub</a><a href="https://github.com/kaoshou/Video-to-Subtitle/releases">Releases</a><a href="${guide}">完整手冊</a><span>作者：崑山科技大學 鄭郁翰</span></div></footer></body></html>`;
+<footer class="site-footer"><div class="container"><span>Video to Subtitle</span><a href="https://github.com/kaoshou/Video-to-Subtitle">GitHub</a><a href="https://github.com/kaoshou/Video-to-Subtitle/releases">Releases</a><a href="${guide}">完整手冊</a><span>© 2026 崑山科技大學 鄭郁翰 Yu-Han Cheng</span></div></footer></body></html>`;
 }
