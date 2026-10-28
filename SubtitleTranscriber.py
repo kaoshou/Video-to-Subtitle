@@ -2721,6 +2721,8 @@ class App(BaseClass):
         self.case_correction_var = ctk.BooleanVar(value=True)
         self.cpu_threads_var = ctk.StringVar(value="4")
         self.vad_filter_var = ctk.BooleanVar(value=True)
+        self.batch_acceleration_var = ctk.BooleanVar(value=False)
+        self.batch_size_var = ctk.StringVar(value="4")
         
         self.clean_punc_mapping = {
             "none": "保留標點 (none)",
@@ -3123,6 +3125,25 @@ class App(BaseClass):
         
         self.label_chars_hint = ctk.CTkLabel(self.chars_frame, text="字", font=ui_font(size=11), text_color=MUTED)
         self.label_chars_hint.grid(row=1, column=5, sticky="w", pady=3)
+
+        self.batch_frame = ctk.CTkFrame(self.adv_settings_frame, fg_color="transparent")
+        self.batch_frame.grid(row=3, column=0, columnspan=2, sticky="ew", padx=12, pady=(4, 8))
+        self.batch_frame.grid_columnconfigure(0, weight=1)
+        self.chk_batch = ctk.CTkCheckBox(self.batch_frame, text="批次加速（試用）",
+                                        variable=self.batch_acceleration_var, command=self.update_batch_controls,
+                                        font=ui_font(size=12), checkbox_width=18, checkbox_height=18)
+        self.chk_batch.grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(self.batch_frame, text="批次大小", font=ui_font(size=12)).grid(row=0, column=1, padx=(8, 6))
+        self.combo_batch_size = ctk.CTkOptionMenu(self.batch_frame, variable=self.batch_size_var,
+                                                values=["2", "4", "8", "16", "32"], width=65, height=28,
+                                                font=ui_font(size=12), state="disabled")
+        self.combo_batch_size.grid(row=0, column=2, sticky="e")
+        self.batch_hint = ctk.CTkLabel(self.batch_frame, text="", font=ui_font(size=11),
+                                      text_color=MUTED, anchor="w", justify="left", wraplength=410)
+        self.batch_hint.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(4, 0))
+        for variable in (self.batch_acceleration_var, self.device_var, self.vad_filter_var):
+            variable.trace_add('write', lambda *_: self.update_batch_controls())
+        self.update_batch_controls()
 
         # Action Buttons
         self.action_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
@@ -3754,6 +3775,22 @@ class App(BaseClass):
             import subprocess
             subprocess.Popen(["xdg-open", path])
 
+    def update_batch_controls(self):
+        """Only editable when enabled and actually supported by this backend."""
+        enabled = self.batch_acceleration_var.get()
+        mlx = self.device_var.get() in ('mlx', 'mps')
+        vad = self.vad_filter_var.get()
+        self.combo_batch_size.configure(state='normal' if enabled and not mlx and vad else 'disabled')
+        if mlx:
+            hint = 'MLX 使用原生 Apple 加速，目前不支援批次大小；不額外並行載入模型。'
+        elif not enabled:
+            hint = '啟用後可調整；較大的批次需要更多記憶體，速度依設備而異。'
+        elif not vad:
+            hint = 'VAD 已關閉，本次使用標準推論；開啟 VAD 後可使用批次加速。'
+        else:
+            hint = '記憶體不足時自動縮小批次或回到標準推論；取消需等待當批運算結束。'
+        self.batch_hint.configure(text=hint)
+
     def load_settings(self):
         """從 config.json 載入設定"""
         if not os.path.exists(self.config_file):
@@ -3769,6 +3806,11 @@ class App(BaseClass):
             if "format" in config: self.format_var.set(config["format"])
             if "zh_tw" in config: self.zh_tw_var.set(config["zh_tw"])
             if "translate_en" in config: self.translate_en_var.set(config["translate_en"])
+            self.batch_acceleration_var.set(config.get('batch_acceleration') is True)
+            saved_size = str(config.get('batch_size', '4'))
+            self.batch_size_var.set(saved_size if saved_size in ('2', '4', '8', '16', '32') else '4')
+            saved_threads = str(config.get('cpu_threads', '4'))
+            self.cpu_threads_var.set(saved_threads if saved_threads in ('1', '2', '4', '8', '16') else '4')
             if "max_chars" in config:
                 val = str(config["max_chars"])
                 try:
@@ -3805,6 +3847,9 @@ class App(BaseClass):
             "format": self.format_var.get(),
             "zh_tw": self.zh_tw_var.get(),
             "translate_en": self.translate_en_var.get(),
+            "batch_acceleration": self.batch_acceleration_var.get(),
+            "batch_size": int(self.batch_size_var.get()),
+            "cpu_threads": self.cpu_threads_var.get(),
             "max_chars": self.max_chars_var.get(),
             "hotwords": self.hotwords_var.get(),
             "prompt": self.prompt_var.get(),
@@ -4205,6 +4250,10 @@ class App(BaseClass):
             device = self.device_var.get()
             output_fmt = self.format_var.get()
             compute_type = "int8" if device == "cpu" else "float16"
+            try:
+                threads_count = int(self.cpu_threads_var.get())
+            except (ValueError, TypeError):
+                threads_count = 4
             
             use_zh_tw = self.zh_tw_var.get()
             translate_to_en = self.translate_en_var.get()
@@ -4249,13 +4298,14 @@ class App(BaseClass):
             
             # 建立或更新實例
             if not self.transcriber:
-                self.transcriber = SubtitleTranscriber(model_size, device, compute_type, download_root=current_download_root)
+                self.transcriber = SubtitleTranscriber(model_size, device, compute_type, download_root=current_download_root, cpu_threads=threads_count)
             else:
                  # 若參數變更，重新建立
                 if (self.transcriber.model_size != model_size or 
                     self.transcriber.device != device or 
-                    getattr(self.transcriber, 'download_root', None) != current_download_root):
-                     self.transcriber = SubtitleTranscriber(model_size, device, compute_type, download_root=current_download_root)
+                    getattr(self.transcriber, 'download_root', None) != current_download_root or
+                    self.transcriber.cpu_threads != threads_count):
+                     self.transcriber = SubtitleTranscriber(model_size, device, compute_type, download_root=current_download_root, cpu_threads=threads_count)
 
             # 定義模型下載專用即時進度回呼
             def on_download_progress(fraction, info_dict):
@@ -4324,7 +4374,7 @@ class App(BaseClass):
                     compute_type = "int8"
                     self.after(0, lambda: self.device_var.set("cpu"))
                     try:
-                        self.transcriber = SubtitleTranscriber(model_size, device, compute_type, download_root=current_download_root)
+                        self.transcriber = SubtitleTranscriber(model_size, device, compute_type, download_root=current_download_root, cpu_threads=threads_count)
                         self.transcriber.load_model(
                             log_callback=self.log,
                             progress_callback=on_download_progress,
@@ -4354,7 +4404,7 @@ class App(BaseClass):
                             self.log(f"正在切換模型儲存路徑至: {local_models_dir}")
                             
                             # 使用新的 download_root 重新初始化
-                            self.transcriber = SubtitleTranscriber(model_size, device, compute_type, download_root=local_models_dir)
+                            self.transcriber = SubtitleTranscriber(model_size, device, compute_type, download_root=local_models_dir, cpu_threads=threads_count)
                             
                             # 再次嘗試載入
                             self.transcriber.load_model(
@@ -4384,16 +4434,6 @@ class App(BaseClass):
             produced_files = []
             produced_sources = {}
             
-            # 取得執行緒數
-            try:
-                threads_count = int(self.cpu_threads_var.get())
-            except:
-                threads_count = 4
-
-            # 傳入 cpu_threads 以便在需要時重新初始化核心
-            if self.transcriber:
-                self.transcriber.cpu_threads = threads_count
-
             for idx, file_path in enumerate(self.file_list):
                 if self.cancel_flag:
                     break
@@ -4429,7 +4469,9 @@ class App(BaseClass):
                         word_timestamps=word_ts,
                         spacing=spacing,
                         case_correction=case_corr,
-                        vad_filter=vad_filter
+                        vad_filter=vad_filter,
+                        batch_acceleration=self.batch_acceleration_var.get(),
+                        batch_size=int(self.batch_size_var.get())
                     )
                     
                     if result:

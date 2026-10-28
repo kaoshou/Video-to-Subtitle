@@ -12,7 +12,7 @@ dependencies = [
     "tkinterdnd2",
     "faster-whisper",
     "opencc",
-    "av",
+    "av>=11,<17",
     "pillow",
     "sounddevice",
     "tomli; python_version < '3.11'"

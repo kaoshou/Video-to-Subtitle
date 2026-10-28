@@ -230,7 +230,7 @@ class SafeDirectory:
         with self.open_read(name) as stream:
             return stream.read()
 
-    def write_bytes(self, name, data, exclusive=False):
+    def write_bytes(self, name, data, exclusive=False, cancel_check=None):
         old = self.check_file(name)
         if exclusive and old is not None:
             raise FileExistsError(name)
@@ -257,6 +257,8 @@ class SafeDirectory:
                         # Recheck the destination on every attempt. The rename
                         # itself still enforces exclusive publication atomically.
                         self.check_file(name)
+                        if cancel_check and cancel_check():
+                            raise ExportCancelled('作業已取消，未發布檔案。')
                         if self.fd is not None:
                             if exclusive:
                                 _publish_exclusive(stage.fd, self.fd, name)

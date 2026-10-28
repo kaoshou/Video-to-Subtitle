@@ -9,6 +9,8 @@ on:
     paths:
       - 'SubtitleTranscriber.py'
       - 'transcriber.py'
+      - 'batch_quality.py'
+      - 'inference_optimizations.py'
       - 'evercam_integration.py'
       - 'opencam*.py'
       - 'safe_files.py'
@@ -62,7 +64,7 @@ jobs:
     - name: 安裝核心依賴套件
       run: |
         python -m pip install --upgrade pip
-        pip install customtkinter tkinterdnd2 faster-whisper ctranslate2 opencc pyinstaller tomli av pillow sounddevice
+        pip install customtkinter tkinterdnd2 faster-whisper ctranslate2 opencc pyinstaller tomli "av>=11,<17" pillow sounddevice
 
     - name: 安裝 Mac 專屬依賴套件 (mlx-whisper)
       if: matrix.os == 'macos-latest'

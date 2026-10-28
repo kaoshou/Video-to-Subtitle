@@ -89,6 +89,46 @@ class DesktopUI(unittest.TestCase):
         self.assertTrue(any('繁體' in text and 'OpenCC' in text for text in errors), errors)
         self.assertFalse(list(Path(self.temp.name).glob('*.srt')))
 
+    def test_batch_size_requires_enable_and_supported_backend(self):
+        app = self.main_app()
+        self.assertEqual(app.combo_batch_size.cget('state'), 'disabled')
+
+        app.batch_acceleration_var.set(True)
+        app.update_batch_controls()
+        self.assertEqual(app.combo_batch_size.cget('state'), 'normal')
+        app.device_var.set('mlx')
+        self.root.update()
+        self.assertEqual(app.combo_batch_size.cget('state'), 'disabled')
+        self.assertIn('MLX', app.batch_hint.cget('text'))
+        app.device_var.set('cpu')
+        app.vad_filter_var.set(False)
+        self.root.update()
+        self.assertEqual(app.combo_batch_size.cget('state'), 'disabled')
+        app.vad_filter_var.set(True)
+        self.root.update()
+        self.assertEqual(app.combo_batch_size.cget('state'), 'normal')
+        app.batch_acceleration_var.set(False)
+        app.update_batch_controls()
+        self.assertEqual(app.combo_batch_size.cget('state'), 'disabled')
+
+    def test_selected_cpu_threads_reach_model_initialization(self):
+        from unittest.mock import patch
+        import SubtitleTranscriber as desktop
+        app = self.main_app()
+        app.file_list = [str(Path(self.temp.name) / 'media.mp4')]
+        with patch.object(desktop.SubtitleTranscriber, 'load_model', side_effect=RuntimeError('stop before inference')), \
+                patch.object(desktop.messagebox, 'showerror'):
+            app.cpu_threads_var.set('8')
+            app.process_batch()
+            self.root.update()
+            previous = app.transcriber
+            self.assertEqual(previous.cpu_threads, 8)
+            app.cpu_threads_var.set('16')
+            app.process_batch()
+            self.root.update()
+            self.assertEqual(app.transcriber.cpu_threads, 16)
+            self.assertIsNot(app.transcriber, previous)
+
     def test_main_content_surfaces_remain_distinct_in_both_themes(self):
         # Break caught: the file list or settings inputs disappear into a
         # same-colored parent surface after a palette/layout change.
@@ -124,6 +164,9 @@ class DesktopUI(unittest.TestCase):
             self.root.update()
             self.root.model_var.set('small')
             self.root.hotwords_var.set('字幕, 研習')
+            self.root.batch_acceleration_var.set(True)
+            self.root.batch_size_var.set('8')
+            self.root.cpu_threads_var.set('8')
             self.root.save_settings()
             self.assertTrue(Path(self.root.config_file).is_file())
             self.assertFalse((source / 'config.json').exists())
@@ -133,6 +176,9 @@ class DesktopUI(unittest.TestCase):
             self.root.update()
             self.assertEqual(self.root.get_clean_model_name(), 'small')
             self.assertEqual(self.root.hotwords_var.get(), '字幕, 研習')
+            self.assertTrue(self.root.batch_acceleration_var.get())
+            self.assertEqual(self.root.batch_size_var.get(), '8')
+            self.assertEqual(self.root.cpu_threads_var.get(), '8')
 
     def test_opencam_opened_from_homepage_stays_above_home_without_global_topmost(self):
         # Break caught: closing the source picker restores the homepage over

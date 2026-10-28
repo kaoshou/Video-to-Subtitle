@@ -702,12 +702,13 @@ class SubtitleTranscriber:
         self.download_root = download_root
         self.cpu_threads = cpu_threads
         self.model = None
+        self._batch_limits = {}
 
     def load_model(self, log_callback=None, progress_callback=None, cancel_check_callback=None):
         """載入模型 (第一次執行會自動下載，支援進度百分比、速度、ETA 與取消控制)"""
         logging.debug("Loading model %s, device=%s, root=%s", self.model_size, self.device, self.download_root)
         # 如果模型已經載入，直接返回
-        if self.model: 
+        if self.model or getattr(self, 'model_type', None) == 'mlx-whisper':
             print("DEBUG: Model already loaded.")
             return
         
@@ -842,7 +843,137 @@ class SubtitleTranscriber:
         millis = int(td.microseconds / 1000)
         return f"{hours:02}:{minutes:02}:{secs:02}{separator}{millis:03}"
 
-    def run(self, file_path, log_callback=None, progress_callback=None, cancel_check_callback=None, output_format="srt", initial_prompt=None, task="transcribe", force_zh_tw=False, max_chars=35, hotwords=None, clean_punctuation="space", word_timestamps=True, spacing=True, case_correction=True, vad_filter=True):
+    def run(self, file_path, log_callback=None, progress_callback=None, cancel_check_callback=None, output_format="srt", initial_prompt=None, task="transcribe", force_zh_tw=False, max_chars=35, hotwords=None, clean_punctuation="space", word_timestamps=True, spacing=True, case_correction=True, vad_filter=True, batch_acceleration=False, batch_size=4):
+        """Optional batched inference retries into private output, publishing only success."""
+        options = dict(log_callback=log_callback, progress_callback=progress_callback,
+                       cancel_check_callback=cancel_check_callback, output_format=output_format,
+                       initial_prompt=initial_prompt, task=task, force_zh_tw=force_zh_tw,
+                       max_chars=max_chars, hotwords=hotwords, clean_punctuation=clean_punctuation,
+                       word_timestamps=word_timestamps, spacing=spacing,
+                       case_correction=case_correction, vad_filter=vad_filter)
+        cancelled = lambda: bool(cancel_check_callback and cancel_check_callback())
+        if cancelled():
+            return None
+        if not batch_acceleration:
+            return self._run_once(file_path, **options)
+        if isinstance(batch_size, bool) or not isinstance(batch_size, int) or not 2 <= batch_size <= 32:
+            raise ValueError('批次大小必須為 2～32 的整數。')
+        log = log_callback or (lambda message: None)
+        size = batch_size
+        if self.device in ('mlx', 'mps'):
+            log('MLX 原生轉錄目前不提供批次大小控制，沿用 Apple MLX 加速。')
+            size = None
+        elif not vad_filter:
+            log('VAD 已關閉，沿用標準推論，避免長音訊在批次模式下無法切片。')
+            size = None
+        else:
+            try:
+                from faster_whisper import BatchedInferencePipeline
+            except ImportError:
+                log('目前轉錄核心不提供批次推論，沿用標準推論。')
+                size = None
+        if force_zh_tw and task == 'transcribe':
+            require_traditional_converter()
+        if size and not self.model:
+            self.load_model(log_callback, progress_callback=progress_callback,
+                            cancel_check_callback=cancel_check_callback)
+            if cancelled():
+                return None
+        key = (id(self.model), self.device, self.compute_type, self.model_size,
+               task, word_timestamps, initial_prompt, hotwords)
+        if size and key in self._batch_limits:
+            previous = self._batch_limits[key]
+            size = min(size, previous) if previous else None
+            log(f'沿用同一設定先前記憶體不足後的批次上限：{size or "標準推論"}。')
+        from inference_optimizations import PreparedAudio
+        with PreparedAudio(file_path, log=log, cancel_check=cancelled) as prepared:
+            return self._run_with_retries(file_path, options, size, log, progress_callback,
+                                          cancelled, prepared, key)
+
+    def _run_with_retries(self, file_path, options, size, log, progress_callback, cancelled, prepared, key):
+        import tempfile
+        from pathlib import Path
+        from safe_files import SafeDirectory, ExportCancelled
+        from batch_quality import BatchQualityError
+        started = time.monotonic()
+        output_format = options['output_format']
+        task = options['task']
+        prepare_audio = bool(size)
+        reduced = False
+        # Retry progress must never signal completion before the output is committed.
+        if progress_callback:
+            options['progress_callback'] = lambda value: progress_callback(min(value, .99))
+        while True:
+            if cancelled():
+                log('作業已取消，未發布字幕檔案。')
+                return None
+            if progress_callback:
+                progress_callback(0)
+            log(f'批次推論：每批最多 {size} 段音訊。準備音訊期間進度可能暫停。' if size else '使用標準推論。')
+            with tempfile.TemporaryDirectory(prefix='vts-transcription-') as staging:
+                try:
+                    result = self._run_once(file_path, **options, _batch_size=size,
+                                            _audio_input=prepared.get() if prepare_audio else None,
+                                            _output_path=os.path.join(staging, 'subtitle.' + output_format.lower()))
+                except ExportCancelled:
+                    log('作業已取消，未發布字幕檔案。')
+                    return None
+                except BatchQualityError as error:
+                    if not size:
+                        raise
+                    if cancelled():
+                        log('作業已取消，未發布字幕檔案。')
+                        return None
+                    log(f'批次品質檢查：{error} 捨棄本次暫存，改用標準推論。')
+                    size = None
+                    # Quality depends on this input, not a model's memory ceiling.
+                    reduced = False
+                    continue
+                except (RuntimeError, MemoryError) as error:
+                    message = str(error).lower()
+                    out_of_memory = isinstance(error, MemoryError) or any(
+                        marker in message for marker in ('out of memory', 'cuda_error_out_of_memory',
+                                                        'cublas_status_alloc_failed', 'std::bad_alloc'))
+                    if not size or not out_of_memory:
+                        raise
+                    next_size = size // 2 if size >= 4 else None
+                    log(f'記憶體不足，放棄本次暫存並從頭重試；改用批次大小 {next_size}。' if next_size
+                        else '記憶體不足，放棄本次暫存並從頭改用標準推論。')
+                    size = next_size
+                    reduced = True
+                    continue
+                if not result or cancelled():
+                    log('作業已取消，未發布字幕檔案。')
+                    return None
+                data = Path(result).read_bytes()
+                base = os.path.splitext(os.path.abspath(file_path))[0]
+                if task == 'translate':
+                    base += '.en'
+                # Exclusive safe publication preserves existing subtitles and rejects links.
+                with SafeDirectory(os.path.dirname(base)) as destination:
+                    counter = 0
+                    while True:
+                        if cancelled():
+                            return None
+                        name = os.path.basename(base) + (f'_{counter}' if counter else '') + '.' + output_format.lower()
+                        try:
+                            destination.write_bytes(name, data, exclusive=True, cancel_check=cancelled)
+                            break
+                        except ExportCancelled:
+                            log('作業已取消，未發布字幕檔案。')
+                            return None
+                        except FileExistsError:
+                            counter += 1
+                output = os.path.join(os.path.dirname(base), name)
+                if reduced:
+                    self._batch_limits[key] = size or 0
+            log(f'總耗時（含準備與重試）：{time.monotonic() - started:.1f} 秒')
+            log(f'檔案已儲存於: {output}')
+            if progress_callback:
+                progress_callback(1.0)
+            return output
+
+    def _run_once(self, file_path, log_callback=None, progress_callback=None, cancel_check_callback=None, output_format="srt", initial_prompt=None, task="transcribe", force_zh_tw=False, max_chars=35, hotwords=None, clean_punctuation="space", word_timestamps=True, spacing=True, case_correction=True, vad_filter=True, _batch_size=None, _output_path=None, _audio_input=None):
         """
         執行轉錄
         output_format: "srt", "vtt", "txt", "tsv", "json"
@@ -858,7 +989,7 @@ class SubtitleTranscriber:
         output_converter = require_traditional_converter() if force_zh_tw and task == 'transcribe' else None
         if max_chars is None or max_chars < 25:
             max_chars = 35 if task != "translate" else 80
-        if not self.model:
+        if not self.model and getattr(self, 'model_type', None) != 'mlx-whisper':
             print("DEBUG: Model not loaded in run(), calling load_model()...")
             self.load_model(log_callback, progress_callback=progress_callback, cancel_check_callback=cancel_check_callback)
 
@@ -932,13 +1063,18 @@ class SubtitleTranscriber:
                             log_callback(f"❌ 影音解碼失敗且未安裝 FFmpeg: {av_err}")
                         raise RuntimeError(f"影音解碼失敗: {av_err}\n\n系統亦找不到 FFmpeg 工具。\n{err_msg}")
 
+                if not isinstance(audio_input, (str, bytes, os.PathLike)):
+                    from inference_optimizations import as_mlx_audio
+                    audio_input = as_mlx_audio(audio_input)
+
                 print("DEBUG: calling MLX whisper transcribe...")
                 if log_callback:
                     log_callback("提示: 使用 Apple MLX 框架進行 Metal GPU 加速轉錄...\n(註: 此套件轉換時將無法回報即時段落進度，請耐心等候)")
                 
                 native_options = {
                     "task": task,
-                    "condition_on_previous_text": False
+                    "condition_on_previous_text": False,
+                    "word_timestamps": word_timestamps
                 }
                 if initial_prompt:
                     native_options["initial_prompt"] = initial_prompt
@@ -959,19 +1095,27 @@ class SubtitleTranscriber:
                         self.language_probability = 1.0
                         
                 class FakeSegment:
-                    def __init__(self, s, e, t):
+                    def __init__(self, s, e, t, words=None):
                         self.start = s
                         self.end = e
                         self.text = t
+                        self.words = words
                         
-                audio_duration = result["segments"][-1]["end"] if result["segments"] else 0.0
+                audio_duration = (len(audio_input) / 16000 if not isinstance(audio_input, (str, bytes, os.PathLike))
+                                  else (result["segments"][-1]["end"] if result["segments"] else 0.0))
                 info = FakeInfo(result.get("language", "unknown"), audio_duration)
-                segments = [FakeSegment(s["start"], s["end"], s["text"]) for s in result["segments"]]
+                segments = [FakeSegment(s["start"], s["end"], s["text"], s.get('words')) for s in result["segments"]]
                 print("DEBUG: MLX whisper transcribe finished.")
                 
             else:
                 print("DEBUG: calling faster-whisper transcribe...")
-                segments, info = self.model.transcribe(file_path, **transcribe_options)
+                if _batch_size:
+                    from faster_whisper import BatchedInferencePipeline
+                    pipeline = BatchedInferencePipeline(model=self.model)
+                    segments, info = pipeline.transcribe(file_path if _audio_input is None else _audio_input, **transcribe_options,
+                                                          batch_size=_batch_size, without_timestamps=False)
+                else:
+                    segments, info = self.model.transcribe(file_path if _audio_input is None else _audio_input, **transcribe_options)
                 print("DEBUG: faster-whisper transcribe returned generator.")
 
         except Exception as e:
@@ -1006,6 +1150,10 @@ class SubtitleTranscriber:
             raise e
         
         total_duration = info.duration
+        batch_guard = None
+        if _batch_size:
+            from batch_quality import BatchQualityGuard
+            batch_guard = BatchQualityGuard(total_duration, word_timestamps)
         print(f"DEBUG: Video info - Duration: {total_duration}, Language: {info.language}")
 
         if log_callback:
@@ -1017,7 +1165,7 @@ class SubtitleTranscriber:
         ext = f".{output_format.lower()}"
         suffix = ".en" if task == "translate" else ""
         
-        base_output_path = os.path.splitext(file_path)[0] + suffix + ext
+        base_output_path = _output_path or (os.path.splitext(file_path)[0] + suffix + ext)
         output_path = base_output_path
         
         counter = 1
@@ -1424,6 +1572,8 @@ class SubtitleTranscriber:
                         file_handle.write("\n[Interrupted by User]\n")
                     return None 
                 
+                if batch_guard is not None:
+                    batch_guard.check(segment)
                 try:
                     raw_text = segment.text.strip() if hasattr(segment, 'text') else segment['text'].strip()
                     seg_start = segment.start if hasattr(segment, 'start') else segment['start']
@@ -1503,11 +1653,14 @@ class SubtitleTranscriber:
         finally:
             if file_handle:
                 file_handle.close()
+            # Release in-flight batch state before retrying, also on cancellation.
+            if hasattr(segments, 'close'):
+                segments.close()
         
         end_time = datetime.datetime.now()
         duration = end_time - start_time
         
-        if log_callback:
+        if log_callback and not _output_path:
             log_callback(f"--------------------------------------------------")
             log_callback(f"任務結束時間: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
             log_callback(f"總耗時: {duration}")
