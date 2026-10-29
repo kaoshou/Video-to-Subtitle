@@ -15,7 +15,7 @@ from web_export_dialog import WebExportDialog, completion_video
 from web_export_model import SubtitleSource
 from safe_files import atomic_write_text
 from app_settings import resolve_settings_path, read_settings, write_settings
-from ui_theme import (install_theme, ui_font, wrap_to_width, BACKGROUND, CARD,
+from ui_theme import (install_theme, ui_font, wrap_to_width, secondary_button_style, HoverHint, attach_placeholder, BACKGROUND, CARD,
                       SURFACE, BORDER, TEXT, MUTED, ACCENT, HOVER, FONT_FAMILY)
 from ui_drop import dropped_paths, register_file_drop
 from ui_open import open_local_page
@@ -355,7 +355,8 @@ class VideoPlayerWidget(ctk.CTkFrame):
     def _build_ui(self):
         # 1. 頂部控制列 (檔名與選擇按鈕)
         self.top_bar = ctk.CTkFrame(self, fg_color="transparent")
-        self.top_bar.pack(fill="x", padx=6, pady=(6, 4))
+        self.top_bar.pack(fill="x", padx=10, pady=(10, 6))
+        self.top_bar.grid_columnconfigure(1, weight=1)
         
         self.btn_select_video = ctk.CTkButton(
             self.top_bar, text="選擇影片", width=75, height=26,
@@ -363,13 +364,14 @@ class VideoPlayerWidget(ctk.CTkFrame):
             text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
             font=ui_font(size=11, weight="bold"), command=self.browse_video
         )
-        self.btn_select_video.pack(side="left")
+        self.btn_select_video.grid(row=0, column=0, sticky="w")
         
         self.lbl_video_name = ctk.CTkLabel(
             self.top_bar, text="未載入影片", 
             font=ui_font(size=11), text_color=MUTED, anchor="w"
         )
-        self.lbl_video_name.pack(side="left", padx=8, fill="x", expand=True)
+        self.lbl_video_name.grid(row=0, column=1, padx=8, sticky="ew")
+        wrap_to_width(self.lbl_video_name)
         
         self.btn_close_video = ctk.CTkButton(
             self.top_bar, text="關閉", width=45, height=26,
@@ -377,7 +379,7 @@ class VideoPlayerWidget(ctk.CTkFrame):
             text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
             font=ui_font(size=11), command=self.close_video
         )
-        self.btn_close_video.pack(side="right")
+        self.btn_close_video.grid(row=0, column=2, sticky="e")
         
         # 2. 影片畫布 Canvas
         self.canvas_frame = ctk.CTkFrame(self, fg_color="black", corner_radius=6)
@@ -412,7 +414,8 @@ class VideoPlayerWidget(ctk.CTkFrame):
         self.lbl_time.pack(side="right")
         
         # 按鈕列
-        btn_row = ctk.CTkFrame(self.controls_frame, fg_color="transparent")
+        btn_row = FlowToolbar(self.controls_frame)
+        self.playback_toolbar = btn_row
         btn_row.pack(fill="x")
         
         self.btn_prev5 = ctk.CTkButton(
@@ -421,7 +424,7 @@ class VideoPlayerWidget(ctk.CTkFrame):
             text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
             font=ui_font(size=11), command=lambda: self.seek_relative(-5.0)
         )
-        self.btn_prev5.pack(side="left", padx=(0, 3))
+        btn_row.add(self.btn_prev5)
         
         self.btn_play = ctk.CTkButton(
             btn_row, text="播放 ▶", width=68, height=26,
@@ -429,7 +432,7 @@ class VideoPlayerWidget(ctk.CTkFrame):
             text_color="white", font=ui_font(size=11, weight="bold"),
             command=self.toggle_play
         )
-        self.btn_play.pack(side="left", padx=3)
+        btn_row.add(self.btn_play)
         
         self.btn_next5 = ctk.CTkButton(
             btn_row, text="+5s ▶▶", width=55, height=26,
@@ -437,7 +440,7 @@ class VideoPlayerWidget(ctk.CTkFrame):
             text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
             font=ui_font(size=11), command=lambda: self.seek_relative(5.0)
         )
-        self.btn_next5.pack(side="left", padx=(0, 4))
+        btn_row.add(self.btn_next5)
         
         # 多倍速切換按鈕 (1.0x, 1.25x, 1.5x, 2.0x, 0.75x)
         self.btn_speed = ctk.CTkButton(
@@ -446,7 +449,7 @@ class VideoPlayerWidget(ctk.CTkFrame):
             text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
             font=ui_font(size=11, weight="bold"), command=self._cycle_speed
         )
-        self.btn_speed.pack(side="left", padx=(0, 4))
+        btn_row.add(self.btn_speed)
         
         # 字幕疊加預覽開關按鈕 (CC)
         self.btn_cc = ctk.CTkButton(
@@ -455,11 +458,12 @@ class VideoPlayerWidget(ctk.CTkFrame):
             text_color="white", border_width=1, border_color=("#94a3b8", "#475569"),
             font=ui_font(size=11, weight="bold"), command=self.toggle_subtitle_overlay
         )
-        self.btn_cc.pack(side="left", padx=(0, 4))
+        btn_row.add(self.btn_cc)
         
         # 音量控制區 (靜音切換 + 音量滑桿 + 百分比)
+        volume_group = ctk.CTkFrame(btn_row, fg_color="transparent")
         self.btn_mute = ctk.CTkButton(
-            btn_row, text="🔊", width=30, height=26,
+            volume_group, text="🔊", width=30, height=26,
             fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
             text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
             font=ui_font(size=12), command=self._toggle_mute
@@ -467,23 +471,28 @@ class VideoPlayerWidget(ctk.CTkFrame):
         self.btn_mute.pack(side="left", padx=(2, 3))
         
         self.slider_volume = ctk.CTkSlider(
-            btn_row, from_=0.0, to=1.0, width=58, height=14,
+            volume_group, from_=0.0, to=1.0, width=58, height=14,
             command=self._on_volume_slider
         )
         self.slider_volume.set(1.0)
         self.slider_volume.pack(side="left", padx=2)
         
         self.lbl_volume = ctk.CTkLabel(
-            btn_row, text="100%", font=ui_font(family="Consolas", size=10),
+            volume_group, text="100%", font=ui_font(family="Consolas", size=10),
             width=32, anchor="w", text_color=MUTED
         )
         self.lbl_volume.pack(side="left", padx=(2, 0))
+        btn_row.add(volume_group)
         
         self.lbl_hotkey_tip = ctk.CTkLabel(
-            btn_row, text="[點擊畫面或空白鍵播放]",
+            self.controls_frame, text="點擊畫面或按空白鍵播放",
             font=ui_font(size=10), text_color=MUTED
         )
-        self.lbl_hotkey_tip.pack(side="right")
+        self.lbl_hotkey_tip.pack(anchor="w", pady=(6, 0))
+        for button in (self.btn_select_video, self.btn_close_video, self.btn_prev5,
+                       self.btn_next5, self.btn_speed, self.btn_mute):
+            button.configure(**secondary_button_style(), height=28)
+        self.btn_play.configure(fg_color=ACCENT, hover_color=HOVER, height=28)
         
         self.after(100, self._render_canvas)
 
@@ -1159,6 +1168,14 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             
         # 建立 UI
         self._build_ui()
+        self._saved_content = self._current_content()
+        self._save_state_timer = None
+        self._refresh_save_state()
+        self.protocol('WM_DELETE_WINDOW', self.request_close)
+        for sequence in ('<Control-s>', '<Control-S>'):
+            self.bind(sequence, self._on_save_key)
+        if platform.system() == 'Darwin':
+            self.bind('<Command-s>', self._on_save_key)
         
         if not self.is_txt:
             self._apply_treeview_theme()
@@ -1275,19 +1292,24 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
 
     def _build_ui(self):
         # 頂部標題與工具列
-        self.top_frame = ctk.CTkFrame(self)
+        self.top_frame = ctk.CTkFrame(self, fg_color=CARD, border_width=1, border_color=BORDER)
         self.top_frame.pack(fill="x", padx=15, pady=(15, 10))
         
         # 標題與資訊
         header_sub = ctk.CTkFrame(self.top_frame, fg_color="transparent")
         header_sub.pack(fill="x", padx=12, pady=(10, 5))
+        header_sub.grid_columnconfigure(0, weight=1)
         
         self.lbl_title = ctk.CTkLabel(
             header_sub, 
-            text=f"正在編輯: {os.path.basename(self.file_path)}", 
-            font=ui_font(size=15, weight="bold")
+            text=f"字幕校對 · {os.path.basename(self.file_path)}",
+            font=ui_font(size=15, weight="bold"), anchor="w"
         )
-        self.lbl_title.pack(side="left")
+        self.lbl_title.grid(row=0, column=0, sticky="ew", padx=(0, 12))
+        wrap_to_width(self.lbl_title)
+        header_actions = FlowToolbar(self.top_frame)
+        self.header_actions = header_actions
+        header_actions.pack(fill="x", padx=12, pady=(0, 6))
         
         total_count = len(self.items) if not self.is_txt else 1
         self.lbl_stats = ctk.CTkLabel(
@@ -1295,33 +1317,36 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             text=f"(共 {total_count} 筆字幕)" if not self.is_txt else "", 
             font=ui_font(size=12), text_color=MUTED
         )
-        self.lbl_stats.pack(side="left", padx=10)
+        self.lbl_stats.grid(row=0, column=1, sticky="e")
         
         # 右側控制按鈕 (視窗最大化/還原、模式與預覽切換)
         self.btn_maximize = ctk.CTkButton(
-            header_sub, text="最大化 🗖", width=85, height=28,
+            header_actions, text="最大化", width=85, height=28,
             fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
             text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
             font=ui_font(size=12), command=self._toggle_maximize
         )
-        self.btn_maximize.pack(side="right")
+        header_actions.add(self.btn_maximize)
+        self.btn_maximize.configure(**secondary_button_style())
         
         if not self.is_txt:
             self.btn_toggle_mode = ctk.CTkButton(
-                header_sub, text="切換至全文原始碼模式", width=150, height=28,
+                header_actions, text="全文原始碼", width=110, height=28,
                 fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
                 text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
                 font=ui_font(size=12, weight="bold"), command=self._toggle_raw_mode
             )
-            self.btn_toggle_mode.pack(side="right", padx=(0, 8))
+            header_actions.add(self.btn_toggle_mode)
+            self.btn_toggle_mode.configure(**secondary_button_style())
             
             self.btn_toggle_video = ctk.CTkButton(
-                header_sub, text="收合影片預覽", width=105, height=28,
+                header_actions, text="收合影片預覽", width=110, height=28,
                 fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
                 text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
                 font=ui_font(size=12), command=self._toggle_video_preview
             )
-            self.btn_toggle_video.pack(side="right", padx=(0, 8))
+            header_actions.add(self.btn_toggle_video)
+            self.btn_toggle_video.configure(**secondary_button_style())
             
         # 搜尋過濾工具列 (僅在表格模式下顯示)
         if not self.is_txt:
@@ -1345,6 +1370,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
                 font=ui_font(size=11), command=lambda: self.search_var.set("")
             )
             self.search_bar_frame.add(self.btn_clear_search)
+            self.btn_clear_search.configure(**secondary_button_style())
             
             self.lbl_search_result = ctk.CTkLabel(self.search_bar_frame, text="", font=ui_font(size=11), text_color=MUTED)
             self.search_bar_frame.add(self.lbl_search_result)
@@ -1378,8 +1404,10 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             self.sub_frame = ctk.CTkFrame(self.paned_window, fg_color="transparent")
             
             # 1. 左側上半部：高效 Treeview 表格
-            self.tree_container = ctk.CTkFrame(self.sub_frame)
+            self.tree_container = ctk.CTkFrame(self.sub_frame, fg_color=CARD, border_width=1, border_color=BORDER)
             self.tree_container.pack(fill="both", expand=True, pady=(0, 10))
+            self.tree_container.grid_rowconfigure(0, weight=1)
+            self.tree_container.grid_columnconfigure(0, weight=1)
             
             columns = ("idx", "start", "end", "text")
             self.tree = ttk.Treeview(self.tree_container, columns=columns, show="headings", selectmode="browse")
@@ -1387,24 +1415,26 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             self.tree.heading("idx", text="#", anchor="center")
             self.tree.heading("start", text="開始時間", anchor="center")
             self.tree.heading("end", text="結束時間", anchor="center")
-            self.tree.heading("text", text="字幕內容 (單擊選取直接校對)", anchor="w")
+            self.tree.heading("text", text="字幕內容 · 點選校對", anchor="w")
             
             self.tree.column("idx", width=50, minwidth=40, anchor="center")
             self.tree.column("start", width=110, minwidth=85, anchor="center")
             self.tree.column("end", width=110, minwidth=85, anchor="center")
             self.tree.column("text", width=380, minwidth=180, anchor="w")
             
-            vsb = ttk.Scrollbar(self.tree_container, orient="vertical", command=self.tree.yview)
-            self.tree.configure(yscrollcommand=vsb.set)
+            vsb = ctk.CTkScrollbar(self.tree_container, orientation="vertical", command=self.tree.yview)
+            hsb = ctk.CTkScrollbar(self.tree_container, orientation="horizontal", command=self.tree.xview)
+            self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
             
-            self.tree.pack(side="left", fill="both", expand=True)
-            vsb.pack(side="right", fill="y")
+            self.tree.grid(row=0, column=0, sticky="nsew", padx=(1, 0), pady=(1, 0))
+            vsb.grid(row=0, column=1, sticky="ns", pady=(1, 0))
+            hsb.grid(row=1, column=0, sticky="ew", padx=(1, 0), pady=(0, 1))
             
             # 僅監聽單一標準選取事件 <<TreeviewSelect>>，避免重複觸發與畫面頓挫
             self.tree.bind("<<TreeviewSelect>>", self._on_tree_select)
             
             # 2. 左側下半部：即時詳細編輯工作面板 (Dock Panel)
-            self.editor_dock = ctk.CTkFrame(self.sub_frame)
+            self.editor_dock = ctk.CTkFrame(self.sub_frame, fg_color=CARD, border_width=1, border_color=BORDER)
             # Reserve editing controls first; the table may shrink vertically
             # at high DPI instead of pushing the toolbar outside the pane.
             self.editor_dock.pack(side="bottom", fill="x", before=self.tree_container)
@@ -1437,31 +1467,35 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             self.entry_end.pack(side="left")
             self.entry_end.bind("<KeyRelease>", lambda e: self._on_time_edit())
             time_row.add(end_group)
-            button_style = dict(height=28, fg_color=("#e2e8f0", "#2d3748"),
-                                hover_color=("#cbd5e1", "#4a5568"), text_color=("#0f172a", "#f8fafc"),
-                                border_width=1, border_color=("#94a3b8", "#475569"), font=ui_font(size=12))
+            for entry in (self.entry_start, self.entry_end):
+                for sequence in ('<<Paste>>', '<<Cut>>'):
+                    entry.bind(sequence, lambda event: self.after_idle(self._on_time_edit), add='+')
+            button_style = dict(height=28, **secondary_button_style(), font=ui_font(size=12))
             for caption, offset in (("-0.5s", -500), ("+0.5s", 500)):
                 time_row.add(ctk.CTkButton(time_row, text=caption, width=55, **button_style,
                                            command=lambda delta=offset: self._shift_current_time(delta)))
 
             tools_row = FlowToolbar(self.editor_dock)
             tools_row.pack(fill="x", padx=12, pady=(0, 6))
-            for caption, width, command in (
-                ('上一條 (Alt+↑)', 105, lambda: self._navigate_item(-1)),
-                ('下一條 (Alt+↓)', 105, lambda: self._navigate_item(1)),
-                ('游標處拆分 (Ctrl+K)', 145, self._split_current_subtitle),
-                ('與下一條合併 (Ctrl+J)', 155, self._merge_with_next_subtitle),
+            for caption, width, command, hint in (
+                ('上一條', 72, lambda: self._navigate_item(-1), '上一條字幕 · Alt+↑'),
+                ('下一條', 72, lambda: self._navigate_item(1), '下一條字幕 · Alt+↓'),
+                ('拆分', 64, self._split_current_subtitle, '在文字游標處拆分 · Ctrl+K'),
+                ('合併下一條', 100, self._merge_with_next_subtitle, '與下一條字幕合併 · Ctrl+J'),
             ):
-                tools_row.add(ctk.CTkButton(tools_row, text=caption, width=width,
-                                            command=command, **button_style))
+                button = tools_row.add(ctk.CTkButton(tools_row, text=caption, width=width,
+                                                    command=command, **button_style))
+                HoverHint(button, hint)
 
             # 編輯列 2：多行字幕文字編輯框 (支援貼上多行、換行，絕不壓縮破壞)
             text_row = ctk.CTkFrame(self.editor_dock, fg_color="transparent")
             text_row.pack(fill="x", padx=12, pady=(0, 10))
             
-            self.txt_item_editor = ctk.CTkTextbox(text_row, height=65, font=ui_font(size=13))
+            self.txt_item_editor = ctk.CTkTextbox(text_row, height=72, fg_color=SURFACE,
+                                                 border_width=1, border_color=BORDER, font=ui_font(size=14))
             self.txt_item_editor.pack(fill="x", expand=True)
             self.txt_item_editor.bind("<KeyRelease>", lambda e: self._on_text_edit())
+            self.txt_item_editor.bind('<<Modified>>', self._on_item_modified)
             self.txt_item_editor.bind("<Control-k>", lambda e: self._on_txt_ctrl_k(e))
             self.txt_item_editor.bind("<Control-K>", lambda e: self._on_txt_ctrl_k(e))
             self.txt_item_editor.bind("<Control-j>", lambda e: self._on_txt_ctrl_j(e))
@@ -1481,6 +1515,10 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             self.raw_editor = ctk.CTkTextbox(self.raw_frame, font=ui_font(family="Consolas", size=12))
             self.raw_editor.pack(fill="both", expand=True)
 
+        for widget in ((self.txt_editor,) if self.is_txt else (self.raw_editor,)):
+            widget.bind('<<Modified>>', lambda event, text=widget: self._on_document_modified(text))
+            widget._textbox.edit_modified(False)
+
         # 底部控制與提示列
         self.footer_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.footer_frame.pack(side="bottom", fill="x", padx=15, pady=(10, 15), before=self.main_container)
@@ -1492,10 +1530,13 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         wrap_to_width(hint)
         footer_actions = ctk.CTkFrame(self.footer_frame, fg_color="transparent")
         footer_actions.pack(fill="x")
+        self.save_status = ctk.CTkLabel(footer_actions, text="已儲存", anchor="w",
+                                       font=ui_font(size=12), text_color=MUTED)
+        self.save_status.pack(side="left")
         
         self.btn_save = ctk.CTkButton(
-            footer_actions, text="儲存並關閉 (Save & Close)",
-            fg_color="#1f538d", hover_color="#14375e", width=160, height=34,
+            footer_actions, text="儲存並關閉",
+            fg_color=ACCENT, hover_color=HOVER, width=160, height=36,
             font=ui_font(weight="bold"), command=self.save_and_close
         )
         self.btn_save.pack(side="right", padx=(10, 0))
@@ -1505,9 +1546,14 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
             text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
             width=90, height=34, font=ui_font(size=12),
-            command=self.destroy
+            command=self.request_close
         )
         self.btn_cancel.pack(side="right")
+        self.btn_cancel.configure(**secondary_button_style(), text="關閉", height=36)
+        self.btn_save_only = ctk.CTkButton(footer_actions, text="儲存", width=80, height=36,
+                                           command=self.save_subtitle, **secondary_button_style())
+        self.btn_save_only.pack(side="right", padx=10)
+        HoverHint(self.btn_save_only, '儲存並繼續編輯 · Ctrl+S / macOS ⌘S')
 
     def _apply_treeview_theme(self):
         """為 ttk.Treeview 注入適配深淺色模式的現代風格"""
@@ -1520,6 +1566,13 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         font_size = -max(14, round(14 * scale))
         table_font = tkfont.Font(root=self, font=(FONT_FAMILY, font_size))
         row_height = table_font.metrics('linespace') + max(8, round(8 * scale))
+        # ttk columns use physical pixels, unlike CTk's logical dimensions.
+        # Reserve the full timecode width at every font/display scale.
+        time_width = table_font.measure('00:00:00,000') + round(18 * scale)
+        for column in ('start', 'end'):
+            self.tree.column(column, width=time_width, minwidth=time_width, stretch=False)
+        self.tree.column('idx', width=round(44 * scale), minwidth=round(44 * scale), stretch=False)
+        self.tree.column('text', minwidth=round(180 * scale))
         
         is_dark = ctk.get_appearance_mode().lower() == "dark"
         bg_color = CARD[1 if is_dark else 0]
@@ -1595,6 +1648,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             else:
                 self.lbl_search_result.configure(text="")
         self.search_bar_frame.request_layout()
+        self._queue_save_state()
 
     def _refresh_review(self):
         import re
@@ -1654,6 +1708,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         self.txt_item_editor.configure(state='normal')
         self.txt_item_editor.delete('0.0', 'end')
         self.txt_item_editor.configure(state='disabled')
+        self.txt_item_editor._textbox.edit_modified(False)
         self.lbl_edit_item_idx.configure(text='[未選取]')
         self.review_detail.configure(text='請從清單選取字幕；取消篩選可查看其他段落。')
 
@@ -1685,6 +1740,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         
         self.txt_item_editor.delete("0.0", "end")
         self.txt_item_editor.insert("0.0", item["text"])
+        self.txt_item_editor._textbox.edit_modified(False)
         
         # 同步更新影片畫面疊加字幕 (零延遲)
         if hasattr(self, 'video_player'):
@@ -1726,6 +1782,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         self.entry_end.insert(0, item["end"])
         self.txt_item_editor.delete("0.0", "end")
         self.txt_item_editor.insert("0.0", item["text"])
+        self.txt_item_editor._textbox.edit_modified(False)
         
         # 同步更新影片畫面疊加字幕
         if hasattr(self, 'video_player'):
@@ -1832,6 +1889,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         new_text = self.txt_item_editor.get("0.0", "end").strip()
         self.items[idx]["text"] = new_text
         self._schedule_review_refresh()
+        self._queue_save_state()
         
         iid = str(idx)
         if self.tree.exists(iid):
@@ -1977,6 +2035,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         self.items[idx]["start"] = new_start
         self.items[idx]["end"] = new_end
         self._schedule_review_refresh()
+        self._queue_save_state()
         
         iid = str(idx)
         if self.tree.exists(iid):
@@ -1995,6 +2054,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         item["start"] = self._format_time_ms(ms_start, is_vtt=self.is_vtt)
         item["end"] = self._format_time_ms(ms_end, is_vtt=self.is_vtt)
         self._schedule_review_refresh()
+        self._queue_save_state()
         
         self.entry_start.delete(0, "end")
         self.entry_start.insert(0, item["start"])
@@ -2031,7 +2091,8 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             self.raw_frame.pack_forget()
             self.structured_frame.pack(fill="both", expand=True)
             self.search_bar_frame.pack(fill="x", padx=12, pady=(0, 8))
-            self.btn_toggle_mode.configure(text="切換至全文原始碼模式")
+            self.btn_toggle_mode.configure(text="全文原始碼")
+            self.header_actions.request_layout()
             self.is_raw_mode = False
             
             self._populate_treeview()
@@ -2039,6 +2100,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
                 self._select_tree_row(0)
         else:
             # 切換至純文字原始碼模式：先同步當前表格數據生成完整檔案內容
+            self._flush_editor_edits()
             raw_text = self._generate_subtitle_string(self.items)
             self.raw_editor.delete("0.0", "end")
             self.raw_editor.insert("0.0", raw_text)
@@ -2046,8 +2108,10 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             self.structured_frame.pack_forget()
             self.search_bar_frame.pack_forget()
             self.raw_frame.pack(fill="both", expand=True)
-            self.btn_toggle_mode.configure(text="切換回結構化表格模式")
+            self.btn_toggle_mode.configure(text="返回表格校對")
+            self.header_actions.request_layout()
             self.is_raw_mode = True
+        self._queue_save_state()
 
     def _generate_subtitle_string(self, items):
         """將 items 轉為完整 SRT / VTT 格式字串"""
@@ -2062,22 +2126,72 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
                 out.append(f"{idx_str}\n{item['start']} --> {item['end']}\n{item['text']}\n")
         return "\n".join(out).strip() + "\n"
 
-    def save_and_close(self):
-        """安全寫入並儲存檔案"""
-        try:
-            if self.is_txt:
-                content = self.txt_editor.get("0.0", "end").strip() + "\n"
-            elif self.is_raw_mode:
-                content = self.raw_editor.get("0.0", "end").strip() + "\n"
-            else:
-                content = self._generate_subtitle_string(self.items)
+    def _current_content(self):
+        if self.is_txt:
+            return self.txt_editor.get('0.0', 'end').strip() + '\n'
+        if self.is_raw_mode:
+            return self.raw_editor.get('0.0', 'end').strip() + '\n'
+        return self._generate_subtitle_string(self.items)
 
+    def _on_item_modified(self, event=None):
+        text = self.txt_item_editor._textbox
+        if text.edit_modified():
+            text.edit_modified(False)
+            if not self.is_raw_mode:
+                self._on_text_edit()
+
+    def _on_document_modified(self, widget):
+        if widget._textbox.edit_modified():
+            widget._textbox.edit_modified(False)
+            self._queue_save_state()
+
+    def _queue_save_state(self):
+        if hasattr(self, '_saved_content') and getattr(self, '_save_state_timer', None) is None:
+            self._save_state_timer = self.after_idle(self._refresh_save_state)
+
+    def _refresh_save_state(self):
+        if getattr(self, '_save_state_timer', None) is not None:
+            self.after_cancel(self._save_state_timer)
+        self._save_state_timer = None
+        self.has_unsaved_changes = self._current_content() != self._saved_content
+        self.save_status.configure(text='有未儲存修改' if self.has_unsaved_changes else '已儲存',
+                                   text_color=ACCENT if self.has_unsaved_changes else MUTED)
+        self.btn_save_only.configure(state='normal' if self.has_unsaved_changes else 'disabled')
+        self.title(f"{'● ' if self.has_unsaved_changes else ''}字幕校對 · {os.path.basename(self.file_path)}")
+
+    def _on_save_key(self, event=None):
+        self.save_subtitle()
+        return 'break'
+
+    def _flush_editor_edits(self):
+        if not self.is_txt and not self.is_raw_mode and self.current_selected_idx is not None:
+            self._on_text_edit()
+            self._on_time_edit()
+
+    def save_subtitle(self):
+        """Publish atomically; only mark saved after the write succeeds."""
+        try:
+            self._flush_editor_edits()
+            content = self._current_content()
             atomic_write_text(self.file_path, content)
-                
-            messagebox.showinfo("儲存成功", f"字幕檔案已成功儲存！\n檔名: {os.path.basename(self.file_path)}", parent=self)
-            self.destroy()
+            self._saved_content = content
+            self._refresh_save_state()
+            return True
         except Exception as e:
             messagebox.showerror("儲存失敗", f"儲存檔案時發生錯誤:\n{e}", parent=self)
+            return False
+
+    def save_and_close(self):
+        if self.save_subtitle():
+            self.destroy()
+
+    def request_close(self):
+        self._flush_editor_edits()
+        if self._current_content() != self._saved_content:
+            choice = messagebox.askyesnocancel('尚未儲存', '字幕有未儲存的修改。是否儲存後關閉？', parent=self)
+            if choice is None or (choice and not self.save_subtitle()):
+                return
+        self.destroy()
 
     def _toggle_maximize(self):
         """切換視窗最大化與一般尺寸狀態"""
@@ -2094,7 +2208,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
                 except Exception:
                     self.wm_state("normal")
                 if hasattr(self, "btn_maximize"):
-                    self.btn_maximize.configure(text="最大化 🗖")
+                    self.btn_maximize.configure(text="最大化")
             else:
                 try:
                     self.state("zoomed")
@@ -2104,7 +2218,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
                     except Exception:
                         self.wm_state("zoomed")
                 if hasattr(self, "btn_maximize"):
-                    self.btn_maximize.configure(text="還原 🗗")
+                    self.btn_maximize.configure(text="還原")
         except Exception as e:
             print(f"Toggle maximize warning: {e}")
 
@@ -2126,7 +2240,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             self._ensure_editor_space()
             try:
                 is_zoomed = (self.state() == "zoomed")
-                target_text = "還原 🗗" if is_zoomed else "最大化 🗖"
+                target_text = "還原" if is_zoomed else "最大化"
                 if hasattr(self, "btn_maximize") and self.btn_maximize.cget("text") != target_text:
                     self.btn_maximize.configure(text=target_text)
             except Exception:
@@ -2134,6 +2248,14 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
 
     def destroy(self):
         """關閉視窗時安全釋放影音播放器資源與焦點鎖定"""
+        if getattr(self, '_save_state_timer', None) is not None:
+            self.after_cancel(self._save_state_timer)
+            self._save_state_timer = None
+        for name in ('_review_timer', '_sub_seek_timer'):
+            timer = getattr(self, name, None)
+            if timer is not None:
+                self.after_cancel(timer)
+                setattr(self, name, None)
         try:
             self.grab_release()
         except Exception:
@@ -2741,7 +2863,7 @@ class App(BaseClass):
         init_h = min(700, max(580, screen_h - 70))
         self.title(f"Video to Subtitle (v{get_version()}) - 本地語音轉字幕工具")
         self.geometry(f"800x{init_h}")
-        self.minsize(760, 500)
+        self.minsize(760, 560)
         self.is_adv_settings_visible = False
         
         # Windows 工作列圖示與進程組 ID 宣告，防止 Windows 使用 Python 預設火箭圖示
@@ -2811,6 +2933,7 @@ class App(BaseClass):
 
         # 建構 UI
         self.create_widgets()
+        tk.Misc.bind(self, '<Configure>', self._resize_message_area, add='+')
         self.setup_dnd()
         
         # 視窗關閉攔截 (保護背景下載與轉錄安全結束，避免損毀快取)
@@ -2966,29 +3089,72 @@ class App(BaseClass):
              return data.split()
 
     def update_file_list_ui(self):
-        self.textbox_files.configure(state="normal")
-        self.textbox_files.delete("0.0", "end")
-        for f in self.file_list:
-            self.textbox_files.insert("end", f"{f}\n")
-        self.textbox_files.configure(state="disabled")
+        for child in self.file_rows.winfo_children():
+            child.destroy()
+        self.file_remove_buttons = {}
+        self.file_name_labels = {}
+        self.file_path_labels = {}
+        if not self.file_list:
+            label = ctk.CTkLabel(self.file_rows, text='將影片或音訊拖曳到這裡\n或按右側「加入檔案」開始。',
+                                 text_color=MUTED, anchor='w', justify='left', font=ui_font(size=13))
+            label.pack(fill='x', padx=10, pady=16)
+            wrap_to_width(label)
+        for path in self.file_list:
+            row = ctk.CTkFrame(self.file_rows, fg_color=CARD, corner_radius=8)
+            row.pack(fill='x', pady=(0, 6))
+            row.grid_columnconfigure(0, weight=1)
+            name = ctk.CTkLabel(row, text=os.path.basename(path), anchor='w', justify='left',
+                                height=20, font=ui_font(size=13, weight='bold'))
+            name.grid(row=0, column=0, sticky='ew', padx=10, pady=(4, 0))
+            wrap_to_width(name)
+            location = ctk.CTkLabel(row, text=os.path.dirname(path), text_color=MUTED,
+                                    height=20, anchor='w', justify='left', font=ui_font(size=12))
+            location.grid(row=1, column=0, sticky='ew', padx=10, pady=(0, 4))
+            wrap_to_width(location)
+            remove = ctk.CTkButton(row, text='移除', width=50, height=28,
+                                    command=lambda selected=path: self.remove_file(selected),
+                                    state='disabled' if self.is_running else 'normal', **secondary_button_style())
+            remove.grid(row=0, column=1, rowspan=2, padx=(2, 10), pady=8)
+            self.file_remove_buttons[path] = remove
+            self.file_name_labels[path] = name
+            self.file_path_labels[path] = location
+        self.file_count.configure(text=f"{len(self.file_list)} 個檔案")
+
+    def remove_file(self, path):
+        if self.is_running:
+            return
+        if path in self.file_list:
+            self.file_list.remove(path)
+            self.update_file_list_ui()
+            self.status_label.configure(text=f'已移除：{os.path.basename(path)}')
+
+    def _set_file_clear_state(self, state):
+        self.btn_clear.configure(state=state)
+        for button in self.file_remove_buttons.values():
+            button.configure(state=state)
 
     def create_widgets(self):
         # --- 1. Header Frame (Top) ---
         self.header_frame = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
         self.header_frame.grid(row=0, column=0, sticky="ew", padx=20, pady=(15, 0))
+        self.header_frame.grid_columnconfigure(1, weight=1)
         
         self.logo_label = ctk.CTkLabel(self.header_frame, text="Video to Subtitle", font=ui_font(size=24, weight="bold"))
-        self.logo_label.pack(side="left")
+        self.logo_label.grid(row=0, column=0, sticky="w")
         
-        self.subtitle_label = ctk.CTkLabel(self.header_frame, text=f"本地語音轉字幕工具  v{get_version()}", font=ui_font(size=14), text_color=MUTED)
-        self.subtitle_label.pack(side="left", padx=(10, 0), pady=(5, 0))
+        self.subtitle_label = ctk.CTkLabel(self.header_frame, text="加入影音 · 產生字幕 · 校對與分享", font=ui_font(size=12), text_color=MUTED)
+        self.subtitle_label.grid(row=0, column=1, sticky="w", padx=12)
+        self.version_label = ctk.CTkLabel(self.header_frame, text=f"v{get_version()}", width=70, height=28,
+                     fg_color=SURFACE, corner_radius=14, text_color=MUTED,
+                     font=ui_font(size=12))
+        self.version_label.grid(row=0, column=2, sticky="e")
 
         # --- 2. Main Content Area (Middle) ---
         self.main_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.main_frame.grid(row=1, column=0, sticky="nsew", padx=20, pady=(5, 5))
         self.main_frame.grid_columnconfigure(0, weight=1)
         self.main_frame.grid_rowconfigure(1, weight=1)
-        self.main_frame.grid_rowconfigure(4, weight=1, minsize=80) # 訊息日誌區隨著視窗高度自動展延
+        self.main_frame.grid_rowconfigure(4, weight=0, minsize=50)
 
         # File Selection Frame (Batch Processing)
         self.file_frame = ctk.CTkFrame(self.main_frame, fg_color=CARD, corner_radius=12,
@@ -2996,14 +3162,18 @@ class App(BaseClass):
         self.file_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
         self.file_frame.grid_columnconfigure(0, weight=1) # Textbox expands
         
-        self.label_file = ctk.CTkLabel(self.file_frame, text="1. 待處理清單 (支援拖曳多個檔案)", font=ui_font(size=14, weight="bold"))
-        self.label_file.grid(row=0, column=0, columnspan=2, padx=15, pady=(10, 6), sticky="w")
+        self.label_file = ctk.CTkLabel(self.file_frame, text="Step 1.  待處理清單", font=ui_font(size=14, weight="bold"))
+        self.label_file.grid(row=0, column=0, padx=15, pady=(10, 6), sticky="w")
+        self.file_count = ctk.CTkLabel(self.file_frame, text="0 個檔案", text_color=MUTED, font=ui_font(size=12))
+        self.file_count.grid(row=0, column=1, padx=15, pady=(10, 6), sticky="e")
 
         # File List Textbox
-        self.textbox_files = ctk.CTkTextbox(self.file_frame, height=116, fg_color=SURFACE,
-                                          border_width=1, border_color=BORDER, corner_radius=8)
-        self.textbox_files.grid(row=1, column=0, padx=(15, 10), pady=(2, 12), sticky="ew")
-        self.textbox_files.configure(state="disabled") # Read-only
+        self.file_rows = ctk.CTkScrollableFrame(self.file_frame, height=116, fg_color=SURFACE,
+                                               border_width=1, border_color=BORDER, corner_radius=8)
+        # CTkScrollbar defaults to a 200px minimum request, which would
+        # otherwise enlarge this compact list and squeeze the settings pane.
+        self.file_rows._scrollbar.configure(height=40)
+        self.file_rows.grid(row=1, column=0, padx=(15, 10), pady=(2, 12), sticky="ew")
         
         # Buttons Frame within File Frame (Right side)
         self.btns_file_frame = ctk.CTkFrame(self.file_frame, fg_color="transparent")
@@ -3012,36 +3182,36 @@ class App(BaseClass):
         self.btn_add = ctk.CTkButton(self.btns_file_frame, text="加入檔案...", command=self.browse_file, width=115, height=26)
         self.btn_add.pack(fill="x", pady=(0, 4))
         
-        self.btn_clear = ctk.CTkButton(self.btns_file_frame, text="清除清單", command=self.clear_files, width=115, height=26, fg_color="gray")
+        self.btn_clear = ctk.CTkButton(self.btns_file_frame, text="清除清單", command=self.clear_files, width=125, height=28, **secondary_button_style())
         self.btn_clear.pack(fill="x", pady=(0, 4))
         
-        self.btn_edit_manual = ctk.CTkButton(self.btns_file_frame, text="編輯現有字幕檔", command=self.open_manual_edit, width=115, height=26,
-                                             fg_color="transparent", border_width=1, text_color=("gray10", "#DCE4EE"))
+        self.btn_edit_manual = ctk.CTkButton(self.btns_file_frame, text="編輯現有字幕", command=self.open_manual_edit, width=125, height=28,
+                                             **secondary_button_style())
         self.btn_edit_manual.pack(fill="x", pady=(0, 4))
 
         self.btn_evercam_tool = ctk.CTkButton(self.btns_file_frame, text="網頁播放器", command=self.open_web_player, width=115, height=26,
-                                              fg_color=ACCENT, hover_color=HOVER,
-                                              text_color="white", font=ui_font(size=12, weight="bold"))
+                                              **secondary_button_style(), font=ui_font(size=12))
         self.btn_evercam_tool.pack(fill="x")
+        self.update_file_list_ui()
 
         # Settings Frame
         # Keep the heading in the scrollable body so compact/high-DPI
         # windows retain enough viewport height to reveal advanced controls.
         self.settings_frame = ctk.CTkScrollableFrame(
-            self.main_frame, height=240, corner_radius=12, border_width=1,
-            border_color=BORDER, fg_color=SURFACE)
+            self.main_frame, height=244, corner_radius=12, border_width=1,
+            border_color=BORDER, fg_color=CARD)
         self.settings_frame.grid(row=1, column=0, sticky="nsew", pady=(0, 10))
         self.settings_frame.grid_columnconfigure(1, weight=1)
         self.settings_frame.grid_columnconfigure(3, weight=1)
 
         self.label_settings = ctk.CTkLabel(
-            self.settings_frame, text="2. 轉換設定", anchor="w",
-            font=ui_font(size=14, weight="bold"), fg_color=CARD, corner_radius=8)
+            self.settings_frame, text="Step 2.  轉換設定", anchor="w",
+            font=ui_font(size=14, weight="bold"), fg_color="transparent")
         self.label_settings.grid(row=0, column=0, columnspan=4,
-                                 padx=15, pady=(8, 6), sticky="ew")
+                                 padx=(2, 15), pady=(6, 4), sticky="ew")
         
         # Row 1: Comboboxes
-        self.label_model = ctk.CTkLabel(self.settings_frame, text="準確度 (Model):")
+        self.label_model = ctk.CTkLabel(self.settings_frame, text="辨識模型")
         self.label_model.grid(row=1, column=0, padx=15, pady=(2, 4), sticky="e")
         
         self.model_frame = ctk.CTkFrame(self.settings_frame, fg_color="transparent")
@@ -3083,42 +3253,44 @@ class App(BaseClass):
         self.chk_trans.pack(side="left", padx=10, pady=(2, 4))
 
         # Row 3: Initial Prompt (清理預設範例文字，保持乾淨簡約)
-        self.label_prompt = ctk.CTkLabel(self.settings_frame, text="前導提示 (Prompt):")
+        self.label_prompt = ctk.CTkLabel(self.settings_frame, text="前導提示")
         self.label_prompt.grid(row=3, column=0, padx=15, pady=(2, 4), sticky="e")
         
         self.prompt_container = ctk.CTkFrame(self.settings_frame, fg_color="transparent")
         self.prompt_container.grid(row=3, column=1, columnspan=3, padx=15, pady=(2, 4), sticky="ew")
         
         self.entry_prompt = ctk.CTkEntry(self.prompt_container, textvariable=self.prompt_var,
-                                         placeholder_text="", height=28)
+                                         placeholder_text="", fg_color=SURFACE, height=28)
         self.entry_prompt.pack(side="left", fill="x", expand=True)
+        attach_placeholder(self.entry_prompt, self.prompt_var, '（選填）')
         
         self.btn_help_prompt = ctk.CTkButton(self.prompt_container, text="?", width=28, height=28,
-                                             fg_color="gray", hover_color="#555555", corner_radius=14,
+                                             **secondary_button_style(),
                                              command=self.show_prompt_help)
         self.btn_help_prompt.pack(side="left", padx=(5, 0))
         
         self.entry_prompt.bind("<FocusIn>", lambda e: self.show_temp_status("提示: 前導提示詞能引導 Whisper 理解語境、文風與專業領域。"))
 
         # Row 4: Hotwords
-        self.label_hotwords = ctk.CTkLabel(self.settings_frame, text="熱詞補強 (Hotwords):")
+        self.label_hotwords = ctk.CTkLabel(self.settings_frame, text="專有名詞")
         self.label_hotwords.grid(row=4, column=0, padx=15, pady=(2, 6), sticky="e")
         
         self.hotwords_container = ctk.CTkFrame(self.settings_frame, fg_color="transparent")
         self.hotwords_container.grid(row=4, column=1, columnspan=3, padx=15, pady=(2, 6), sticky="ew")
         
         self.entry_hotwords = ctk.CTkEntry(self.hotwords_container, textvariable=self.hotwords_var, 
-                                           placeholder_text="例如: Python, Unity, 鄭郁翰 (以逗號分隔)", height=28)
+                                           placeholder_text="例如: Python, Unity, 鄭郁翰 (以逗號分隔)", fg_color=SURFACE, height=28)
         self.entry_hotwords.pack(side="left", fill="x", expand=True)
+        attach_placeholder(self.entry_hotwords, self.hotwords_var, '（選填）例如：Python, Unity（以逗號分隔）')
         
         # New: Import Button for Hotwords
         self.btn_import_hotwords = ctk.CTkButton(self.hotwords_container, text="載入", width=45, height=28,
-                                                fg_color="gray", hover_color="#555555",
+                                                **secondary_button_style(),
                                                 command=self.load_hotwords_from_file)
         self.btn_import_hotwords.pack(side="left", padx=(5, 0))
         
         self.btn_help_hotwords = ctk.CTkButton(self.hotwords_container, text="?", width=28, height=28, 
-                                                fg_color="gray", hover_color="#555555", corner_radius=14,
+                                                **secondary_button_style(),
                                                 command=self.show_hotwords_help)
         self.btn_help_hotwords.pack(side="left", padx=(5, 0))
         
@@ -3136,10 +3308,10 @@ class App(BaseClass):
                         self.label_fmt, self.combo_fmt, self.chk_frame,
                         self.label_prompt, self.prompt_container,
                         self.label_hotwords, self.hotwords_container):
-            control.grid_configure(pady=(4, 6))
+            control.grid_configure(pady=(3, 4))
 
         # 進階設定面板：兩欄呈現，沿用設定卡片的捲動區，避免窄視窗截斷。
-        self.adv_settings_frame = ctk.CTkFrame(self.settings_frame, fg_color=CARD, corner_radius=8,
+        self.adv_settings_frame = ctk.CTkFrame(self.settings_frame, fg_color=SURFACE, corner_radius=8,
                                             border_width=1, border_color=BORDER)
         self.adv_settings_frame.grid_remove() # 預設隱藏
         self.adv_settings_frame.grid_columnconfigure((0, 1), weight=1)
@@ -3218,14 +3390,14 @@ class App(BaseClass):
         self.action_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
         self.action_frame.grid(row=2, column=0, sticky="ew", pady=(0, 6))
 
-        self.btn_run = ctk.CTkButton(self.action_frame, text="開始轉錄 (Start)", command=self.start_thread, 
+        self.btn_run = ctk.CTkButton(self.action_frame, text="開始產生字幕", command=self.start_thread,
                                      font=ui_font(size=14, weight="bold"), height=40)
         self.btn_run.pack(side="left", fill="x", expand=True, padx=(0, 10))
 
         self.btn_cancel = ctk.CTkButton(self.action_frame, text="取消 (Cancel)", command=self.cancel_task, 
-                                        fg_color="transparent", border_width=2, text_color=("gray10", "#DCE4EE"),
+                                        **secondary_button_style(), width=120,
                                         font=ui_font(size=14, weight="bold"), height=40, state="disabled")
-        self.btn_cancel.pack(side="right", fill="x", expand=True, padx=(0, 0))
+        self.btn_cancel.pack(side="right")
 
         # Progress Bar Frame (兼顧特效與進度顯示)
         self.progress_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
@@ -3245,7 +3417,8 @@ class App(BaseClass):
         wrap_to_width(self.stage_label)
 
         # Log Area (自動伸縮展延，滿足需求 1)
-        self.log_textbox = ctk.CTkTextbox(self.main_frame, height=85, font=ui_font(family="Consolas", size=12))
+        self.log_textbox = ctk.CTkTextbox(self.main_frame, height=96, border_width=1, border_color=BORDER,
+                                        fg_color=CARD, font=ui_font(family="Consolas", size=12))
         self.log_textbox.grid(row=4, column=0, sticky="nsew", pady=(0, 4))
         self.log_textbox.configure(state="disabled")
 
@@ -3282,12 +3455,21 @@ class App(BaseClass):
         wrap_to_width(self.status_label)
 
         # Right: Credits
-        self.credit_label = ctk.CTkLabel(self.status_frame, text="Developed by Yu-Han Cheng 鄭郁翰", 
+        self.credit_label = ctk.CTkLabel(self.status_frame, text="© 2026 鄭郁翰（Yu-Han Cheng）",
                                          font=ui_font(size=10), text_color=MUTED)
         self.credit_label.grid(row=0, column=1, sticky="e", padx=10)
 
         # 初始化模型下拉選單標籤
         self.refresh_model_menu()
+
+    def _resize_message_area(self, event):
+        if event.widget != self:
+            return
+        # Keep the extra two log lines at normal sizes; leave enough settings
+        # space when a small display or window limits the available height.
+        height = 60 if self.winfo_height() / self._get_window_scaling() < 640 else 96
+        if self.log_textbox.cget('height') != height:
+            self.log_textbox.configure(height=height)
 
     def get_clean_model_name(self, raw_val=None):
         """從選單文字中取得乾淨的模型名稱 (例如從 'large-v3-turbo [已下載]' 取出 'large-v3-turbo')"""
@@ -3354,16 +3536,14 @@ class App(BaseClass):
         if is_dl:
             self.btn_download_model.configure(
                 text="已就緒", 
-                fg_color="gray", 
-                hover_color="#555555",
+                **secondary_button_style(),
                 state="normal"
             )
         else:
             self.btn_download_model.configure(
                 text=("檢查存取" if inspection.state == "unavailable" else
                       "繼續下載" if inspection.state == "incomplete" else "下載模型"),
-                fg_color=("#1f538d", "#14375e"), 
-                hover_color=("#14375e", "#0e2440"),
+                fg_color=ACCENT, hover_color=HOVER, text_color="white",
                 state="normal"
             )
 
@@ -3389,7 +3569,7 @@ class App(BaseClass):
         
         self.btn_run.configure(state="disabled")
         self.btn_add.configure(state="disabled")
-        self.btn_clear.configure(state="disabled")
+        self._set_file_clear_state('disabled')
         self.btn_download_model.configure(state="disabled", text="下載中...")
         self.btn_cancel.configure(state="normal", text="取消下載")
         
@@ -3487,7 +3667,7 @@ class App(BaseClass):
                         self.progress_label.configure(text="0.0%")
                     self.btn_run.configure(state="normal")
                     self.btn_add.configure(state="normal")
-                    self.btn_clear.configure(state="normal")
+                    self._set_file_clear_state('normal')
                     self.btn_cancel.configure(state="disabled", text="取消 (Cancel)")
                     self.update_download_button_state()
                 self.after(0, _cleanup)
@@ -4369,7 +4549,7 @@ class App(BaseClass):
         self.cancel_flag = False
         self.btn_run.configure(state="disabled")
         self.btn_add.configure(state="disabled") # 執行中不給加檔案
-        self.btn_clear.configure(state="disabled")
+        self._set_file_clear_state('disabled')
         if hasattr(self, 'btn_download_model'):
             self.btn_download_model.configure(state="disabled")
         self.btn_cancel.configure(state="normal", text="取消 (Cancel)")
@@ -4687,7 +4867,7 @@ class App(BaseClass):
             self.after(0, _reset_progress)
             self.after(0, lambda: self.btn_run.configure(state="normal"))
             self.after(0, lambda: self.btn_add.configure(state="normal"))
-            self.after(0, lambda: self.btn_clear.configure(state="normal"))
+            self.after(0, lambda: self._set_file_clear_state('normal'))
             self.after(0, lambda: self.btn_cancel.configure(state="disabled", text="取消 (Cancel)"))
             self.after(0, self.update_download_button_state)
 
@@ -4698,7 +4878,7 @@ class App(BaseClass):
             self.is_adv_settings_visible = False
             # 收起時復原日誌區最小高度保證
             try:
-                self.main_frame.grid_rowconfigure(4, weight=1, minsize=80)
+                self.main_frame.grid_rowconfigure(4, weight=0, minsize=50)
             except Exception:
                 pass
             self.after_idle(self._reveal_settings_toggle)
@@ -4709,8 +4889,8 @@ class App(BaseClass):
                 scale = self._get_window_scaling() if hasattr(self, '_get_window_scaling') else 1.0
                 cur_h = int(self.winfo_height() / scale)
                 # 若處於極矮小視窗 (<640px)，適度讓位給日誌區，保證按鈕與進度條 100% 不被擠出
-                min_log_h = 30 if cur_h < 640 else 80
-                self.main_frame.grid_rowconfigure(4, weight=1, minsize=min_log_h)
+                min_log_h = 30 if cur_h < 640 else 50
+                self.main_frame.grid_rowconfigure(4, weight=0, minsize=min_log_h)
             except Exception:
                 pass
 

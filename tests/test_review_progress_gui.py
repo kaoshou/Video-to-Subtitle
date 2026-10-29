@@ -59,6 +59,11 @@ class ReviewProgressGUI(unittest.TestCase):
                 self.root.update()
                 editor.paned_window.sashpos(0, round(360 * scale))
                 self.root.update()
+                from tkinter import font as tkfont
+                style = self.desktop.ttk.Style(self.root)
+                font = tkfont.Font(root=self.root, font=style.lookup('Treeview', 'font'))
+                for column in ('start', 'end'):
+                    self.assertGreater(editor.tree.column(column, 'width'), font.measure('00:00:00,000'))
                 controls = [editor.entry_start, editor.entry_end] + [
                     w for w in descendants(editor.editor_dock) if isinstance(w, ctk.CTkButton)]
                 captions = [w.cget('text') for w in controls if isinstance(w, ctk.CTkButton)]
@@ -76,6 +81,157 @@ class ReviewProgressGUI(unittest.TestCase):
                                     next(w for w in controls if isinstance(w, ctk.CTkButton)
                                          and '下一條' in w.cget('text')).winfo_rooty())
         self.assertFalse(self.errors)
+
+    def test_header_and_playback_actions_remain_visible_in_narrow_scaled_editor(self):
+        editor = self.editor()
+        ctk = self.desktop.ctk
+        self.addCleanup(lambda: ctk.set_widget_scaling(1))
+        for scale in (1, 1.5, 2):
+            ctk.set_widget_scaling(scale)
+            editor.geometry('1240x900')
+            self.root.update()
+            editor.paned_window.sashpos(0, editor.paned_window.winfo_width() - round(300 * scale))
+            self.root.update()
+            player = editor.video_player
+            for toolbar in (editor.header_actions, player.playback_toolbar):
+                for control in toolbar._items:
+                    self.assertTrue(control.winfo_ismapped())
+                    self.assertGreaterEqual(control.winfo_x(), 0)
+                    self.assertLessEqual(control.winfo_x() + control.winfo_width(), toolbar.winfo_width() + 1)
+                    self.assertLessEqual(control.winfo_y() + control.winfo_height(), toolbar.winfo_height() + 1)
+            player.btn_speed.invoke()
+            self.assertNotEqual(player.playback_speed, 1.0)
+            player.set_speed(1.0)
+            player.btn_mute.invoke()
+            self.assertTrue(player.is_muted)
+            player.btn_mute.invoke()
+            self.assertFalse(player.is_muted)
+        self.assertFalse(self.errors)
+
+    def test_file_placeholder_is_display_only_and_count_tracks_clear(self):
+        app = self.root
+        self.assertEqual(app.file_list, [])
+        self.assertEqual(app.file_remove_buttons, {})
+        app.file_list = [str(self.path)]
+        app.update_file_list_ui()
+        self.assertIn('1 個檔案', app.file_count.cget('text'))
+        self.assertEqual(app.file_name_labels[str(self.path)].cget('text'), self.path.name)
+        app.clear_files()
+        self.assertEqual(app.file_list, [])
+        self.assertIn('0 個檔案', app.file_count.cget('text'))
+        self.assertEqual(app.file_remove_buttons, {})
+
+    def test_remove_one_file_preserves_order_and_files_and_is_blocked_while_running(self):
+        app = self.root
+        second = Path(self.temp.name) / '另一堂課.mp4'
+        second.touch()
+        app.file_list = [str(self.path), str(second)]
+        app.update_file_list_ui()
+        self.root.update()
+        canvas = app.file_rows._parent_canvas
+        for button in app.file_remove_buttons.values():
+            self.assertLessEqual(button.winfo_rooty() + button.winfo_height(),
+                                 canvas.winfo_rooty() + canvas.winfo_height())
+        app.is_running = True
+        app._set_file_clear_state('disabled')
+        self.assertEqual(app.file_remove_buttons[str(self.path)].cget('state'), 'disabled')
+        app.remove_file(str(self.path))
+        self.assertEqual(len(app.file_list), 2)
+        app.is_running = False
+        app._set_file_clear_state('normal')
+        app.file_remove_buttons[str(self.path)].invoke()
+        self.assertEqual(app.file_list, [str(second)])
+        self.assertTrue(self.path.exists())
+        self.assertTrue(second.exists())
+
+    def test_save_keeps_editor_open_and_revert_restores_clean_state(self):
+        editor = self.editor()
+        self.root.update()
+        self.assertFalse(editor.has_unsaved_changes)
+        editor._select_tree_row(1)
+        editor._select_tree_row(0)
+        self.root.update()
+        self.assertFalse(editor.has_unsaved_changes)
+        editor.txt_item_editor.delete('0.0', 'end')
+        editor.txt_item_editor.insert('0.0', '校對完成')
+        self.root.update()
+        self.assertTrue(editor.has_unsaved_changes)
+        self.assertIn('未儲存', editor.save_status.cget('text'))
+        editor.txt_item_editor._textbox.event_generate('<Control-s>')
+        self.root.update()
+        self.assertTrue(editor.winfo_exists())
+        self.assertFalse(editor.has_unsaved_changes)
+        self.assertIn('校對完成', self.path.read_text(encoding='utf-8'))
+        editor.txt_item_editor.delete('0.0', 'end')
+        editor.txt_item_editor.insert('0.0', '另一個版本')
+        self.root.update()
+        editor.txt_item_editor.delete('0.0', 'end')
+        editor.txt_item_editor.insert('0.0', '校對完成')
+        self.root.update()
+        self.assertFalse(editor.has_unsaved_changes)
+
+    def test_timing_and_structural_changes_are_unsaved_until_published(self):
+        editor = self.editor()
+        editor._shift_current_time(500)
+        self.root.update()
+        self.assertTrue(editor.has_unsaved_changes)
+        self.assertTrue(editor.save_subtitle())
+        editor.txt_item_editor.mark_set('insert', '1.3')
+        editor._split_current_subtitle()
+        self.root.update()
+        self.assertTrue(editor.has_unsaved_changes)
+        self.assertTrue(editor.save_subtitle())
+        editor._select_tree_row(0)
+        editor._merge_with_next_subtitle()
+        self.root.update()
+        self.assertTrue(editor.has_unsaved_changes)
+        self.assertTrue(editor.save_subtitle())
+        self.assertFalse(editor.has_unsaved_changes)
+
+    def test_save_failure_and_close_choices_preserve_unsaved_content(self):
+        editor = self.editor()
+        original = self.path.read_bytes()
+        editor.txt_item_editor.delete('0.0', 'end')
+        editor.txt_item_editor.insert('0.0', '尚未存檔')
+        with patch.object(self.desktop, 'atomic_write_text', side_effect=PermissionError('locked')), \
+                patch.object(self.desktop.messagebox, 'showerror'), \
+                patch.object(self.desktop.messagebox, 'askyesnocancel', return_value=True):
+            editor.request_close()
+        self.root.update()
+        self.assertTrue(editor.winfo_exists())
+        self.assertTrue(editor.has_unsaved_changes)
+        self.assertEqual(self.path.read_bytes(), original)
+        with patch.object(self.desktop.messagebox, 'askyesnocancel', return_value=None):
+            editor.request_close()
+        self.assertTrue(editor.winfo_exists())
+        with patch.object(self.desktop.messagebox, 'askyesnocancel', return_value=False):
+            editor.request_close()
+        self.assertFalse(editor.winfo_exists())
+        self.assertEqual(self.path.read_bytes(), original)
+
+    def test_raw_and_txt_edits_track_save_state_and_keep_timeline(self):
+        editor = self.editor()
+        editor._toggle_raw_mode()
+        self.root.update()
+        self.assertFalse(editor.has_unsaved_changes)
+        editor.raw_editor.delete('0.0', 'end')
+        editor.raw_editor.insert('0.0', '1\n00:00:00,000 --> 00:00:02,000\n原始碼修改\n')
+        self.root.update()
+        self.assertTrue(editor.has_unsaved_changes)
+        editor._on_save_key()
+        editor._toggle_raw_mode()
+        self.root.update()
+        self.assertFalse(editor.has_unsaved_changes)
+        self.assertEqual(editor.items[0]['end'], '00:00:02,000')
+        text = Path(self.temp.name) / '筆記.txt'
+        text.write_text('原文\n', encoding='utf-8')
+        txt = self.desktop.SubtitleEditorWindow(self.root, str(text))
+        txt.txt_editor.insert('end', '追加')
+        self.root.update()
+        self.assertTrue(txt.has_unsaved_changes)
+        self.assertTrue(txt.save_subtitle())
+        self.assertFalse(txt.has_unsaved_changes)
+        self.assertIn('追加', text.read_text(encoding='utf-8'))
 
     def test_review_tools_are_compact_and_reason_follows_selection_in_dock(self):
         editor = self.editor()

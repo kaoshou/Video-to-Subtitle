@@ -137,9 +137,9 @@ class DesktopUI(unittest.TestCase):
             self.ctk.set_appearance_mode(mode)
             self.root.update()
             color = app._apply_appearance_mode
-            self.assertNotEqual(color(app.textbox_files.cget('fg_color')),
+            self.assertNotEqual(color(app.file_rows.cget('fg_color')),
                                 color(app.file_frame.cget('fg_color')))
-            self.assertGreaterEqual(app.textbox_files.cget('border_width'), 1)
+            self.assertGreaterEqual(app.file_rows.cget('border_width'), 1)
             for entry in (app.entry_prompt, app.entry_hotwords):
                 self.assertNotEqual(color(entry.cget('fg_color')),
                                     color(app.settings_frame.cget('fg_color')))
@@ -464,7 +464,7 @@ class DesktopUI(unittest.TestCase):
         with patch.object(desktop, '__file__', str(metadata.with_name('SubtitleTranscriber.py'))):
             app = self.main_app()
             self.assertIn('v9.8.0', app.title())
-            self.assertIn('v9.8.0', app.subtitle_label.cget('text'))
+            self.assertIn('v9.8.0', app.version_label.cget('text'))
             metadata.write_text('[project]\nversion = "9.8.1"\n', encoding='utf-8')
             app.show_about()
             self.root.update()
@@ -500,10 +500,10 @@ class DesktopUI(unittest.TestCase):
                 self.settle_scaling()
                 app.geometry('760x500')
                 self.root.update()
-                self.assertIn(str(video), app.textbox_files.get('1.0', 'end'))
-                self.assertEqual(app.textbox_files.cget('state'), 'disabled')
+                self.assertEqual(app.file_name_labels[str(video)].cget('text'), video.name)
+                self.assertEqual(app.file_path_labels[str(video)].cget('text'), str(video.parent))
                 self.assert_buttons_visible(app, ['加入檔案...', '清除清單',
-                    '網頁播放器', '開始轉錄 (Start)', '取消 (Cancel)'])
+                    '網頁播放器', '開始產生字幕', '取消 (Cancel)'])
                 app.settings_frame._parent_canvas.yview_moveto(1)
                 self.root.update()
                 app.btn_toggle_adv.invoke()
@@ -515,7 +515,7 @@ class DesktopUI(unittest.TestCase):
                 self.assertEqual(app.hotwords_var.get(), '索引, B-tree')
         app.btn_clear.invoke()
         self.assertEqual(app.file_list, [])
-        self.assertEqual(app.textbox_files.get('1.0', 'end').strip(), '')
+        self.assertEqual(app.file_remove_buttons, {})
         self.assertFalse(self.errors, repr(self.errors))
 
     def test_video_selection_does_not_show_or_register_hidden_dropdown_menus(self):
@@ -576,7 +576,7 @@ class DesktopUI(unittest.TestCase):
                 self.assertFalse(app.adv_settings_frame.winfo_manager())
                 self.assertAlmostEqual(canvas.yview()[0], 0, delta=0.02)
                 self.assertEqual(app.max_chars_var.get(), '47')
-                self.assert_buttons_visible(app, ['開始轉錄 (Start)', '取消 (Cancel)'])
+                self.assert_buttons_visible(app, ['開始產生字幕', '取消 (Cancel)'])
         self.assertFalse(self.errors, repr(self.errors))
 
     def test_advanced_first_option_is_visible_at_minimum_window_height(self):
@@ -592,7 +592,7 @@ class DesktopUI(unittest.TestCase):
         self.assertGreaterEqual(first.winfo_rooty(), canvas.winfo_rooty())
         self.assertLessEqual(first.winfo_rooty() + first.winfo_height(),
                              canvas.winfo_rooty() + canvas.winfo_height())
-        self.assert_buttons_visible(app, ['開始轉錄 (Start)', '取消 (Cancel)'])
+        self.assert_buttons_visible(app, ['開始產生字幕', '取消 (Cancel)'])
         self.assertFalse(self.errors, repr(self.errors))
 
     def test_model_manager_done_button_is_full_height_at_supported_scales(self):
@@ -818,7 +818,7 @@ class DesktopUI(unittest.TestCase):
                 self.ctk.set_window_scaling(scale)
                 self.root.geometry('760x800')
                 self.root.update()
-                self.assert_buttons_visible(self.root, ['開始轉錄 (Start)', '取消 (Cancel)', '網頁播放器'])
+                self.assert_buttons_visible(self.root, ['開始產生字幕', '取消 (Cancel)', '網頁播放器'])
                 for widget in (self.root.chk_word_ts, self.root.chk_spacing, self.root.chk_case_corr, self.root.chk_vad, self.root.entry_max_chars):
                     self.assertGreaterEqual(widget.winfo_width(), widget.winfo_reqwidth() - 2)
                     self.assertLessEqual(widget.winfo_rootx() + widget.winfo_width(), self.root.winfo_rootx() + self.root.winfo_width())
@@ -839,7 +839,7 @@ class DesktopUI(unittest.TestCase):
                 time.sleep(0.01)
             editor.geometry('920x560')
             self.root.update()
-            self.assert_buttons_visible(editor, ['儲存並關閉 (Save & Close)', '取消 (Cancel)'])
+            self.assert_buttons_visible(editor, ['儲存並關閉', '關閉', '儲存'])
             self.ctk.set_widget_scaling(1)
             self.ctk.set_window_scaling(1)
             style = desktop.ttk.Style(self.root)

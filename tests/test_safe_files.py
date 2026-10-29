@@ -247,7 +247,8 @@ class EditorRegression(unittest.TestCase):
     def setUpClass(cls):
         tree = ast.parse((ROOT / 'SubtitleTranscriber.py').read_text(encoding='utf-8'))
         editor = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'SubtitleEditorWindow')
-        names = {'_parse_subtitle_text', '_generate_subtitle_string', '_toggle_raw_mode', 'save_and_close'}
+        names = {'_parse_subtitle_text', '_generate_subtitle_string', '_toggle_raw_mode',
+                 '_current_content', 'save_subtitle', 'save_and_close'}
         module = ast.Module(body=[n for n in editor.body if isinstance(n, ast.FunctionDef) and n.name in names], type_ignores=[])
         cls.dialog = Mock()
         scope = {'atomic_write_text': atomic_write_text, 'os': os, 'messagebox': cls.dialog}
@@ -256,13 +257,16 @@ class EditorRegression(unittest.TestCase):
 
     def editor(self, **fields):
         editor = SimpleNamespace(**fields)
+        editor._flush_editor_edits = Mock()
+        editor._refresh_save_state = Mock()
+        editor._queue_save_state = Mock()
         for name, method in self.methods.items(): setattr(editor, name, method.__get__(editor))
         return editor
 
     def test_memory_preview_no_file_operations(self):
         editor = self.editor(is_raw_mode=True, raw_editor=Mock(get=Mock(return_value=SRT)),
                              raw_frame=Mock(), structured_frame=Mock(), search_bar_frame=Mock(),
-                             btn_toggle_mode=Mock(), _populate_treeview=Mock(), _select_tree_row=Mock())
+                             btn_toggle_mode=Mock(), header_actions=Mock(), _populate_treeview=Mock(), _select_tree_row=Mock())
         with patch('builtins.open', side_effect=AssertionError('preview must not use disk')):
             editor._toggle_raw_mode()
         self.assertEqual(len(editor.items), 1)
