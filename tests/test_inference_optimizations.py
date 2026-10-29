@@ -17,11 +17,21 @@ class PreparedAudioTests(unittest.TestCase):
             converted.append(result)
             return result
         core = SimpleNamespace(array=array, eval=lambda value: evaluated.append(value))
-        with patch.dict('sys.modules', {'mlx.core': core}):
+        # CPU-only CI has no optional mlx parent package. Supply both modules so
+        # this test exercises conversion rather than the intentional fallback.
+        with patch.dict('sys.modules', {'mlx': SimpleNamespace(core=core), 'mlx.core': core}):
             result = as_mlx_audio(waveform)
         np.testing.assert_array_equal(result, waveform)
         self.assertIs(result, converted[0])
         self.assertIs(evaluated[0], result)
+
+    def test_missing_optional_mlx_keeps_original_audio_without_modifying_it(self):
+        from inference_optimizations import as_mlx_audio
+        waveform = np.array([.125, -.25, .5], dtype=np.float32)
+        with patch.dict('sys.modules', {'mlx': None, 'mlx.core': None}):
+            result = as_mlx_audio(waveform)
+        self.assertIs(result, waveform)
+        np.testing.assert_array_equal(result, [.125, -.25, .5])
 
     def test_reuses_exact_waveform_and_discards_it_after_job(self):
         from inference_optimizations import PreparedAudio
