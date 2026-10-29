@@ -120,6 +120,21 @@ class ReviewProgressGUI(unittest.TestCase):
         self.root.update()
         self.assertGreaterEqual(toolbar.winfo_height(), button.winfo_height())
 
+    def test_playback_controls_reserve_space_before_large_video_canvas(self):
+        host = self.desktop.ctk.CTkFrame(self.root, width=340, height=240)
+        host.grid(row=4, column=0)
+        host.pack_propagate(False)
+        player = self.desktop.VideoPlayerWidget(host)
+        player.pack(fill='both', expand=True)
+        player.canvas_frame.configure(height=500)
+        self.root.update()
+        toolbar = player.playback_toolbar
+        for control in toolbar._items:
+            self.assertTrue(control.winfo_ismapped())
+            self.assertLessEqual(control.winfo_rooty() + control.winfo_height(),
+                                 player.winfo_rooty() + player.winfo_height())
+            self.assertLessEqual(control.winfo_y() + control.winfo_height(), toolbar.winfo_height() + 1)
+
     def test_file_placeholder_is_display_only_and_count_tracks_clear(self):
         app = self.root
         self.assertEqual(app.file_list, [])

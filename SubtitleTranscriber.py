@@ -392,7 +392,9 @@ class VideoPlayerWidget(ctk.CTkFrame):
         
         # 3. 底部播放控制列
         self.controls_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.controls_frame.pack(fill="x", padx=6, pady=(4, 6))
+        # Reserve playback actions before the expanding canvas, including
+        # when high-DPI displays constrain the native window height.
+        self.controls_frame.pack(side="bottom", fill="x", padx=6, pady=(4, 6), before=self.canvas_frame)
         
         # 時間軸 Slider 與時間標籤
         slider_row = ctk.CTkFrame(self.controls_frame, fg_color="transparent")
