@@ -133,7 +133,12 @@ class DesktopUI(unittest.TestCase):
         app.geometry('800x780')
         self.root.update()
         self.assertEqual(app.file_rows._scrollbar.cget('button_color'), app.file_rows.cget('fg_color'))
-        self.assertEqual(app.settings_frame._scrollbar.cget('button_color'), app.settings_frame.cget('fg_color'))
+        canvas = app.settings_frame._parent_canvas
+        # A native window manager may cap 780px to a smaller desktop.
+        # Empty file lists fit, but basic settings may legitimately overflow.
+        settings_overflow = app.settings_frame.winfo_reqheight() > canvas.winfo_height()
+        self.assertEqual(app.settings_frame._scrollbar.cget('button_color') !=
+                         app.settings_frame.cget('fg_color'), settings_overflow)
         app.file_list = [str(Path(self.temp.name) / f'課程_{i}.mp4') for i in range(15)]
         app.update_file_list_ui()
         app.btn_toggle_adv.invoke()
@@ -144,7 +149,8 @@ class DesktopUI(unittest.TestCase):
         app.clear_files()
         self.root.update()
         self.assertEqual(app.file_rows._scrollbar.cget('button_color'), app.file_rows.cget('fg_color'))
-        self.assertEqual(app.settings_frame._scrollbar.cget('button_color'), app.settings_frame.cget('fg_color'))
+        self.assertEqual(app.settings_frame._scrollbar.cget('button_color') !=
+                         app.settings_frame.cget('fg_color'), settings_overflow)
         self.assertFalse(self.errors, repr(self.errors))
 
     def test_scrollbar_reacts_to_window_size_and_scaling_without_losing_values(self):
@@ -169,14 +175,26 @@ class DesktopUI(unittest.TestCase):
                                       canvas.bbox('all'), canvas.yview()))
                     self.assertEqual(app.prompt_var.get(), '保留講題背景')
 
-    def test_default_height_reveals_all_basic_settings_without_scrolling(self):
+    def test_default_layout_keeps_basic_settings_visible_or_scroll_reachable(self):
         app = self.main_app()
         canvas = app.settings_frame._parent_canvas
+        fits = app.settings_frame.winfo_reqheight() <= canvas.winfo_height()
+        self.assertEqual(app.settings_frame._scrollbar.cget('button_color') ==
+                         app.settings_frame.cget('fg_color'), fits)
         for widget in (app.label_settings, app.combo_device, app.combo_fmt,
                        app.entry_prompt, app.entry_hotwords, app.btn_toggle_adv):
+            if not fits:
+                # Do not skip small desktops: require every basic control
+                # to be fully reachable in the actual native viewport.
+                offset = widget.winfo_rooty() - app.settings_frame.winfo_rooty()
+                canvas.yview_moveto(max(0, offset + widget.winfo_height() / 2 -
+                                       canvas.winfo_height() / 2) /
+                                   app.settings_frame.winfo_height())
+                self.root.update()
             self.assertGreaterEqual(widget.winfo_rooty(), canvas.winfo_rooty())
             self.assertLessEqual(widget.winfo_rooty() + widget.winfo_height(),
                                  canvas.winfo_rooty() + canvas.winfo_height())
+        self.assert_buttons_visible(app, ['開始產生字幕', '取消 (Cancel)'])
 
     def test_selected_cpu_threads_reach_model_initialization(self):
         from unittest.mock import patch
