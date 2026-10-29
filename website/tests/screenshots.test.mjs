@@ -5,12 +5,15 @@ import { readFile } from 'node:fs/promises';
 // Keep labels tied to verified capture metadata; never relabel old pixels.
 test('published screenshots identify their actual capture version and platform', async () => {
   const root = new URL('../../', import.meta.url);
-  const version = '2.7.12';
+  const capture = JSON.parse(await readFile(new URL('docs/screenshots.json', root), 'utf8'));
+  const version = capture.version;
+  const project = await readFile(new URL('pyproject.toml', root), 'utf8');
+  assert.match(project, new RegExp('version = "' + version.replaceAll('.', '\\.') + '"'));
   const readme = await readFile(new URL('README.md', root), 'utf8');
   const { renderHome } = await import('../src/content.mjs');
   assert.ok(readme.includes(`截圖均擷取自 **v${version}**`));
   assert.ok(renderHome().includes(`以下為 v${version} 在 Linux`));
-  for (const name of ['screenshot_main.png', 'screenshot_editor.png', 'screenshot_models.png']) {
+  for (const name of ['screenshot_main.png', 'screenshot_editor.png', 'screenshot_models.png', 'screenshot_advanced.png']) {
     const png = await readFile(new URL(name, root));
     const metadata = {};
     for (let offset = 8; offset + 12 <= png.length;) {
@@ -25,6 +28,7 @@ test('published screenshots identify their actual capture version and platform',
     }
     assert.equal(metadata.Software, `Video to Subtitle ${version}`, `${name}: mislabeled or unverified capture`);
     assert.match(metadata.SourceCommit ?? '', /^[0-9a-f]{40}$/);
+    assert.equal(metadata.SourceCommit, capture.source_commit);
     assert.ok(['Linux', 'Windows', 'Darwin'].includes(metadata.Platform), `${name}: missing actual platform`);
     assert.equal(metadata.Content, 'Synthetic demonstration; no personal data');
   }

@@ -19,6 +19,19 @@ test('Markdown is escaped and duplicate headings receive stable anchors', () => 
   assert.throws(() => renderGuide('[錯誤](missing.md)'), /Unresolved guide link/);
 });
 
+test('guide screenshots use approved local assets and open in the page lightbox', () => {
+  const { html } = renderGuide('## 畫面\n![主畫面](../screenshot_main.png)\n\n![批次流程](images/batch-flow.svg)');
+  assert.match(html, /class="image-zoom guide-image"/);
+  assert.match(html, /src="\/Video-to-Subtitle\/assets\/screenshot_main.png"/);
+  assert.match(html, /src="\/Video-to-Subtitle\/assets\/batch-flow.svg"/);
+  assert.match(html, /alt="主畫面"/);
+  assert.match(html, /loading="lazy"/);
+  for (const path of ['../../secret.png', 'images/unknown.svg', 'https://example.com/track.png', '../screenshot_main.png?x=1']) {
+    assert.throws(() => renderGuide(`![未允許](${path})`), /Unresolved guide image/);
+  }
+  assert.doesNotMatch(renderGuide('![拒絕](data:image/svg+xml,bad)').html, /<img/);
+});
+
 test('built guide covers the complete v2.7.7 workflow without stale package instructions', async () => {
   const out = await mkdtemp(join(tmpdir(), 'video-subtitle-guide-'));
   try {

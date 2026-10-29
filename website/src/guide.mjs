@@ -1,7 +1,21 @@
 import MarkdownIt from 'markdown-it';
 import { escapeHtml } from './layout.mjs';
+import { assetPath } from './paths.mjs';
 
 const markdown = new MarkdownIt({ html: false, linkify: true, typographer: false });
+const guideImages = new Map([
+  ['../screenshot_main.png', 'screenshot_main.png'],
+  ['../screenshot_editor.png', 'screenshot_editor.png'],
+  ['../screenshot_models.png', 'screenshot_models.png'],
+  ['../screenshot_advanced.png', 'screenshot_advanced.png'],
+  ['images/batch-flow.svg', 'batch-flow.svg']
+]);
+const renderImage = markdown.renderer.rules.image;
+markdown.renderer.rules.image = (tokens, index, options, env, renderer) => {
+  const token = tokens[index];
+  return `<a class="image-zoom guide-image" href="${escapeHtml(token.attrGet('src'))}" aria-label="放大查看：${escapeHtml(token.content)}">` +
+    renderImage(tokens, index, options, env, renderer) + '</a>';
+};
 
 function scrollRegion(token) {
   const name = token.meta?.headingId
@@ -57,7 +71,12 @@ export function renderGuide(source) {
     if (token.type === 'inline') {
       for (const child of token.children || []) {
         if (child.type === 'link_open') child.attrSet('href', rewriteGuideHref(child.attrGet('href')));
-        if (child.type === 'image') throw new Error('Unexpected local image in guide');
+        if (child.type === 'image') {
+          const file = guideImages.get(child.attrGet('src'));
+          if (!file) throw new Error(`Unresolved guide image: ${child.attrGet('src')}`);
+          child.attrSet('src', assetPath(file));
+          child.attrSet('loading', 'lazy');
+        }
       }
     }
   }

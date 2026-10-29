@@ -97,10 +97,23 @@ def main():
             app.add_files_from_paths([str(video)])
             capture(app, 'screenshot_main.png')
 
-            editor = application.SubtitleEditorWindow(app, str(subtitle), str(video))
+            app.geometry('1040x1040+80+70')
+            app.btn_toggle_adv.invoke()
+            settle()
+            app.settings_frame._parent_canvas.yview_moveto(0)
+            capture(app, 'screenshot_advanced.png')
+            app.btn_toggle_adv.invoke()
+
+            # Hand-written signals demonstrate the real review UI; they are
+            # fixture data, never presented as model recognition output.
+            review = [dict(start=4, end=8, text='加入影片，選擇模型與輸出格式。',
+                           reasons=['辨識信心偏低'])]
+            editor = application.SubtitleEditorWindow(app, str(subtitle), str(video),
+                                                       review_evidence=review)
             editor.geometry('1320x820+80+70')
             settle()
             assert len(editor.items) == 4, 'Sample subtitle parsing failed'
+            editor._select_tree_row(1)
             capture(editor, 'screenshot_editor.png')
             editor.destroy()
             settle()
@@ -113,7 +126,8 @@ def main():
         (output / 'capture.json').write_text(json.dumps({
             'version': version, 'source_commit': commit, 'platform': platform.system(),
             'method': 'Real application under Xvfb; window client areas; no UI compositing',
-            'fixture': 'Synthetic lecture slide, silent video and hand-written sample subtitles',
+            'fixture': 'Synthetic lecture slide, silent video, hand-written sample subtitles and review signals',
+            'capture_run': f'https://github.com/{os.environ["GITHUB_REPOSITORY"]}/actions/runs/{os.environ["GITHUB_RUN_ID"]}',
             'captures': captures,
         }, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
 

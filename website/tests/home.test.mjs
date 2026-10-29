@@ -29,9 +29,11 @@ test('hero always links to latest downloads regardless of source version', async
   try {
     await mkdir(join(fixture, 'docs'));
     await copyFile(join(root, 'docs/USER_GUIDE.zh-TW.md'), join(fixture, 'docs/USER_GUIDE.zh-TW.md'));
-    for (const asset of ['app_icon.png', 'screenshot_main.png', 'screenshot_editor.png', 'screenshot_models.png']) {
+    for (const asset of ['app_icon.png', 'screenshot_main.png', 'screenshot_editor.png', 'screenshot_models.png', 'screenshot_advanced.png']) {
       await copyFile(join(root, asset), join(fixture, asset));
     }
+    await mkdir(join(fixture, 'docs/images'));
+    await copyFile(join(root, 'docs/images/batch-flow.svg'), join(fixture, 'docs/images/batch-flow.svg'));
     for (const version of ['9.1.2', '9.1.3']) {
       await writeFile(join(fixture, 'pyproject.toml'), '[project]\nversion = "' + version + '"\n');
       const outputRoot = join(fixture, version);

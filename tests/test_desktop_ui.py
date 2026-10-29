@@ -91,7 +91,8 @@ class DesktopUI(unittest.TestCase):
 
     def test_batch_size_requires_enable_and_supported_backend(self):
         app = self.main_app()
-        self.assertEqual(app.combo_batch_size.cget('state'), 'disabled')
+        self.assertTrue(app.batch_acceleration_var.get())
+        self.assertEqual(app.combo_batch_size.cget('state'), 'normal')
 
         app.batch_acceleration_var.set(True)
         app.update_batch_controls()
@@ -99,8 +100,10 @@ class DesktopUI(unittest.TestCase):
         app.device_var.set('mlx')
         self.root.update()
         self.assertEqual(app.combo_batch_size.cget('state'), 'disabled')
+        self.assertEqual(app.chk_batch.cget('state'), 'disabled')
         self.assertIn('MLX', app.batch_hint.cget('text'))
         app.device_var.set('cpu')
+        self.assertEqual(app.chk_batch.cget('state'), 'normal')
         app.vad_filter_var.set(False)
         self.root.update()
         self.assertEqual(app.combo_batch_size.cget('state'), 'disabled')
@@ -110,6 +113,70 @@ class DesktopUI(unittest.TestCase):
         app.batch_acceleration_var.set(False)
         app.update_batch_controls()
         self.assertEqual(app.combo_batch_size.cget('state'), 'disabled')
+
+    def test_old_settings_default_to_batch_but_explicit_opt_out_is_preserved(self):
+        from unittest.mock import patch
+        import SubtitleTranscriber as desktop
+        load = desktop.App.load_settings
+        app = self.main_app()
+        app.config_file = Path(self.temp.name) / 'config.json'
+        app.config_file.touch()
+        with patch.object(desktop, 'read_settings', return_value={'model': 'small'}):
+            load(app)
+        self.assertTrue(app.batch_acceleration_var.get())
+        with patch.object(desktop, 'read_settings', return_value={'batch_acceleration': False}):
+            load(app)
+        self.assertFalse(app.batch_acceleration_var.get())
+
+    def test_main_scrollbars_only_appear_when_content_overflows(self):
+        app = self.main_app()
+        app.geometry('800x780')
+        self.root.update()
+        self.assertEqual(app.file_rows._scrollbar.cget('button_color'), app.file_rows.cget('fg_color'))
+        self.assertEqual(app.settings_frame._scrollbar.cget('button_color'), app.settings_frame.cget('fg_color'))
+        app.file_list = [str(Path(self.temp.name) / f'課程_{i}.mp4') for i in range(15)]
+        app.update_file_list_ui()
+        app.btn_toggle_adv.invoke()
+        self.root.update()
+        self.assertNotEqual(app.file_rows._scrollbar.cget('button_color'), app.file_rows.cget('fg_color'))
+        self.assertNotEqual(app.settings_frame._scrollbar.cget('button_color'), app.settings_frame.cget('fg_color'))
+        app.btn_toggle_adv.invoke()
+        app.clear_files()
+        self.root.update()
+        self.assertEqual(app.file_rows._scrollbar.cget('button_color'), app.file_rows.cget('fg_color'))
+        self.assertEqual(app.settings_frame._scrollbar.cget('button_color'), app.settings_frame.cget('fg_color'))
+        self.assertFalse(self.errors, repr(self.errors))
+
+    def test_scrollbar_reacts_to_window_size_and_scaling_without_losing_values(self):
+        app = self.main_app()
+        app.prompt_var.set('保留講題背景')
+        for scale in (1, 1.5, 2):
+            with self.subTest(scale=scale):
+                self.ctk.set_widget_scaling(scale)
+                self.ctk.set_window_scaling(scale)
+                self.settle_scaling()
+                canvas = app.settings_frame._parent_canvas
+                for height in (780, 560, 780):
+                    app.geometry(f'800x{height}')
+                    self.settle_scaling()
+                    # macOS can cap the physical height at the display edge;
+                    # test actual visible space, not the requested geometry.
+                    overflows = app.settings_frame.winfo_reqheight() > canvas.winfo_height()
+                    self.assertEqual(app.settings_frame._scrollbar.cget('button_color') !=
+                                     app.settings_frame.cget('fg_color'), overflows,
+                                     (height, app.settings_frame.winfo_reqheight(),
+                                      app.settings_frame.winfo_height(), canvas.winfo_height(),
+                                      canvas.bbox('all'), canvas.yview()))
+                    self.assertEqual(app.prompt_var.get(), '保留講題背景')
+
+    def test_default_height_reveals_all_basic_settings_without_scrolling(self):
+        app = self.main_app()
+        canvas = app.settings_frame._parent_canvas
+        for widget in (app.label_settings, app.combo_device, app.combo_fmt,
+                       app.entry_prompt, app.entry_hotwords, app.btn_toggle_adv):
+            self.assertGreaterEqual(widget.winfo_rooty(), canvas.winfo_rooty())
+            self.assertLessEqual(widget.winfo_rooty() + widget.winfo_height(),
+                                 canvas.winfo_rooty() + canvas.winfo_height())
 
     def test_selected_cpu_threads_reach_model_initialization(self):
         from unittest.mock import patch

@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 450" role="img" aria-labelledby="title description">
+  <title id="title">CPU／CUDA 批次加速與安全回退流程</title>
+  <desc id="description">影音先解碼一次，VAD 找出語音片段，每批最多四段送入辨識。記憶體不足時縮小批次；品質或時間軸檢查異常時改用一般轉錄，成功後才輸出字幕。MLX 使用獨立的原生轉錄流程。</desc>
+  <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8" fill="#537b9e"/></marker></defs>
+  <rect width="960" height="450" rx="20" fill="#f4f7fb"/>
+  <g font-family="system-ui, sans-serif" text-anchor="middle" fill="#203c5b">
+    <text x="480" y="42" font-size="24" font-weight="700">同一支影片，多段語音一起辨識</text>
+    <g fill="#fff" stroke="#cbdceb" stroke-width="2">
+      <rect x="24" y="88" width="188" height="104" rx="14"/><rect x="256" y="88" width="188" height="104" rx="14"/>
+      <rect x="488" y="88" width="188" height="104" rx="14"/><rect x="720" y="88" width="216" height="104" rx="14"/>
+      <rect x="256" y="258" width="420" height="100" rx="14"/>
+    </g>
+    <g stroke="#537b9e" stroke-width="3" fill="none" marker-end="url(#arrow)">
+      <path d="M212 140H250"/><path d="M444 140H482"/><path d="M676 140H714"/>
+      <path d="M582 192V252"/><path d="M676 308H828V198"/>
+    </g>
+    <g font-size="20" font-weight="650"><text x="118" y="126">解碼影音</text><text x="350" y="126">VAD 語音切片</text><text x="582" y="126">CPU／CUDA 辨識</text><text x="828" y="126">檢查後輸出字幕</text><text x="466" y="294">不足或異常時，安全回退</text></g>
+    <g font-size="16" fill="#586f87"><text x="118" y="160">音訊重複利用</text><text x="350" y="160">略過偵測到的靜音</text><text x="582" y="160">預設每批最多 4 段</text><text x="828" y="160">保留既有檔案</text><text x="466" y="328">縮小批次重試／改用一般轉錄</text><text x="480" y="405">MLX 沿用 Apple 原生加速；批次大小不代表同時處理多部影片。</text></g>
+  </g>
+</svg>

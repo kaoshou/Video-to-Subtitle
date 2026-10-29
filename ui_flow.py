@@ -4,6 +4,44 @@ import tkinter as tk
 import customtkinter as ctk
 
 
+class AutoHideScrollableFrame(ctk.CTkScrollableFrame):
+    """Keep scrolling available, showing its bar only for overflowing content."""
+    def __init__(self, master, **kwargs):
+        self._scroll_check = None
+        super().__init__(master, **kwargs)
+        self._bar_colors = (self._scrollbar.cget('button_color'),
+                            self._scrollbar.cget('button_hover_color'))
+        self._parent_canvas.configure(yscrollcommand=self._update_scrollbar)
+        self._parent_canvas.bind('<Configure>', self._update_scrollbar, add='+')
+        self._update_scrollbar()
+
+    def _update_scrollbar(self, *args):
+        # Tk can queue scroll fractions from an earlier geometry. Wait for
+        # layout, then measure the current content/viewport instead of using
+        # stale callback fractions to decide whether scrolling is necessary.
+        if self._scroll_check is None:
+            self._scroll_check = self.after_idle(self._sync_scrollbar)
+
+    def _sync_scrollbar(self):
+        self._scroll_check = None
+        self._scrollbar.set(*self._parent_canvas.yview())
+        # Keep geometry stable: unmapping CTk's scaled scrollbar can leave a
+        # native macOS drawing artifact. Blend the full-range bar into its
+        # background instead; restore both normal/hover colors on overflow.
+        bounds = self._parent_canvas.bbox('all')
+        overflow = bool(bounds and bounds[3] - bounds[1] > self._parent_canvas.winfo_height())
+        background = self.cget('fg_color')
+        normal, hover = self._bar_colors if overflow else (background, background)
+        self._scrollbar.configure(fg_color=background, button_color=normal,
+                                  button_hover_color=hover)
+
+    def destroy(self):
+        if self._scroll_check is not None:
+            self.after_cancel(self._scroll_check)
+            self._scroll_check = None
+        super().destroy()
+
+
 class FlowToolbar(ctk.CTkFrame):
     def __init__(self, master, *, gap=6, **kwargs):
         super().__init__(master, fg_color='transparent', height=1, **kwargs)

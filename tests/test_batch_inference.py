@@ -109,6 +109,12 @@ class BatchInference(unittest.TestCase):
         self.assertEqual(self.calls[0][0], 'standard')
         self.assertFalse(self.calls[0][1]['vad_filter'])
 
+    def test_core_without_batch_api_keeps_standard_transcription_available(self):
+        with patch.dict(sys.modules, {'faster_whisper': SimpleNamespace()}):
+            path = self.run_job(batch_acceleration=True)
+        self.assertEqual(self.calls[0][0], 'standard')
+        self.assertIn('標準結果', Path(path).read_text(encoding='utf-8'))
+
     def test_batch_size_is_validated_only_when_enabled(self):
         self.run_job(batch_acceleration=False, batch_size='invalid')
         with self.assertRaises(ValueError):

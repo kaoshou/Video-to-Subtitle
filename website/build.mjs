@@ -10,7 +10,9 @@ const requiredAssets = [
   ['app_icon.png', 'app_icon.png'],
   ['screenshot_main.png', 'screenshot_main.png'],
   ['screenshot_editor.png', 'screenshot_editor.png'],
-  ['screenshot_models.png', 'screenshot_models.png']
+  ['screenshot_models.png', 'screenshot_models.png'],
+  ['screenshot_advanced.png', 'screenshot_advanced.png'],
+  ['docs/images/batch-flow.svg', 'batch-flow.svg']
 ];
 const routeFiles = ['index.html', 'guide/index.html'];
 

@@ -387,6 +387,9 @@ class ReviewProgressGUI(unittest.TestCase):
         from types import SimpleNamespace
         app = self.root
         media = str(Path(self.temp.name) / '測試.mp4')
+        # This console/review observer fixture supplies a standard recognizer,
+        # not a media file or batch decoder. Exercise the standard route.
+        app.batch_acceleration_var.set(False)
         app.file_list = [media]
         app.transcriber = self.desktop.SubtitleTranscriber('medium', 'cpu', 'int8')
         item = SimpleNamespace(start=0, end=2, text='老師好', words=None, avg_logprob=-1.2)

@@ -20,7 +20,7 @@ from ui_theme import (install_theme, ui_font, wrap_to_width, secondary_button_st
 from ui_drop import dropped_paths, register_file_drop
 from ui_open import open_local_page
 from subtitle_review import review_cues
-from ui_flow import FlowToolbar
+from ui_flow import AutoHideScrollableFrame, FlowToolbar
 
 # Import core logic from transcriber.py
 from transcriber import (
@@ -167,7 +167,7 @@ def get_version():
     except Exception as e:
         print(f"DEBUG: Failed to load version from pyproject.toml: {e}")
     
-    return "2.8.3" # Fallback
+    return "2.9.0" # Fallback
 
 # --- 設定外觀 ---
 ctk.set_appearance_mode("System")  # Modes: "System" (standard), "Dark", "Light"
@@ -2862,7 +2862,7 @@ class App(BaseClass):
         # 智慧螢幕尺寸偵測：針對筆電或 125%/150% 縮放螢幕自動匹配最佳高度，確保不沉入工作列
         scale = self._get_window_scaling() if hasattr(self, '_get_window_scaling') else 1.0
         screen_h = int(self.winfo_screenheight() / scale)
-        init_h = min(700, max(580, screen_h - 70))
+        init_h = min(780, max(580, screen_h - 70))
         self.title(f"Video to Subtitle (v{get_version()}) - 本地語音轉字幕工具")
         self.geometry(f"800x{init_h}")
         self.minsize(760, 560)
@@ -2912,7 +2912,7 @@ class App(BaseClass):
         self.case_correction_var = ctk.BooleanVar(value=True)
         self.cpu_threads_var = ctk.StringVar(value="4")
         self.vad_filter_var = ctk.BooleanVar(value=True)
-        self.batch_acceleration_var = ctk.BooleanVar(value=False)
+        self.batch_acceleration_var = ctk.BooleanVar(value=True)
         self.batch_size_var = ctk.StringVar(value="4")
         
         self.clean_punc_mapping = {
@@ -3170,7 +3170,7 @@ class App(BaseClass):
         self.file_count.grid(row=0, column=1, padx=15, pady=(10, 6), sticky="e")
 
         # File List Textbox
-        self.file_rows = ctk.CTkScrollableFrame(self.file_frame, height=116, fg_color=SURFACE,
+        self.file_rows = AutoHideScrollableFrame(self.file_frame, height=116, fg_color=SURFACE,
                                                border_width=1, border_color=BORDER, corner_radius=8)
         # CTkScrollbar defaults to a 200px minimum request, which would
         # otherwise enlarge this compact list and squeeze the settings pane.
@@ -3199,7 +3199,7 @@ class App(BaseClass):
         # Settings Frame
         # Keep the heading in the scrollable body so compact/high-DPI
         # windows retain enough viewport height to reveal advanced controls.
-        self.settings_frame = ctk.CTkScrollableFrame(
+        self.settings_frame = AutoHideScrollableFrame(
             self.main_frame, height=244, corner_radius=12, border_width=1,
             border_color=BORDER, fg_color=CARD)
         self.settings_frame.grid(row=1, column=0, sticky="nsew", pady=(0, 10))
@@ -4036,6 +4036,7 @@ class App(BaseClass):
         enabled = self.batch_acceleration_var.get()
         mlx = self.device_var.get() in ('mlx', 'mps')
         vad = self.vad_filter_var.get()
+        self.chk_batch.configure(state='disabled' if mlx else 'normal')
         self.combo_batch_size.configure(state='normal' if enabled and not mlx and vad else 'disabled')
         if mlx:
             hint = 'MLX 使用原生 Apple 加速，目前不支援批次大小；不額外並行載入模型。'
@@ -4062,7 +4063,7 @@ class App(BaseClass):
             if "format" in config: self.format_var.set(config["format"])
             if "zh_tw" in config: self.zh_tw_var.set(config["zh_tw"])
             if "translate_en" in config: self.translate_en_var.set(config["translate_en"])
-            self.batch_acceleration_var.set(config.get('batch_acceleration') is True)
+            self.batch_acceleration_var.set(config.get('batch_acceleration', True) is True)
             saved_size = str(config.get('batch_size', '4'))
             self.batch_size_var.set(saved_size if saved_size in ('2', '4', '8', '16', '32') else '4')
             saved_threads = str(config.get('cpu_threads', '4'))
