@@ -8,6 +8,7 @@ from tqdm.auto import tqdm
 import json
 import logging
 import stat
+from subtitle_review import collect_segment_review
 from dataclasses import dataclass
 
 def ensure_ffmpeg_path():
@@ -843,14 +844,53 @@ class SubtitleTranscriber:
         millis = int(td.microseconds / 1000)
         return f"{hours:02}:{minutes:02}:{secs:02}{separator}{millis:03}"
 
-    def run(self, file_path, log_callback=None, progress_callback=None, cancel_check_callback=None, output_format="srt", initial_prompt=None, task="transcribe", force_zh_tw=False, max_chars=35, hotwords=None, clean_punctuation="space", word_timestamps=True, spacing=True, case_correction=True, vad_filter=True, batch_acceleration=False, batch_size=4):
+    def run(self, file_path, log_callback=None, progress_callback=None, cancel_check_callback=None, output_format="srt", initial_prompt=None, task="transcribe", force_zh_tw=False, max_chars=35, hotwords=None, clean_punctuation="space", word_timestamps=True, spacing=True, case_correction=True, vad_filter=True, batch_acceleration=False, batch_size=4, review_callback=None, stage_callback=None):
+        """Observers are advisory; only deliver evidence after a successful write."""
+        evidence = []
+
+        def notify(callback, *args):
+            if callback:
+                try:
+                    callback(*args)
+                except Exception:
+                    logging.getLogger(__name__).warning('Transcription observer failed', exc_info=True)
+
+        stage = lambda name, detail='': notify(stage_callback, name, detail)
+        progress = (lambda value: progress_callback(min(value, .99))) if progress_callback else None
+        if cancel_check_callback and cancel_check_callback():
+            stage('cancelled')
+            return None
+        try:
+            stage('model')
+            result = self._run_job(file_path, log_callback, progress, cancel_check_callback,
+                                   output_format, initial_prompt, task, force_zh_tw, max_chars,
+                                   hotwords, clean_punctuation, word_timestamps, spacing,
+                                   case_correction, vad_filter, batch_acceleration, batch_size,
+                                   evidence, stage)
+        except Exception:
+            stage('failed')
+            raise
+        if result:
+            notify(review_callback, result, evidence)
+            stage('complete')
+            if progress_callback:
+                progress_callback(1.)
+        else:
+            stage('cancelled')
+        return result
+
+    def _run_job(self, file_path, log_callback, progress_callback, cancel_check_callback,
+                 output_format, initial_prompt, task, force_zh_tw, max_chars, hotwords,
+                 clean_punctuation, word_timestamps, spacing, case_correction, vad_filter,
+                 batch_acceleration, batch_size, evidence, stage):
         """Optional batched inference retries into private output, publishing only success."""
         options = dict(log_callback=log_callback, progress_callback=progress_callback,
                        cancel_check_callback=cancel_check_callback, output_format=output_format,
                        initial_prompt=initial_prompt, task=task, force_zh_tw=force_zh_tw,
                        max_chars=max_chars, hotwords=hotwords, clean_punctuation=clean_punctuation,
                        word_timestamps=word_timestamps, spacing=spacing,
-                       case_correction=case_correction, vad_filter=vad_filter)
+                       case_correction=case_correction, vad_filter=vad_filter,
+                       _review_evidence=evidence, _stage_callback=stage)
         cancelled = lambda: bool(cancel_check_callback and cancel_check_callback())
         if cancelled():
             return None
@@ -910,6 +950,7 @@ class SubtitleTranscriber:
             if progress_callback:
                 progress_callback(0)
             log(f'批次推論：每批最多 {size} 段音訊。準備音訊期間進度可能暫停。' if size else '使用標準推論。')
+            options['_stage_callback']('audio')
             with tempfile.TemporaryDirectory(prefix='vts-transcription-') as staging:
                 try:
                     result = self._run_once(file_path, **options, _batch_size=size,
@@ -925,6 +966,7 @@ class SubtitleTranscriber:
                         log('作業已取消，未發布字幕檔案。')
                         return None
                     log(f'批次品質檢查：{error} 捨棄本次暫存，改用標準推論。')
+                    options['_stage_callback']('retry', '批次品質檢查後改用標準推論')
                     size = None
                     # Quality depends on this input, not a model's memory ceiling.
                     reduced = False
@@ -940,6 +982,7 @@ class SubtitleTranscriber:
                     log(f'記憶體不足，放棄本次暫存並從頭重試；改用批次大小 {next_size}。' if next_size
                         else '記憶體不足，放棄本次暫存並從頭改用標準推論。')
                     size = next_size
+                    options['_stage_callback']('retry', f'記憶體不足，改用批次 {size}' if size else '記憶體不足，改用標準推論')
                     reduced = True
                     continue
                 if not result or cancelled():
@@ -973,7 +1016,7 @@ class SubtitleTranscriber:
                 progress_callback(1.0)
             return output
 
-    def _run_once(self, file_path, log_callback=None, progress_callback=None, cancel_check_callback=None, output_format="srt", initial_prompt=None, task="transcribe", force_zh_tw=False, max_chars=35, hotwords=None, clean_punctuation="space", word_timestamps=True, spacing=True, case_correction=True, vad_filter=True, _batch_size=None, _output_path=None, _audio_input=None):
+    def _run_once(self, file_path, log_callback=None, progress_callback=None, cancel_check_callback=None, output_format="srt", initial_prompt=None, task="transcribe", force_zh_tw=False, max_chars=35, hotwords=None, clean_punctuation="space", word_timestamps=True, spacing=True, case_correction=True, vad_filter=True, _batch_size=None, _output_path=None, _audio_input=None, _review_evidence=None, _stage_callback=None):
         """
         執行轉錄
         output_format: "srt", "vtt", "txt", "tsv", "json"
@@ -986,6 +1029,9 @@ class SubtitleTranscriber:
         word_timestamps: (bool) 是否啟用單字級時間戳
         """
         print(f"DEBUG: run() called for file: {file_path}")
+        stage = _stage_callback or (lambda *args: None)
+        if _review_evidence is not None:
+            _review_evidence.clear()
         output_converter = require_traditional_converter() if force_zh_tw and task == 'transcribe' else None
         if max_chars is None or max_chars < 25:
             max_chars = 35 if task != "translate" else 80
@@ -993,6 +1039,7 @@ class SubtitleTranscriber:
             print("DEBUG: Model not loaded in run(), calling load_model()...")
             self.load_model(log_callback, progress_callback=progress_callback, cancel_check_callback=cancel_check_callback)
 
+        stage('audio')
         # --- 記錄開始時間 ---
         start_time = datetime.datetime.now()
         if log_callback:
@@ -1082,6 +1129,7 @@ class SubtitleTranscriber:
                 # 優先使用本地快取之絕對路徑，確保離線環境與自訂目錄下 100% 穩定讀取
                 target_model = self.mlx_model_path
 
+                stage('recognition', 'MLX 辨識期間無逐段進度')
                 result = mlx_whisper.transcribe(
                     audio_input, 
                     path_or_hf_repo=target_model,
@@ -1095,20 +1143,23 @@ class SubtitleTranscriber:
                         self.language_probability = 1.0
                         
                 class FakeSegment:
-                    def __init__(self, s, e, t, words=None):
+                    def __init__(self, s, e, t, words=None, avg_logprob=None, compression_ratio=None):
                         self.start = s
                         self.end = e
                         self.text = t
                         self.words = words
+                        self.avg_logprob = avg_logprob
+                        self.compression_ratio = compression_ratio
                         
                 audio_duration = (len(audio_input) / 16000 if not isinstance(audio_input, (str, bytes, os.PathLike))
                                   else (result["segments"][-1]["end"] if result["segments"] else 0.0))
                 info = FakeInfo(result.get("language", "unknown"), audio_duration)
-                segments = [FakeSegment(s["start"], s["end"], s["text"], s.get('words')) for s in result["segments"]]
+                segments = [FakeSegment(s["start"], s["end"], s["text"], s.get('words'), s.get('avg_logprob'), s.get('compression_ratio')) for s in result["segments"]]
                 print("DEBUG: MLX whisper transcribe finished.")
                 
             else:
                 print("DEBUG: calling faster-whisper transcribe...")
+                stage('recognition', '含音訊解碼、辨識及串流字幕整理')
                 if _batch_size:
                     from faster_whisper import BatchedInferencePipeline
                     pipeline = BatchedInferencePipeline(model=self.model)
@@ -1528,6 +1579,9 @@ class SubtitleTranscriber:
                 text = post_process_text(text)
                 if not text:
                     return
+                if _review_evidence is not None and segment_reasons:
+                    _review_evidence.append(dict(start=start_sec, end=end_sec, text=text,
+                                                 reasons=list(segment_reasons)))
 
                 try:
                     print(f"DEBUG: Segment {output_index}: {start_sec:.2f}-{end_sec:.2f} {text[:20]}...")
@@ -1574,6 +1628,8 @@ class SubtitleTranscriber:
                 
                 if batch_guard is not None:
                     batch_guard.check(segment)
+                segment_reasons = [reason for entry in collect_segment_review(segment)
+                                   for reason in entry['reasons']]
                 try:
                     raw_text = segment.text.strip() if hasattr(segment, 'text') else segment['text'].strip()
                     seg_start = segment.start if hasattr(segment, 'start') else segment['start']
@@ -1627,6 +1683,7 @@ class SubtitleTranscriber:
                     progress_callback(progress)
                 
             print("DEBUG: Segment loop finished.")
+            stage('output')
             if output_format.lower() == "json":
                 with open(output_path, "w", encoding="utf-8") as f:
                     json.dump(json_results, f, ensure_ascii=False, indent=2)
