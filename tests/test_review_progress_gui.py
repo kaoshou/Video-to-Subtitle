@@ -383,6 +383,7 @@ class ReviewProgressGUI(unittest.TestCase):
         self.assertIsNone(app._stage_tick)
 
     def test_batch_completion_has_review_ready_before_dialog_and_keeps_100_percent(self):
+        import io
         from types import SimpleNamespace
         app = self.root
         media = str(Path(self.temp.name) / '測試.mp4')
@@ -395,7 +396,11 @@ class ReviewProgressGUI(unittest.TestCase):
         notices = []
         def completed(count, files, *args):
             notices.append(app._review_by_path.get(os.path.abspath(files[0])))
-        with patch.object(app.transcriber, 'load_model'), patch.object(app, 'refresh_model_menu'), \
+        # A Windows redirected console may use cp1252. Diagnostic paths
+        # must not abort transcription when filenames contain Chinese.
+        console = io.TextIOWrapper(io.BytesIO(), encoding='cp1252')
+        with patch('sys.stdout', console), \
+                patch.object(app.transcriber, 'load_model'), patch.object(app, 'refresh_model_menu'), \
                 patch.object(app, 'show_completion_dialog', side_effect=completed):
             app.process_batch(token)
             self.root.update()

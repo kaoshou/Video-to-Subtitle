@@ -1028,7 +1028,7 @@ class SubtitleTranscriber:
         clean_punctuation: (str) "none", "remove", "space"
         word_timestamps: (bool) 是否啟用單字級時間戳
         """
-        print(f"DEBUG: run() called for file: {file_path}")
+        logging.debug('run() called for file: %s', file_path)
         stage = _stage_callback or (lambda *args: None)
         if _review_evidence is not None:
             _review_evidence.clear()
@@ -1225,7 +1225,7 @@ class SubtitleTranscriber:
             output_path = f"{path_no_ext}_{counter}{ext}"
             counter += 1
         
-        print(f"DEBUG: Output path determined: {output_path}")
+        logging.debug('Output path determined: %s', output_path)
 
         json_results = []
         txt_results = []
