@@ -98,7 +98,9 @@ class ReviewProgressGUI(unittest.TestCase):
                     self.assertTrue(control.winfo_ismapped())
                     self.assertGreaterEqual(control.winfo_x(), 0)
                     self.assertLessEqual(control.winfo_x() + control.winfo_width(), toolbar.winfo_width() + 1)
-                    self.assertLessEqual(control.winfo_y() + control.winfo_height(), toolbar.winfo_height() + 1)
+                    self.assertLessEqual(control.winfo_y() + control.winfo_height(), toolbar.winfo_height() + 1,
+                                         f'scale={scale}, toolbar={toolbar.winfo_geometry()}, '
+                                         f'control={control.winfo_geometry()}')
             player.btn_speed.invoke()
             self.assertNotEqual(player.playback_speed, 1.0)
             player.set_speed(1.0)
@@ -107,6 +109,16 @@ class ReviewProgressGUI(unittest.TestCase):
             player.btn_mute.invoke()
             self.assertFalse(player.is_muted)
         self.assertFalse(self.errors)
+
+    def test_toolbar_tracks_child_height_changes_after_initial_layout(self):
+        from ui_flow import FlowToolbar
+        toolbar = FlowToolbar(self.root)
+        toolbar.grid(row=4, column=0, sticky='ew')
+        button = toolbar.add(self.desktop.ctk.CTkButton(toolbar, text='操作', height=28))
+        self.root.update()
+        button.configure(height=46)
+        self.root.update()
+        self.assertGreaterEqual(toolbar.winfo_height(), button.winfo_height())
 
     def test_file_placeholder_is_display_only_and_count_tracks_clear(self):
         app = self.root

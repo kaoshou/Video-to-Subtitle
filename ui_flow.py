@@ -15,6 +15,9 @@ class FlowToolbar(ctk.CTkFrame):
 
     def add(self, widget):
         self._items.append(widget)
+        # Font/scaling changes can reach children after the toolbar's own
+        # Configure event. Placed children do not propagate requested sizes.
+        tk.Misc.bind(widget, '<Configure>', lambda event: self.request_layout(), add='+')
         self.request_layout()
         return widget
 
@@ -30,7 +33,7 @@ class FlowToolbar(ctk.CTkFrame):
             return
         sizes = [(math.ceil(item.winfo_reqwidth() / scale),
                   math.ceil(item.winfo_reqheight() / scale)) for item in self._items]
-        key = (width, tuple(sizes))
+        key = (scale, width, tuple(sizes))
         if key == self._layout_key:
             return
         self._layout_key = key
