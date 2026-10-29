@@ -1617,6 +1617,8 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             )
         if selected and self.tree.exists(selected[0]):
             self.tree.selection_set(selected[0])
+        if self.current_selected_idx not in self.filtered_indices:
+            self._clear_editor_selection()
             
         if hasattr(self, 'lbl_search_result'):
             if query:
@@ -1667,6 +1669,23 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
                 self.tree.selection_set(iid)
             self.tree.see(iid)
             self._load_item_to_editor(item_index)
+        else:
+            self._clear_editor_selection()
+
+    def _clear_editor_selection(self):
+        # A filtered-out structural edit must never leave stale text writable:
+        # Ctrl+J's following KeyRelease would otherwise overwrite the merge.
+        self.current_selected_idx = None
+        self._item_already_loaded = False
+        for entry in (self.entry_start, self.entry_end):
+            entry.configure(state='normal')
+            entry.delete(0, 'end')
+            entry.configure(state='disabled')
+        self.txt_item_editor.configure(state='normal')
+        self.txt_item_editor.delete('0.0', 'end')
+        self.txt_item_editor.configure(state='disabled')
+        self.lbl_edit_item_idx.configure(text='[未選取]')
+        self.review_detail.configure(text='請從清單選取字幕；取消篩選可查看其他段落。')
 
     def _on_tree_select(self, event=None):
         selected = self.tree.selection()
@@ -1683,6 +1702,8 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         self._item_already_loaded = True
         item = self.items[idx]
         self._show_review_reason()
+        for widget in (self.entry_start, self.entry_end, self.txt_item_editor):
+            widget.configure(state='normal')
         
         self.lbl_edit_item_idx.configure(text=f"[第 {item['index']} 筆]")
         
@@ -1722,7 +1743,11 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         if idx < 0 or idx >= len(self.items):
             return
         self.current_selected_idx = idx
+        self._item_already_loaded = True
         item = self.items[idx]
+        self._show_review_reason()
+        for widget in (self.entry_start, self.entry_end, self.txt_item_editor):
+            widget.configure(state='normal')
         
         self.lbl_edit_item_idx.configure(text=f"[第 {item['index']} 筆]")
         self.entry_start.delete(0, "end")

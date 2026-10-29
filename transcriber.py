@@ -1579,7 +1579,9 @@ class SubtitleTranscriber:
                 text = post_process_text(text)
                 if not text:
                     return
-                if _review_evidence is not None and segment_reasons:
+                if _review_evidence is not None:
+                    # Healthy baseline text is needed to validate a later
+                    # merge with a flagged neighbor without inventing warnings.
                     _review_evidence.append(dict(start=start_sec, end=end_sec, text=text,
                                                  reasons=list(segment_reasons)))
 

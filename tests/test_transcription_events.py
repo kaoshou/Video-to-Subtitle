@@ -92,8 +92,18 @@ class TranscriptionEvents(unittest.TestCase):
                                     'faster_whisper.audio': SimpleNamespace(decode_audio=lambda *a: self.input)}):
             self.run_job(review_callback=lambda p, e: reviews.append(e),
                          stage_callback=lambda s, d='': stages.append(s))
-        self.assertEqual(reviews, [[]])
+        self.assertEqual(reviews, [[dict(start=0, end=2, text='老師好', reasons=[])]])
         self.assertEqual(stages[-1], 'complete')
+
+    def test_healthy_neighbor_baseline_keeps_warning_after_merge(self):
+        from subtitle_review import review_cues
+        good = SimpleNamespace(start=2, end=4, text='正常內容', words=None, avg_logprob=-.2)
+        self.worker.model.transcribe = lambda *a, **k: (iter([segment('請校對'), good]), self.info)
+        records = []
+        self.run_job(review_callback=lambda path, evidence: records.extend(evidence))
+        result = review_cues([dict(start=0, end=4, text='請校對 正常內容')], records)
+        self.assertEqual(result, {0: ['辨識信心偏低']})
+        self.assertEqual(records[1]['reasons'], [])
 
 
 if __name__ == '__main__':

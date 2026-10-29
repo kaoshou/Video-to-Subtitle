@@ -168,6 +168,35 @@ class ReviewProgressGUI(unittest.TestCase):
         app._poll_stage_tracking(token)
         self.assertIn('已取消', app.stage_label.cget('text'))
 
+    def test_filtered_ctrl_j_keyrelease_cannot_overwrite_merged_text(self):
+        self.path.write_text('1\n00:00:00,000 --> 00:00:02,000\n相同內容\n\n'
+                             '2\n00:00:02,000 --> 00:00:04,000\n相同內容\n', encoding='utf-8')
+        editor = self.desktop.SubtitleEditorWindow(self.root, str(self.path))
+        self.root.update()
+        editor.review_only.select()
+        editor._on_search_change()
+        editor.txt_item_editor.focus_force()
+        self.root.update()
+        editor.txt_item_editor._textbox.event_generate('<Control-KeyPress-j>')
+        self.root.update()
+        self.assertEqual(len(editor.items), 1, '實際 Ctrl+J 必須先執行合併')
+        editor.txt_item_editor._textbox.event_generate('<Control-KeyRelease-j>')
+        self.root.update()
+        self.assertEqual(editor.items[0]['text'], '相同內容 相同內容')
+        self.assertEqual(editor.tree.get_children(), ())
+        self.assertIsNone(editor.current_selected_idx)
+        self.assertEqual(editor.txt_item_editor.cget('state'), 'disabled')
+
+    def test_playback_selection_updates_reason_both_directions(self):
+        editor = self.editor()
+        editor.tree.selection_set('1')
+        editor._load_item_to_editor_silent(1)
+        editor._on_tree_select()
+        self.assertNotIn('辨識信心偏低', editor.review_detail.cget('text'))
+        editor.tree.selection_set('0')
+        editor._load_item_to_editor_silent(0)
+        self.assertIn('辨識信心偏低', editor.review_detail.cget('text'))
+
 
 if __name__ == '__main__':
     unittest.main()
