@@ -20,6 +20,7 @@ from ui_theme import (install_theme, ui_font, wrap_to_width, BACKGROUND, CARD,
 from ui_drop import dropped_paths, register_file_drop
 from ui_open import open_local_page
 from subtitle_review import review_cues
+from ui_flow import FlowToolbar
 
 # Import core logic from transcriber.py
 from transcriber import (
@@ -1324,18 +1325,18 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             
         # 搜尋過濾工具列 (僅在表格模式下顯示)
         if not self.is_txt:
-            self.search_bar_frame = ctk.CTkFrame(self.top_frame, fg_color="transparent")
-            self.search_bar_frame.pack(fill="x", padx=12, pady=(0, 10))
+            self.search_bar_frame = FlowToolbar(self.top_frame)
+            self.search_bar_frame.pack(fill="x", padx=12, pady=(0, 8))
             
-            ctk.CTkLabel(self.search_bar_frame, text="搜尋字幕:", font=ui_font(size=12, weight="bold"), text_color=("gray10", "gray90")).pack(side="left", padx=(0, 5))
+            self.search_bar_frame.add(ctk.CTkLabel(self.search_bar_frame, text="搜尋字幕", font=ui_font(size=12, weight="bold")))
             self.search_var = tk.StringVar()
             self.search_var.trace_add("write", lambda *args: self._on_search_change())
             
             self.search_entry = ctk.CTkEntry(
                 self.search_bar_frame, textvariable=self.search_var, 
-                placeholder_text="輸入關鍵字即時篩選...", width=260, height=28
+                placeholder_text="搜尋文字或時間…", width=190, height=28
             )
-            self.search_entry.pack(side="left", padx=5)
+            self.search_bar_frame.add(self.search_entry)
             
             self.btn_clear_search = ctk.CTkButton(
                 self.search_bar_frame, text="清除", width=55, height=28,
@@ -1343,24 +1344,18 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
                 text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
                 font=ui_font(size=11), command=lambda: self.search_var.set("")
             )
-            self.btn_clear_search.pack(side="left", padx=5)
+            self.search_bar_frame.add(self.btn_clear_search)
             
             self.lbl_search_result = ctk.CTkLabel(self.search_bar_frame, text="", font=ui_font(size=11), text_color=MUTED)
-            self.lbl_search_result.pack(side="left", padx=10)
+            self.search_bar_frame.add(self.lbl_search_result)
 
-            review_bar = ctk.CTkFrame(self.top_frame, fg_color="transparent")
-            review_bar.pack(fill="x", padx=17, pady=(0, 6))
-            self.review_summary = ctk.CTkLabel(review_bar, text="", font=ui_font(size=12), text_color=MUTED)
-            self.review_summary.pack(side="left")
+            self.review_summary = ctk.CTkLabel(self.search_bar_frame, text="", font=ui_font(size=12), text_color=MUTED)
+            self.search_bar_frame.add(self.review_summary)
             self.review_only_var = tk.BooleanVar(value=False)
-            self.review_only = ctk.CTkCheckBox(review_bar, text="僅顯示待校對", variable=self.review_only_var,
+            self.review_only = ctk.CTkCheckBox(self.search_bar_frame, text="僅顯示待校對", variable=self.review_only_var,
                                               command=self._on_search_change, font=ui_font(size=12),
                                               checkbox_width=18, checkbox_height=18, height=24)
-            self.review_only.pack(side="right")
-            self.review_detail = ctk.CTkLabel(self.top_frame, text="提醒僅供參考，不代表字幕一定有誤。",
-                                             font=ui_font(size=11), text_color=MUTED, anchor="w", justify="left")
-            self.review_detail.pack(fill="x", padx=17, pady=(0, 6))
-            wrap_to_width(self.review_detail)
+            self.search_bar_frame.add(self.review_only)
 
         # 中間主工作區容器
         self.main_container = ctk.CTkFrame(self, fg_color="transparent")
@@ -1410,81 +1405,55 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             
             # 2. 左側下半部：即時詳細編輯工作面板 (Dock Panel)
             self.editor_dock = ctk.CTkFrame(self.sub_frame)
-            self.editor_dock.pack(fill="x")
+            # Reserve editing controls first; the table may shrink vertically
+            # at high DPI instead of pushing the toolbar outside the pane.
+            self.editor_dock.pack(side="bottom", fill="x", before=self.tree_container)
+            tk.Misc.bind(self.editor_dock, '<Configure>', lambda event: self._ensure_editor_space(), add='+')
             
-            # 編輯列 1：時間軸調整
-            time_row = ctk.CTkFrame(self.editor_dock, fg_color="transparent")
-            time_row.pack(fill="x", padx=12, pady=(10, 6))
-            
+            selection_row = ctk.CTkFrame(self.editor_dock, fg_color="transparent")
+            selection_row.pack(fill="x", padx=12, pady=(6, 3))
+            selection_row.grid_columnconfigure(1, weight=1)
             self.lbl_edit_item_idx = ctk.CTkLabel(
-                time_row, text="[第 1 筆]", font=ui_font(family="Consolas", size=13, weight="bold"), width=80, anchor="w"
+                selection_row, text="[第 1 筆]", font=ui_font(family="Consolas", size=13, weight="bold"), width=80, anchor="w"
             )
-            self.lbl_edit_item_idx.pack(side="left")
-            
-            ctk.CTkLabel(time_row, text="開始時間:", font=ui_font(size=12, weight="bold"), text_color=("gray10", "gray90")).pack(side="left", padx=(5, 3))
-            self.entry_start = ctk.CTkEntry(time_row, width=110, height=28, font=ui_font(family="Consolas", size=12))
-            self.entry_start.pack(side="left", padx=2)
-            self.entry_start.bind("<KeyRelease>", lambda e: self._on_time_edit())
-            
-            ctk.CTkLabel(time_row, text="結束時間:", font=ui_font(size=12, weight="bold"), text_color=("gray10", "gray90")).pack(side="left", padx=(10, 3))
-            self.entry_end = ctk.CTkEntry(time_row, width=110, height=28, font=ui_font(family="Consolas", size=12))
-            self.entry_end.pack(side="left", padx=2)
-            self.entry_end.bind("<KeyRelease>", lambda e: self._on_time_edit())
-            
-            # 時間微調按鈕 (具備清晰底色與邊框)
-            ctk.CTkButton(
-                time_row, text="-0.5s", width=50, height=28,
-                fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
-                text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
-                font=ui_font(size=11, weight="bold"),
-                command=lambda: self._shift_current_time(-500)
-            ).pack(side="left", padx=(10, 2))
-            
-            ctk.CTkButton(
-                time_row, text="+0.5s", width=50, height=28,
-                fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
-                text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
-                font=ui_font(size=11, weight="bold"),
-                command=lambda: self._shift_current_time(500)
-            ).pack(side="left", padx=2)
-            
-            # 條目切換快捷按鈕 (具備清晰底色與邊框)
-            ctk.CTkButton(
-                time_row, text="上一條 (Alt+↑)", width=105, height=28,
-                fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
-                text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
-                font=ui_font(size=12, weight="bold"), command=lambda: self._navigate_item(-1)
-            ).pack(side="right", padx=(5, 0))
-            
-            ctk.CTkButton(
-                time_row, text="下一條 (Alt+↓)", width=105, height=28,
-                fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
-                text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
-                font=ui_font(size=12, weight="bold"), command=lambda: self._navigate_item(1)
-            ).pack(side="right", padx=5)
+            self.lbl_edit_item_idx.grid(row=0, column=0, sticky="nw", padx=(0, 6))
+            self.review_detail = ctk.CTkLabel(selection_row, text="提醒僅供參考。", wraplength=240,
+                                             font=ui_font(size=12), text_color=MUTED, anchor="w", justify="left")
+            self.review_detail.grid(row=0, column=1, sticky="ew")
+            wrap_to_width(self.review_detail)
 
-            # 編輯工具列：字幕一鍵拆分與合併 (Ctrl+K / Ctrl+J)
-            tools_row = ctk.CTkFrame(self.editor_dock, fg_color="transparent")
+            # Label/field pairs stay together; pairs and small adjustments wrap.
+            time_row = FlowToolbar(self.editor_dock)
+            time_row.pack(fill="x", padx=12, pady=(0, 5))
+            start_group = ctk.CTkFrame(time_row, fg_color="transparent")
+            ctk.CTkLabel(start_group, text="開始", font=ui_font(size=12)).pack(side="left", padx=(0, 5))
+            self.entry_start = ctk.CTkEntry(start_group, width=110, height=28, font=ui_font(family="Consolas", size=12))
+            self.entry_start.pack(side="left")
+            self.entry_start.bind("<KeyRelease>", lambda e: self._on_time_edit())
+            time_row.add(start_group)
+            end_group = ctk.CTkFrame(time_row, fg_color="transparent")
+            ctk.CTkLabel(end_group, text="結束", font=ui_font(size=12)).pack(side="left", padx=(0, 5))
+            self.entry_end = ctk.CTkEntry(end_group, width=110, height=28, font=ui_font(family="Consolas", size=12))
+            self.entry_end.pack(side="left")
+            self.entry_end.bind("<KeyRelease>", lambda e: self._on_time_edit())
+            time_row.add(end_group)
+            button_style = dict(height=28, fg_color=("#e2e8f0", "#2d3748"),
+                                hover_color=("#cbd5e1", "#4a5568"), text_color=("#0f172a", "#f8fafc"),
+                                border_width=1, border_color=("#94a3b8", "#475569"), font=ui_font(size=12))
+            for caption, offset in (("-0.5s", -500), ("+0.5s", 500)):
+                time_row.add(ctk.CTkButton(time_row, text=caption, width=55, **button_style,
+                                           command=lambda delta=offset: self._shift_current_time(delta)))
+
+            tools_row = FlowToolbar(self.editor_dock)
             tools_row.pack(fill="x", padx=12, pady=(0, 6))
-            
-            ctk.CTkButton(
-                tools_row, text="✂️ 游標處拆分 (Ctrl+K)", width=155, height=26,
-                fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
-                text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
-                font=ui_font(size=11, weight="bold"), command=self._split_current_subtitle
-            ).pack(side="left", padx=(0, 6))
-            
-            ctk.CTkButton(
-                tools_row, text="🔗 與下一條合併 (Ctrl+J)", width=160, height=26,
-                fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
-                text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
-                font=ui_font(size=11, weight="bold"), command=self._merge_with_next_subtitle
-            ).pack(side="left")
-            
-            ctk.CTkLabel(
-                tools_row, text="[游標置於文字中按 Ctrl+K 拆分 / 選中條目按 Ctrl+J 合併下一條]",
-                font=ui_font(size=11), text_color=MUTED
-            ).pack(side="left", padx=10)
+            for caption, width, command in (
+                ('上一條 (Alt+↑)', 105, lambda: self._navigate_item(-1)),
+                ('下一條 (Alt+↓)', 105, lambda: self._navigate_item(1)),
+                ('游標處拆分 (Ctrl+K)', 145, self._split_current_subtitle),
+                ('與下一條合併 (Ctrl+J)', 155, self._merge_with_next_subtitle),
+            ):
+                tools_row.add(ctk.CTkButton(tools_row, text=caption, width=width,
+                                            command=command, **button_style))
 
             # 編輯列 2：多行字幕文字編輯框 (支援貼上多行、換行，絕不壓縮破壞)
             text_row = ctk.CTkFrame(self.editor_dock, fg_color="transparent")
@@ -1625,6 +1594,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
                 self.lbl_search_result.configure(text=f"找到 {len(self.filtered_indices)} / {len(self.items)} 筆結果")
             else:
                 self.lbl_search_result.configure(text="")
+        self.search_bar_frame.request_layout()
 
     def _refresh_review(self):
         import re
@@ -1635,13 +1605,13 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         cues = [dict(start=seconds(item['start']), end=seconds(item['end']), text=item['text'])
                 for item in self.items]
         self.review_flags = review_cues(cues, self.review_evidence)
-        self.review_summary.configure(text=f"待校對 {len(self.review_flags)} / {len(self.items)} 段 · 僅供參考")
+        self.review_summary.configure(text=f"待校對 {len(self.review_flags)} / {len(self.items)} 段")
         self._show_review_reason()
 
     def _show_review_reason(self):
         reasons = self.review_flags.get(self.current_selected_idx, [])
-        self.review_detail.configure(text=('建議校對：' + '、'.join(reasons)) if reasons else
-                                     '提醒僅供參考，不代表字幕一定有誤；未標記也仍建議人工校對。')
+        self.review_detail.configure(text=('建議校對：' + '、'.join(reasons) + '（僅供參考）') if reasons else
+                                     '未標記待校對 · 仍建議人工確認')
 
     def _schedule_review_refresh(self):
         # Debounce full-list matching while typing; keep cursor/editor contents.
@@ -2060,7 +2030,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
                     
             self.raw_frame.pack_forget()
             self.structured_frame.pack(fill="both", expand=True)
-            self.search_bar_frame.pack(fill="x", padx=12, pady=(0, 10))
+            self.search_bar_frame.pack(fill="x", padx=12, pady=(0, 8))
             self.btn_toggle_mode.configure(text="切換至全文原始碼模式")
             self.is_raw_mode = False
             
@@ -2138,9 +2108,22 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         except Exception as e:
             print(f"Toggle maximize warning: {e}")
 
+    def _ensure_editor_space(self):
+        if self.is_txt or not hasattr(self, 'footer_frame') or not hasattr(self, 'editor_dock'):
+            return
+        # Leave room for real table rows as well as the wrapped editing dock.
+        # CTk minsize is in window-scaled units, not widget-scaled pixels.
+        required = (self.top_frame.winfo_reqheight() + self.footer_frame.winfo_reqheight()
+                    + self.editor_dock.winfo_reqheight() + 120 * self.editor_dock._get_widget_scaling())
+        minimum = (750, max(480, int(required / self._get_window_scaling()) + 1))
+        if getattr(self, '_editor_minimum', None) != minimum:
+            self._editor_minimum = minimum
+            self.minsize(*minimum)
+
     def _on_window_configure(self, event=None):
         """監聽視窗大小變更，當使用者透過系統標題列或快捷鍵最大化/還原時同步按鈕狀態"""
         if event and getattr(event, "widget", None) == self:
+            self._ensure_editor_space()
             try:
                 is_zoomed = (self.state() == "zoomed")
                 target_text = "還原 🗗" if is_zoomed else "最大化 🗖"

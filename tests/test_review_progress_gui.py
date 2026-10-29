@@ -44,6 +44,71 @@ class ReviewProgressGUI(unittest.TestCase):
             self.root.update()
             time.sleep(.01)
 
+    def test_editor_controls_wrap_inside_narrow_pane_at_scaled_sizes(self):
+        editor = self.editor()
+        ctk = self.desktop.ctk
+        self.addCleanup(lambda: ctk.set_widget_scaling(1))
+        def descendants(widget):
+            for child in widget.winfo_children():
+                yield child
+                yield from descendants(child)
+        for scale in (1, 1.25, 1.5, 2):
+            with self.subTest(scale=scale):
+                ctk.set_widget_scaling(scale)
+                editor.geometry('1200x1000')
+                self.root.update()
+                editor.paned_window.sashpos(0, round(360 * scale))
+                self.root.update()
+                controls = [editor.entry_start, editor.entry_end] + [
+                    w for w in descendants(editor.editor_dock) if isinstance(w, ctk.CTkButton)]
+                captions = [w.cget('text') for w in controls if isinstance(w, ctk.CTkButton)]
+                self.assertTrue(any('下一條' in caption for caption in captions))
+                left = editor.sub_frame.winfo_rootx()
+                right = left + editor.sub_frame.winfo_width()
+                for widget in controls:
+                    self.assertTrue(widget.winfo_ismapped(),
+                                    f'{widget}: pane={editor.sub_frame.winfo_geometry()}, '
+                                    f'dock={editor.editor_dock.winfo_geometry()}, widget={widget.winfo_geometry()}')
+                    self.assertGreaterEqual(widget.winfo_rootx(), left)
+                    self.assertLessEqual(widget.winfo_rootx() + widget.winfo_width(), right + 1)
+                    self.assertGreaterEqual(widget.winfo_width(), widget.winfo_reqwidth() - 2)
+                self.assertNotEqual(editor.entry_start.winfo_rooty(),
+                                    next(w for w in controls if isinstance(w, ctk.CTkButton)
+                                         and '下一條' in w.cget('text')).winfo_rooty())
+        self.assertFalse(self.errors)
+
+    def test_review_tools_are_compact_and_reason_follows_selection_in_dock(self):
+        editor = self.editor()
+        self.assertIs(editor.search_entry.master, editor.review_summary.master)
+        self.assertIs(editor.review_only.master, editor.review_summary.master)
+        self.assertTrue(str(editor.review_detail).startswith(str(editor.editor_dock) + '.'))
+        self.assertLess(editor.top_frame.winfo_height(), 130)
+        editor.review_only.select()
+        editor._on_search_change()
+        self.assertEqual(editor.tree.get_children(), ('0',))
+        editor._toggle_raw_mode()
+        self.assertFalse(editor.search_bar_frame.winfo_manager())
+        editor._toggle_raw_mode()
+        self.assertTrue(editor.search_bar_frame.winfo_manager())
+        self.assertIn('辨識信心偏低', editor.review_detail.cget('text'))
+
+    def test_small_default_window_keeps_table_and_text_editor_usable_when_scaled(self):
+        editor = self.editor()
+        ctk = self.desktop.ctk
+        self.addCleanup(lambda: ctk.set_widget_scaling(1))
+        for scale, geometry in ((1, '750x480'), (2, '1240x740')):
+            with self.subTest(scale=scale):
+                ctk.set_widget_scaling(scale)
+                editor.geometry(geometry)
+                self.root.update()
+                editor.paned_window.sashpos(0, round(360 * scale))
+                self.root.update()
+                for widget in (editor.tree, editor.txt_item_editor):
+                    self.assertTrue(widget.winfo_ismapped())
+                    self.assertGreater(widget.winfo_height(), 30 * scale)
+                    self.assertLessEqual(widget.winfo_rooty() + widget.winfo_height(),
+                                         editor.winfo_rooty() + editor.winfo_height())
+
     def test_summary_filter_reason_and_edits_do_not_change_subtitle_file(self):
         original = self.path.read_bytes()
         editor = self.editor()
