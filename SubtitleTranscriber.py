@@ -19,6 +19,7 @@ from ui_theme import (install_theme, ui_font, wrap_to_width, BACKGROUND, CARD,
                       SURFACE, BORDER, TEXT, MUTED, ACCENT, HOVER, FONT_FAMILY)
 from ui_drop import dropped_paths, register_file_drop
 from ui_open import open_local_page
+from subtitle_review import review_cues
 
 # Import core logic from transcriber.py
 from transcriber import (
@@ -1104,7 +1105,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
     4. 即時關鍵字搜尋：輸入關鍵字立即過濾目標條目並跳轉定位。
     5. 雙模式自由切換：支援「結構化表格模式」與「純文字原始碼模式」切換。
     """
-    def __init__(self, parent, file_path, video_path=None):
+    def __init__(self, parent, file_path, video_path=None, review_evidence=None):
         super().__init__(parent)
         self.withdraw()  # 立即鎖定隱藏，避免 200x200 閃爍與 5ms 強制彈出！
         if platform.system() == "Windows":
@@ -1125,6 +1126,8 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
                 print(f"Failed to set editor window icon: {e}")
         
         self.file_path = file_path
+        self.review_evidence = list(review_evidence or ())
+        self.review_flags = {}
         self.video_path = video_path
         self.is_txt = file_path.lower().endswith(".txt")
         self.is_vtt = file_path.lower().endswith(".vtt")
@@ -1344,6 +1347,20 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             
             self.lbl_search_result = ctk.CTkLabel(self.search_bar_frame, text="", font=ui_font(size=11), text_color=MUTED)
             self.lbl_search_result.pack(side="left", padx=10)
+
+            review_bar = ctk.CTkFrame(self.top_frame, fg_color="transparent")
+            review_bar.pack(fill="x", padx=17, pady=(0, 6))
+            self.review_summary = ctk.CTkLabel(review_bar, text="", font=ui_font(size=12), text_color=MUTED)
+            self.review_summary.pack(side="left")
+            self.review_only_var = tk.BooleanVar(value=False)
+            self.review_only = ctk.CTkCheckBox(review_bar, text="僅顯示待校對", variable=self.review_only_var,
+                                              command=self._on_search_change, font=ui_font(size=12),
+                                              checkbox_width=18, checkbox_height=18, height=24)
+            self.review_only.pack(side="right")
+            self.review_detail = ctk.CTkLabel(self.top_frame, text="提醒僅供參考，不代表字幕一定有誤。",
+                                             font=ui_font(size=11), text_color=MUTED, anchor="w", justify="left")
+            self.review_detail.pack(fill="x", padx=17, pady=(0, 6))
+            wrap_to_width(self.review_detail)
 
         # 中間主工作區容器
         self.main_container = ctk.CTkFrame(self, fg_color="transparent")
@@ -1576,12 +1593,16 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
 
     def _populate_treeview(self):
         """將字幕高效寫入 Treeview (毫秒級瞬間完成)"""
+        selected = self.tree.selection()
         self.tree.delete(*self.tree.get_children())
+        self._refresh_review()
         
         query = self.search_var.get().strip().lower() if hasattr(self, 'search_var') else ""
         self.filtered_indices = []
         
         for i, item in enumerate(self.items):
+            if self.review_only_var.get() and i not in self.review_flags:
+                continue
             full_text = item["text"]
             if query:
                 if query not in full_text.lower() and query not in item["start"].lower() and query not in item["end"].lower():
@@ -1592,14 +1613,44 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
             display_text = full_text.replace("\n", " ⏎ ")
             self.tree.insert(
                 "", "end", iid=str(i),
-                values=(item["index"], item["start"], item["end"], display_text)
+                values=(f"! {item['index']}" if i in self.review_flags else item["index"], item["start"], item["end"], display_text)
             )
+        if selected and self.tree.exists(selected[0]):
+            self.tree.selection_set(selected[0])
             
         if hasattr(self, 'lbl_search_result'):
             if query:
                 self.lbl_search_result.configure(text=f"找到 {len(self.filtered_indices)} / {len(self.items)} 筆結果")
             else:
                 self.lbl_search_result.configure(text="")
+
+    def _refresh_review(self):
+        import re
+        def seconds(value):
+            if not re.fullmatch(r'\d+:[0-5]\d:[0-5]\d[,.]\d{3}', value):
+                return float('nan')
+            return self._parse_time_ms(value) / 1000
+        cues = [dict(start=seconds(item['start']), end=seconds(item['end']), text=item['text'])
+                for item in self.items]
+        self.review_flags = review_cues(cues, self.review_evidence)
+        self.review_summary.configure(text=f"待校對 {len(self.review_flags)} / {len(self.items)} 段 · 僅供參考")
+        self._show_review_reason()
+
+    def _show_review_reason(self):
+        reasons = self.review_flags.get(self.current_selected_idx, [])
+        self.review_detail.configure(text=('建議校對：' + '、'.join(reasons)) if reasons else
+                                     '提醒僅供參考，不代表字幕一定有誤；未標記也仍建議人工校對。')
+
+    def _schedule_review_refresh(self):
+        # Debounce full-list matching while typing; keep cursor/editor contents.
+        previous = getattr(self, '_review_timer', None)
+        if previous:
+            self.after_cancel(previous)
+        self._review_timer = self.after(250, self._finish_review_refresh)
+
+    def _finish_review_refresh(self):
+        self._review_timer = None
+        self._populate_treeview()
 
     def _on_search_change(self):
         if not self.is_txt:
@@ -1631,6 +1682,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         self.current_selected_idx = idx
         self._item_already_loaded = True
         item = self.items[idx]
+        self._show_review_reason()
         
         self.lbl_edit_item_idx.configure(text=f"[第 {item['index']} 筆]")
         
@@ -1784,6 +1836,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         idx = self.current_selected_idx
         new_text = self.txt_item_editor.get("0.0", "end").strip()
         self.items[idx]["text"] = new_text
+        self._schedule_review_refresh()
         
         iid = str(idx)
         if self.tree.exists(iid):
@@ -1928,6 +1981,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         
         self.items[idx]["start"] = new_start
         self.items[idx]["end"] = new_end
+        self._schedule_review_refresh()
         
         iid = str(idx)
         if self.tree.exists(iid):
@@ -1945,6 +1999,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         
         item["start"] = self._format_time_ms(ms_start, is_vtt=self.is_vtt)
         item["end"] = self._format_time_ms(ms_end, is_vtt=self.is_vtt)
+        self._schedule_review_refresh()
         
         self.entry_start.delete(0, "end")
         self.entry_start.insert(0, item["start"])
@@ -2700,6 +2755,10 @@ class App(BaseClass):
         
         # 初始化變數
         self.transcriber = None
+        self._review_by_path = {}
+        self._stage_events = queue.Queue()
+        self._stage_token = 0
+        self._stage_active = False
         self.is_running = False
         self.cancel_flag = False
         self.file_list = [] # 儲存多個檔案路徑
@@ -2767,9 +2826,11 @@ class App(BaseClass):
             
             # 若使用者確定退出，標記取消並安全退出
             self.cancel_flag = True
+            self._stop_stage_tracking()
             self.status_label.configure(text="正在安全中止並退出...")
             self.after(200, self.destroy)
         else:
+            self._stop_stage_tracking()
             self.destroy()
 
 
@@ -3169,6 +3230,11 @@ class App(BaseClass):
         
         self.progress_label = ctk.CTkLabel(self.progress_frame, text="0.0%", width=45, font=ui_font(size=12, weight="bold"))
         self.progress_label.grid(row=0, column=1, sticky="e")
+        self.stage_label = ctk.CTkLabel(self.progress_frame, text="", anchor="w", justify="left",
+                                       font=ui_font(size=11), text_color=MUTED, height=20)
+        self.stage_label.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(3, 0))
+        self.stage_label.grid_remove()  # No blank extra row in the original idle layout.
+        wrap_to_width(self.stage_label)
 
         # Log Area (自動伸縮展延，滿足需求 1)
         self.log_textbox = ctk.CTkTextbox(self.main_frame, height=85, font=ui_font(family="Consolas", size=12))
@@ -4142,7 +4208,8 @@ class App(BaseClass):
                 self.log_textbox.insert("end", msg + "\n")
                 self.log_textbox.see("end")
                 self.log_textbox.configure(state="disabled")
-                self.status_label.configure(text=msg) # Status bar shows last log
+                if not self._stage_active:
+                    self.status_label.configure(text=msg)
             except Exception:
                 pass
         try:
@@ -4150,10 +4217,81 @@ class App(BaseClass):
         except Exception:
             pass
 
-    def update_progress(self, value):
+    def _begin_stage_tracking(self):
+        self._stop_stage_tracking()
+        self.stage_label.grid()
+        self._stage_token += 1
+        token = self._stage_token
+        self._stage_active = True
+        self._stage_started = self._stage_changed = time.monotonic()
+        self._stage_name = 'model'
+        self._stage_detail = ''
+        self._stage_tick = None
+        self._poll_stage_tracking(token)
+        return token
+
+    def _stop_stage_tracking(self):
+        self._stage_active = False
+        self._stage_token += 1
+        timer = getattr(self, '_stage_tick', None)
+        if timer:
+            self.after_cancel(timer)
+        self._stage_tick = None
+
+    def queue_stage(self, token, stage, detail=''):
+        # A worker writes plain data only; the main thread owns every Tk call.
+        self._stage_events.put((token, stage, detail))
+
+    def _poll_stage_tracking(self, token):
+        if token != self._stage_token or not self._stage_active or not self.winfo_exists():
+            return
+        if self._stage_tick:
+            self.after_cancel(self._stage_tick)
+            self._stage_tick = None
+        now = time.monotonic()
+        while True:
+            try:
+                event_token, stage, detail = self._stage_events.get_nowait()
+            except queue.Empty:
+                break
+            if event_token != token:
+                continue
+            if stage == 'review':
+                path, evidence = detail
+                self._review_by_path[os.path.abspath(path)] = evidence
+                continue
+            if stage == 'terminal':
+                self._stage_active = False
+                stage = detail
+                detail = ''
+            if stage != self._stage_name:
+                self._stage_changed = now
+                self._stage_name = stage
+                if self._stage_active and stage in ('model', 'audio', 'recognition', 'retry'):
+                    self.progressbar.start()
+                    self.progress_label.configure(text='處理中')
+            self._stage_detail = detail
+        labels = {'model': '模型準備', 'audio': '音訊準備', 'recognition': '語音辨識／串流整理',
+                  'output': '字幕整理與儲存', 'retry': '調整設定並重試', 'complete': '已完成',
+                  'cancelled': '已取消', 'failed': '處理失敗'}
+        def clock(seconds):
+            seconds = max(0, int(seconds))
+            return f'{seconds // 60:02d}:{seconds % 60:02d}'
+        label = labels.get(self._stage_name, self._stage_name)
+        self.stage_label.configure(text=f'{label} · 階段 {clock(now - self._stage_changed)} · 總耗時 {clock(now - self._stage_started)}'
+                                   + (f' · {self._stage_detail}' if self._stage_detail else ''))
+        self.status_label.configure(text=label)
+        if self._stage_active:
+            self._stage_tick = self.after(250, lambda: self._poll_stage_tracking(token))
+        else:
+            self.progressbar.stop()
+
+    def update_progress(self, value, token=None):
         # Value is float between 0.0 and 1.0
         def _update():
             try:
+                if token is not None and (token != self._stage_token or not self._stage_active):
+                    return
                 pct = max(0.0, min(100.0, float(value) * 100.0))
                 if hasattr(self, 'progressbar') and self.progressbar.winfo_exists():
                     if hasattr(self.progressbar, 'stop'):
@@ -4240,11 +4378,14 @@ class App(BaseClass):
             self.progress_label.configure(text="0.0%")
         self.progressbar.start()
 
-        thread = threading.Thread(target=self.process_batch)
+        token = self._begin_stage_tracking()
+        thread = threading.Thread(target=self.process_batch, args=(token,))
         thread.daemon = True
         thread.start()
 
-    def process_batch(self):
+    def process_batch(self, stage_token=None):
+        stage_token = self._stage_token if stage_token is None else stage_token
+        outcome = 'failed'
         try:
             model_size = self.get_clean_model_name()
             device = self.device_var.get()
@@ -4457,7 +4598,9 @@ class App(BaseClass):
                     result = self.transcriber.run(
                         file_path, 
                         log_callback=self.log,
-                        progress_callback=self.update_progress,
+                        progress_callback=lambda value: self.update_progress(value, stage_token),
+                        stage_callback=lambda stage, detail='': self.queue_stage(stage_token, stage, detail),
+                        review_callback=lambda path, evidence: self.queue_stage(stage_token, 'review', (path, evidence)),
                         cancel_check_callback=check_cancel,
                         output_format=output_fmt,
                         initial_prompt=initial_prompt,
@@ -4493,12 +4636,19 @@ class App(BaseClass):
                     continue
 
             if self.cancel_flag:
+                outcome = 'cancelled'
                 self.log("\n--- 批次任務已手動取消 ---")
                 messagebox.showwarning("已取消", "批次轉錄已中止。")
             else:
+                outcome = 'complete' if completed_count == len(self.file_list) else 'failed'
                 self.log(f"\n--- 批次任務完成: 成功 {completed_count} / {len(self.file_list)} ---")
-                self.after(0, lambda: self.show_completion_dialog(completed_count, produced_files, produced_sources,
-                                                               'en' if task == 'translate' else ''))
+                def show_results():
+                    # Drain evidence first, even if the user opens the editor
+                    # before the next 250 ms progress tick.
+                    self._poll_stage_tracking(stage_token)
+                    self.show_completion_dialog(completed_count, produced_files, produced_sources,
+                                                'en' if task == 'translate' else '')
+                self.after(0, show_results)
             
         except Exception as e:
             error_msg = str(e)
@@ -4512,17 +4662,21 @@ class App(BaseClass):
             messagebox.showerror(title, f"{error_msg}")
         
         finally:
+            if self.cancel_flag:
+                outcome = 'cancelled'
+            self.queue_stage(stage_token, 'terminal', outcome)
             self.is_running = False
             self.current_downloading_model = None
             def _reset_progress():
+                if stage_token != self._stage_token:
+                    return
                 self.progressbar.stop()
-                self.progressbar.set(0)
+                self.progressbar.set(1 if outcome == 'complete' else 0)
                 self._target_progress = 0.0
                 self._current_progress = 0.0
                 if hasattr(self, 'progress_label'):
-                    self.progress_label.configure(text="0.0%")
+                    self.progress_label.configure(text="100.0%" if outcome == 'complete' else "0.0%")
             self.after(0, _reset_progress)
-            self.status_label.configure(text="就緒 - 等待下一個任務")
             self.after(0, lambda: self.btn_run.configure(state="normal"))
             self.after(0, lambda: self.btn_add.configure(state="normal"))
             self.after(0, lambda: self.btn_clear.configure(state="normal"))
@@ -4585,7 +4739,8 @@ class App(BaseClass):
             filetypes=file_types
         )
         if selected_file:
-            SubtitleEditorWindow(self, selected_file)
+            SubtitleEditorWindow(self, selected_file,
+                                 review_evidence=self._review_by_path.get(os.path.abspath(selected_file)))
 
     def open_evercam_tool(self, initial_courses=None):
         """開啟獨立的 EverCam 課程網頁轉換工具視窗"""
@@ -4771,7 +4926,8 @@ class App(BaseClass):
                     subprocess.Popen(["xdg-open", output_dir])
                     
         def edit_file(f_path):
-            SubtitleEditorWindow(self, f_path)
+            SubtitleEditorWindow(self, f_path, video_path=completion_video(f_path, sources),
+                                 review_evidence=self._review_by_path.get(os.path.abspath(f_path)))
 
         # 逐一填入檔案精緻卡片
         for i, f_path in enumerate(files):

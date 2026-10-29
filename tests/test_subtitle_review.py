@@ -1,5 +1,6 @@
 import importlib
 import unittest
+import time
 from types import SimpleNamespace
 
 
@@ -46,6 +47,19 @@ class SubtitleReviewTests(unittest.TestCase):
         self.assertEqual(self.review.review_cues([], [None, {}]), {})
         self.assertEqual(self.review.review_cues([dict(start=float('nan'), end=2, text='好')]),
                          {0: ['時間軸異常']})
+
+    def test_large_lecture_diagnostics_remain_interactive(self):
+        cues = [dict(start=i * 2, end=i * 2 + 1, text=f'字幕{i}') for i in range(5000)]
+        evidence = [dict(**cue, reasons=['辨識信心偏低']) for cue in cues]
+        start = time.monotonic()
+        result = self.review.review_cues(cues, evidence)
+        self.assertEqual(len(result), 5000)
+        self.assertLess(time.monotonic() - start, 2., '5000段字幕的檢查不應阻塞操作')
+
+    def test_millisecond_output_rounding_does_not_attach_neighbor_to_evidence(self):
+        cues = [dict(start=0, end=1, text='請校對'), dict(start=1, end=2, text='正常內容')]
+        evidence = [dict(start=0, end=1.0004, text='請校對', reasons=['辨識信心偏低'])]
+        self.assertEqual(self.review.review_cues(cues, evidence), {0: ['辨識信心偏低']})
 
 
 if __name__ == '__main__':

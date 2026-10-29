@@ -10,6 +10,7 @@ on:
       - 'SubtitleTranscriber.py'
       - 'transcriber.py'
       - 'batch_quality.py'
+      - 'subtitle_review.py'
       - 'inference_optimizations.py'
       - 'evercam_integration.py'
       - 'opencam*.py'

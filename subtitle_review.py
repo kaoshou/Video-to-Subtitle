@@ -69,21 +69,41 @@ def review_cues(cues, evidence=()):
 
     evidence = [entry for entry in evidence if _range(entry) and _text(entry)
                 and isinstance(_field(entry, 'reasons'), (tuple, list))]
+    evidence_spans = [_range(entry) for entry in evidence]
     # Each component includes every connected cue/evidence interval. Comparing
     # the complete text avoids carrying confidence over a partial manual edit.
-    links = {i: {j for j, entry in enumerate(evidence)
-                 if span and min(span[1], _range(entry)[1]) > max(span[0], _range(entry)[0])}
-             for i, span in enumerate(spans)}
+    links = {i: set() for i in range(len(cues))}
+    reverse = {j: set() for j in range(len(evidence))}
+    events = []
+    for kind, intervals in ((0, spans), (1, evidence_spans)):
+        for index, span in enumerate(intervals):
+            if span:
+                events.extend(((span[0], 1, kind, index), (span[1], 0, kind, index)))
+    active = (set(), set())
+    for _, opening, kind, index in sorted(events):
+        if not opening:
+            active[kind].discard(index)
+            continue
+        for other in active[1 - kind]:
+            i, j = (index, other) if kind == 0 else (other, index)
+            if min(spans[i][1], evidence_spans[j][1]) - max(spans[i][0], evidence_spans[j][0]) <= .001:
+                continue  # SRT/VTT millisecond rounding is not meaningful overlap.
+            links[i].add(j)
+            reverse[j].add(i)
+        active[kind].add(index)
     pending = {i for i, connected in links.items() if connected}
     while pending:
-        cue_ids = {min(pending)}
+        cue_ids = set()
         evidence_ids = set()
-        while True:
-            new_evidence = set().union(*(links[i] for i in cue_ids))
-            new_cues = {i for i in pending if links[i] & new_evidence}
-            if new_cues == cue_ids and new_evidence == evidence_ids:
-                break
-            cue_ids, evidence_ids = new_cues, new_evidence
+        stack = [pending.pop()]
+        while stack:
+            i = stack.pop()
+            if i in cue_ids:
+                continue
+            cue_ids.add(i)
+            for j in links[i] - evidence_ids:
+                evidence_ids.add(j)
+                stack.extend(reverse[j] - cue_ids)
         pending -= cue_ids
         if ''.join(_text(cues[i]) for i in sorted(cue_ids)) != ''.join(
                 _text(evidence[j]) for j in sorted(evidence_ids, key=lambda j: _range(evidence[j]))):
