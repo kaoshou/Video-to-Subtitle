@@ -63,8 +63,8 @@ async function fixture(parent, sourceRoot, mode, media, suffix = '') {
     await mkdir(folder, { recursive: true });
     await cp(join(sourceRoot, 'assets/evercam_player/css'), join(folder, 'css'), { recursive: true });
     await cp(join(sourceRoot, 'assets/evercam_player/js'), join(folder, 'js'), { recursive: true });
-    const template = await readFile(join(sourceRoot, `assets/${mode === 'standalone' ? 'standalone_player' : 'evercam_player'}/index.html`), 'utf8');
-    await writeFile(join(folder, 'index.html'), template.replaceAll('{{TITLE}}', TITLE));
+    const template = await readFile(join(sourceRoot, 'assets/evercam_player/index.html'), 'utf8');
+    await writeFile(join(folder, 'index.html'), mode === 'standalone' ? template.replace('src="config.js"', 'src="player-config.js"') : template);
     const config = { title: TITLE, author: '數位教材工作室', organization: '教學資源中心',
         packageId: `accessibility-smoke-${mode}`, duration: 270, defaultSubtitle: 'zh-TW',
         src: [{ src: 'media.mp4', type: 'video/mp4' }],
@@ -145,7 +145,7 @@ async function screenshot(page, result, opts, label, fullPage = false) {
 
 async function openTranscript(page, mode) {
     if (await page.locator('#transcript-panel').evaluate(el => el.hidden)) {
-        await page.locator(mode === 'standalone' ? '#transcript-toggle' : '#transcript-tab').click();
+        await page.locator('#transcript-tab').click();
     }
     await settle(page);
 }
@@ -191,7 +191,7 @@ async function runPlayer(browser, folder, baselineFolder, mode, profile, opts, r
             if (mode === 'standalone') {
                 assert.equal(await page.locator('.chapter-card').isVisible(), true);
                 assert.equal(await page.locator('#chapters-tab').isVisible(), false);
-                assert.equal(await page.locator('#transcript-toggle').getAttribute('aria-expanded'), 'true');
+                assert.equal(await page.locator('.player-tools').count(), 0, 'MP4 must not add a separate collapse toolbar');
                 if (!profile.mobile) {
                     const playerBox = await page.locator('.player-card').boundingBox();
                     const readingBox = await page.locator('.chapter-card').boundingBox();
@@ -554,6 +554,58 @@ async function runPlayer(browser, folder, baselineFolder, mode, profile, opts, r
     }
 }
 
+async function runPlayerParity(browser, folders, profile, opts, report) {
+    const result = { name: `mp4-evercam-parity-${profile.name}`, type: 'player-parity',
+        checks: [], axe: [], screenshots: [], browserErrors: [], blockedRequests: [] };
+    report.cases.push(result);
+    const context = await browser.newContext({ viewport: profile.viewport, isMobile: profile.mobile, hasTouch: profile.mobile });
+    const pages = {};
+    try {
+        await context.route(/^https?:\/\//, route => { result.blockedRequests.push(route.request().url()); return route.abort(); });
+        for (const mode of ['standalone', 'evercam']) {
+            const page = await context.newPage(); pages[mode] = page;
+            page.on('pageerror', error => result.browserErrors.push(error.message));
+            await page.goto(pathToFileURL(join(folders[mode], 'index.html')).href);
+            await page.waitForFunction(() => document.querySelector('video').readyState >= 1 && document.querySelector('#transcript-language').options.length === 2);
+            if (mode === 'evercam') await page.locator('#transcript-tab').click();
+            await page.evaluate(() => document.fonts.ready);
+            await settle(page);
+        }
+        await step(result, 'same-layout-and-controls-apart-from-chapters', async () => {
+            const selectors = ['.course-header', '.player-card', '#video-stage', '.chapter-card',
+                '.transcript-header', '#transcript-language', '#transcript-search', '#transcript-list', '#player-help'];
+            const boxes = {};
+            for (const mode of ['standalone', 'evercam']) {
+                boxes[mode] = await pages[mode].evaluate(selectors => Object.fromEntries(selectors.map(selector => {
+                    const node = document.querySelector(selector), box = node.getBoundingClientRect(), css = getComputedStyle(node);
+                    return [selector, {x:box.x, y:box.y, width:box.width, height:box.height,
+                        color:css.color, background:css.backgroundColor, radius:css.borderRadius, font:css.fontSize}];
+                })), selectors);
+                assert.equal(await pages[mode].locator('.player-tools').count(), 0);
+                await screenshot(pages[mode], result, opts, mode);
+            }
+            result.geometry = boxes;
+            for (const selector of selectors) {
+                const mp4 = boxes.standalone[selector], ec = boxes.evercam[selector];
+                for (const dimension of ['x','y','width','height']) {
+                    assert.ok(Math.abs(mp4[dimension] - ec[dimension]) <= 1,
+                        `${selector}.${dimension} differs: MP4 ${mp4[dimension]}, EverCam ${ec[dimension]}`);
+                }
+                for (const style of ['color','background','radius','font']) assert.equal(mp4[style], ec[style], `${selector}.${style}`);
+            }
+            assert.equal(await pages.standalone.locator('#chapters-tab').isVisible(), false);
+            assert.equal(await pages.evercam.locator('#chapters-tab').isVisible(), true);
+            assert.equal(await pages.standalone.locator('#transcript-panel').isVisible(), true);
+            assert.deepEqual(result.browserErrors, []); assert.deepEqual(result.blockedRequests, []);
+        });
+    } catch (error) { result.checks.push({label:'parity-load',status:'failed',error:error.stack || String(error)}); }
+    finally {
+        result.status = result.checks.some(check => check.status === 'failed') ? 'failed' : 'passed';
+        await context.close();
+        console.log(`${result.status.toUpperCase()} ${result.name}`);
+    }
+}
+
 async function htmlFiles(folder, prefix = '') {
     const found = [];
     for (const entry of await readdir(folder, { withFileTypes: true })) {
@@ -693,11 +745,14 @@ async function main() {
         report.axeVersion = require('axe-core/package.json').version;
         browser = await chromium.launch({ headless: true, ...(opts['--chromium'] ? { executablePath: opts['--chromium'] } : {}) });
         report.chromiumVersion = browser.version();
+        const folders = {};
         for (const mode of ['standalone', 'evercam']) {
             const folder = await fixture(fixtureRoot, opts['--source-root'], mode, opts['--media']);
+            folders[mode] = folder;
             const baseline = opts['--baseline-root'] ? await fixture(fixtureRoot, opts['--baseline-root'], mode, opts['--media'], '-baseline') : null;
             for (const profile of PROFILES) await runPlayer(browser, folder, baseline, mode, profile, opts, report, axeSource);
         }
+        for (const profile of PROFILES) await runPlayerParity(browser, folders, profile, opts, report);
         const siteDir = opts['--site-dir'] || join(opts['--source-root'], 'website/dist');
         try { await stat(siteDir); await runWebsite(browser, siteDir, opts, report, axeSource); }
         catch (error) { if (opts['--site-dir'] || error.code !== 'ENOENT') throw error; report.website = 'not built; omitted'; }

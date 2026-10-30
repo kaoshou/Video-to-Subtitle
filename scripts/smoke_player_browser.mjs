@@ -45,8 +45,8 @@ async function fixture(parent, mode, opts) {
     await mkdir(folder, { recursive: true });
     await cp(join(root, 'assets/evercam_player/css'), join(folder, 'css'), { recursive: true });
     await cp(join(root, 'assets/evercam_player/js'), join(folder, 'js'), { recursive: true });
-    const template = await readFile(join(root, `assets/${mode === 'standalone' ? 'standalone_player' : 'evercam_player'}/index.html`), 'utf8');
-    await writeFile(join(folder, 'index.html'), template.replace('{{TITLE}}', 'Synthetic transcript geometry smoke'));
+    const template = await readFile(join(root, 'assets/evercam_player/index.html'), 'utf8');
+    await writeFile(join(folder, 'index.html'), mode === 'standalone' ? template.replace('src="config.js"', 'src="player-config.js"') : template);
     const config = { title: 'Synthetic transcript geometry smoke', packageId: `browser-smoke-${mode}`,
         duration: 270, defaultSubtitle: 'zh-TW', src: [{ src: 'media.mp4', type: 'video/mp4' }],
         index: [{ time: 0, title: 'Synthetic chapter' }] };
@@ -165,8 +165,7 @@ async function runCase(browser, folder, mode, profile, opts, report) {
         }
         return snapshot;
     };
-    const show = mode === 'standalone' ? '#transcript-toggle' : '#transcript-tab';
-    const hide = mode === 'standalone' ? '#transcript-toggle' : '#chapters-tab';
+    const show = '#transcript-tab';
     try {
         await page.goto(pathToFileURL(join(folder, 'index.html')).href, { waitUntil: 'load' });
         await page.waitForFunction(() => document.querySelector('#transcript-language').options.length === 2);
@@ -244,15 +243,20 @@ async function runCase(browser, folder, mode, profile, opts, report) {
         await page.locator('#transcript-list').evaluate(list => list.scrollIntoView({ block: 'center' }));
         await settle(page);
         visibleCue(await capture('resize-visible', true), 'English cue 150', name);
-        await click(page, hide);
-        const hiddenBefore = await capture('hidden-before-seek');
-        await seek(page, 5.5, opts['--mock-media']);
-        const hidden = await capture('hidden-after-seek');
-        assert.equal(hidden.panelHidden, true, 'Hidden panel must not open on seek');
-        assert.equal(hidden.listScrollTop, hiddenBefore.listScrollTop, 'Hidden panel must not scroll on seek');
-        assert.equal(hidden.scrollY, hiddenBefore.scrollY, 'Hidden panel seek must not scroll page');
-        await click(page, show);
-        visibleCue(await capture('reopened'), 'English cue 5', name);
+        if (mode === 'evercam') {
+            await click(page, '#chapters-tab');
+            const hiddenBefore = await capture('hidden-before-seek');
+            await seek(page, 5.5, opts['--mock-media']);
+            const hidden = await capture('hidden-after-seek');
+            assert.equal(hidden.panelHidden, true, 'Hidden panel must not open on seek');
+            assert.equal(hidden.listScrollTop, hiddenBefore.listScrollTop, 'Hidden panel must not scroll on seek');
+            assert.equal(hidden.scrollY, hiddenBefore.scrollY, 'Hidden panel seek must not scroll page');
+            await click(page, show);
+            visibleCue(await capture('reopened'), 'English cue 5', name);
+        } else {
+            await seek(page, 5.5, opts['--mock-media']);
+            visibleCue(await capture('always-open-transcript'), 'English cue 5', name);
+        }
         await click(page, '#transcript-follow');
         const disabledBefore = await state(page);
         await seek(page, 150.5, opts['--mock-media']);

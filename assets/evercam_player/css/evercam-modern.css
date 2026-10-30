@@ -194,39 +194,6 @@ h1 {
     align-items: start;
 }
 
-.player-tools {
-    display: flex;
-    justify-content: flex-end;
-    min-height: 48px;
-    padding: 2px 10px;
-    border-top: 1px solid #e6ecec;
-    background: #fafcfc;
-}
-.transcript-toggle {
-    display: inline-flex;
-    align-items: center;
-    gap: 9px;
-    min-height: 44px;
-    padding: 8px 12px;
-    border: 0;
-    border-radius: 6px;
-    background: transparent;
-    color: #51696a;
-    font-size: 14px;
-    font-weight: 500;
-}
-.transcript-toggle:hover, .transcript-toggle[aria-expanded="true"] { background: #eaf5f4; color: var(--active); }
-.transcript-toggle:focus-visible { outline: 3px solid var(--active); outline-offset: 3px; }
-.transcript-toggle-icon { width: 20px; height: 20px; }
-.transcript-toggle-arrow {
-    width: 7px;
-    height: 7px;
-    margin: -3px 2px 0 4px;
-    border-right: 1.5px solid currentColor;
-    border-bottom: 1.5px solid currentColor;
-    transform: rotate(45deg);
-}
-.transcript-toggle[aria-expanded="true"] .transcript-toggle-arrow { margin-top: 3px; transform: rotate(225deg); }
 .transcript-card[hidden] { display: none; }
 .transcript-card {
     margin-top: 18px;
@@ -1600,23 +1567,7 @@ body[data-reading-contrast="high"] .keyboard-hints { color: var(--muted); }
         transition-duration: 0.01ms !important;
     }
 }
-/* Standalone exports open with the same reading sidebar, without a chapter tab.
-   The one-column layout is reserved for an explicit viewer collapse. */
-.standalone-player .learning-layout {
-    grid-template-columns: minmax(0, 1fr);
-    max-width: 1200px;
-    margin-inline: auto;
-}
-.standalone-player .chapter-card { display: none; }
-.standalone-player.standalone-transcript-open .chapter-card { display: flex; }
-.standalone-player.standalone-transcript-open .learning-layout {
-    max-width: none;
-    grid-template-columns: minmax(0, 1fr) clamp(300px, 25vw, 360px);
-}
-@media (max-width: 1040px) {
-    .standalone-player.standalone-transcript-open .learning-layout { grid-template-columns: 1fr; }
-}
-.standalone-player .course-description {
+.course-description {
     max-width: 1200px;
     margin: 24px auto;
     white-space: pre-wrap;

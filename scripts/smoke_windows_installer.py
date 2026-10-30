@@ -140,7 +140,7 @@ def run_smoke(installer, portable, report):
         uninstaller = installed / 'unins000.exe'
         try:
             for file in (executable, uninstaller, installed / '_internal/python311.dll',
-                         installed / '_internal/assets/standalone_player/index.html', shortcut):
+                         installed / '_internal/assets/evercam_player/index.html', shortcut):
                 if not file.is_file():
                     raise AssertionError(f'Installed payload missing: {file}')
             subprocess.run([str(executable), '--test-web-export'], check=True, env=env,

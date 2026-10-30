@@ -2,9 +2,11 @@ from dataclasses import replace
 import hashlib
 import importlib
 import json
+import shutil
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from test_web_export_inputs import make_video
 from web_export_model import ExportRequest, Metadata, SubtitleSource
@@ -58,6 +60,23 @@ class Packages(unittest.TestCase):
         with self.assertRaises(InterruptedError): self.export(api, cancelled=lambda: True)
         self.assertFalse((self.root / '影片-web').exists())
         self.assertFalse(list(self.root.glob('.vts-export-*')))
+
+    def test_mp4_export_uses_the_current_evercam_template_not_a_separate_copy(self):
+        # Break caught: changing the canonical EverCam template does not reach
+        # MP4 output because an independent, stale HTML copy is still used.
+        api = self.api()
+        runtime = self.root / 'runtime'
+        shutil.copytree(Path(api.__file__).parent / 'assets', runtime / 'assets')
+        template = runtime / 'assets/evercam_player/index.html'
+        template.write_text(template.read_text(encoding='utf-8').replace(
+            '<main class="page-shell">', '<main class="page-shell" data-parity-marker="shared-template">'), encoding='utf-8')
+        with patch.object(api.sys, '_MEIPASS', str(runtime), create=True):
+            result = self.export(api)
+        html = result.index_path.read_text(encoding='utf-8')
+        self.assertIn('data-parity-marker="shared-template"', html)
+        self.assertIn('src="player-config.js"', html)
+        self.assertNotIn('src="config.js"', html)
+        self.assertIn('<title>&lt;script&gt;標題&lt;/script&gt;</title>', html)
 
     def test_repeated_exports_release_input_and_output_handles(self):
         api = self.api()

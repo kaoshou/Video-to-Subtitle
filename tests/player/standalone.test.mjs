@@ -7,7 +7,7 @@ const {JSDOM} = require('jsdom');
 const script = readFileSync(new URL('../../assets/evercam_player/js/evercam-modern.js', import.meta.url), 'utf8');
 
 function player(config, {standalone = true, preferences = {}, blockedStorage = false, subtitles} = {}) {
-  const html = readFileSync(new URL(`../../assets/${standalone ? 'standalone_player' : 'evercam_player'}/index.html`, import.meta.url), 'utf8');
+  const html = readFileSync(new URL('../../assets/evercam_player/index.html', import.meta.url), 'utf8');
   const dom = new JSDOM(html, {url:'https://local.invalid/', runScripts:'outside-only', pretendToBeVisual:true});
   const w = dom.window;
   w.matchMedia = () => ({matches:false});
@@ -28,6 +28,22 @@ function player(config, {standalone = true, preferences = {}, blockedStorage = f
   w.eval(script);
   return {dom, w, tracks};
 }
+
+test('MP4 uses the same visible player and transcript controls as EverCam, except chapters', t => {
+  const shared={title:'同一份教材',author:'講師',organization:'教學中心',description:'課程簡介',
+    duration:120,defaultSubtitle:'zh-TW',index:[{time:0,title:'開始'}]};
+  const mp4=player({...shared,mode:'standalone'});
+  const ec=player(shared,{standalone:false});
+  t.after(()=>mp4.dom.window.close());t.after(()=>ec.dom.window.close());
+  ec.w.document.querySelector('#transcript-tab').click();
+  for (const selector of ['.course-header','.player-card','#transcript-panel','#player-help']) {
+    assert.equal(mp4.w.document.querySelector(selector).outerHTML,
+                 ec.w.document.querySelector(selector).outerHTML,
+                 `${selector} must not have a separate MP4-only control or layout`);
+  }
+  assert.equal(mp4.w.document.querySelector('#chapters-tab').hidden,true);
+  assert.equal(mp4.w.document.querySelector('#transcript-panel').hidden,false);
+});
 
 // jsdom has no layout engine. Model only list/row geometry, leaving real
 // player handlers, pagination, active cues and scrollTop changes intact.
@@ -59,7 +75,7 @@ function setFollowing(w, checked) {
 
 function showTranscript(w, standalone) {
   if (w.document.querySelector('#transcript-panel').hidden) {
-    w.document.querySelector(standalone ? '#transcript-toggle' : '#transcript-tab').click();
+    w.document.querySelector('#transcript-tab').click();
   }
 }
 
@@ -249,7 +265,6 @@ test('every transcript navigation entry opens the standalone panel, including em
     link.click();assert.equal(doc.querySelector('.chapter-card').hidden,false);
     assert.equal(doc.querySelector('#transcript-panel').hidden,false);
     assert.equal(doc.activeElement,doc.querySelector('#transcript-heading'));
-    doc.querySelector('#transcript-toggle').click();
   }
   assert.ok([...doc.querySelectorAll('a[href="#chapters-heading"]')].every(link=>link.hidden),
     'Plain MP4 does not offer a nonexistent chapter index');
@@ -357,7 +372,7 @@ test('choosing a caption or playback speed returns keyboard focus to its opener'
 test('named player tool containers expose valid grouping semantics', t => {
   for (const standalone of [true,false]) {
     const {dom,w}=player({mode:standalone?'standalone':undefined},{standalone});t.after(()=>dom.window.close());
-    for (const selector of ['.time-display',...(standalone?['.player-tools']:[])]) {
+    for (const selector of ['.time-display']) {
       assert.equal(w.document.querySelector(selector).getAttribute('role'),'group',`${selector} must not label a generic div`);
     }
   }
@@ -426,20 +441,19 @@ test('search suspends following and clearing search resumes at the current playb
   assert.equal(followControl(w).checked,true);
 });
 
-test('hidden transcript never scrolls or opens itself; reopening follows the current cue', t => {
-  for (const standalone of [true,false]) {
+test('EverCam chapter view does not scroll or open the transcript; switching back follows the cue', t => {
+  for (const standalone of [false]) {
     const {dom,w}=player({mode:standalone?'standalone':undefined,title:'course',defaultSubtitle:'zh-TW'},
                          {standalone,subtitles:searchable});
     t.after(()=>dom.window.close());
     const list=transcriptViewport(w); setFollowing(w,true);
-    if (standalone) w.document.querySelector('#transcript-toggle').click();
     const video=w.document.querySelector('video');
     video.currentTime=30.5; video.dispatchEvent(new w.Event('timeupdate'));
     assert.equal(w.document.querySelector('#transcript-panel').hidden,true);
     assert.equal(list.scrollTop,0);
     showTranscript(w,standalone);
     assert.equal(list.scrollTop,50);
-    w.document.querySelector(standalone?'#transcript-toggle':'#chapters-tab').click();
+    w.document.querySelector('#chapters-tab').click();
     video.currentTime=1; video.dispatchEvent(new w.Event('timeupdate'));
     assert.equal(list.scrollTop,50);
     showTranscript(w,standalone);
@@ -645,24 +659,17 @@ test('large transcripts have bounded initial results with more results available
   dom.window.close();
 });
 
-test('standalone player shows transcript sidebar initially and retains searches when reopened', () => {
+test('standalone player keeps the same transcript tab and retains searches without a separate collapse toolbar', () => {
   for (const standalone of [true]) {
     const {dom,w}=player({mode:standalone?'standalone':undefined,title:'course',defaultSubtitle:'zh-TW'}, {standalone,subtitles:searchable});
-    const toggle=w.document.querySelector('#transcript-toggle');
     const panel=w.document.querySelector('#transcript-panel');
-    assert.ok(toggle, 'viewer can expand the transcript with a button');
+    assert.equal(w.document.querySelector('.player-tools'),null,'MP4 must not have an extra toolbar below the video');
     assert.equal(panel.hidden,false);
     assert.equal(w.document.querySelector('.chapter-card').hidden,false);
-    assert.equal(w.document.body.classList.contains('standalone-transcript-open'),true);
-    assert.equal(toggle.getAttribute('aria-expanded'),'true');
     const input=w.document.querySelector('#transcript-search');
     assert.notEqual(w.document.activeElement,input,'Loading the page must not steal keyboard focus');
     input.value='索引'; input.dispatchEvent(new w.Event('input'));
-    toggle.click();
-    assert.equal(panel.hidden,true);
-    assert.equal(w.document.querySelector('.chapter-card').hidden,true);
-    assert.equal(toggle.getAttribute('aria-expanded'),'false');
-    toggle.click();
+    w.document.querySelector('#transcript-tab').click();
     assert.equal(panel.hidden,false);
     assert.equal(input.value,'索引');
     assert.equal(w.document.querySelectorAll('.transcript-item').length,2);
@@ -717,4 +724,15 @@ test('standalone empty subtitles show an explanation rather than an empty right 
   assert.equal(doc.querySelector('#transcript-panel').hidden,false);
   assert.equal(doc.querySelector('#transcript-search').disabled,true);
   assert.ok(doc.querySelector('#transcript-status').textContent.trim());
+});
+
+test('empty subtitle language selectors have a meaningful state in both players', t => {
+  for (const standalone of [true,false]) {
+    const {dom,w}=player({mode:standalone?'standalone':undefined},{standalone,subtitles:{tracks:[]}});
+    t.after(()=>dom.window.close());
+    const field=w.document.querySelector('#transcript-language');
+    assert.equal(field.disabled,true);
+    assert.equal(field.selectedOptions[0]?.textContent,'沒有可用字幕');
+    assert.equal(w.document.querySelector('#transcript-download-html').disabled,true);
+  }
 });

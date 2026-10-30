@@ -226,8 +226,12 @@ def export_package(request, *, app_version, progress, cancelled, accept_warnings
     # Only explicitly trusted built-in assets, never JS/HTML from an imported package.
     resources = {name: (base / 'evercam_player' / name).read_bytes()
                  for name in ('css/evercam-modern.css', 'js/evercam-modern.js')}
-    template = (base / 'standalone_player/index.html').read_text(encoding='utf-8')
-    resources['index.html'] = template.replace('{{TITLE}}', html.escape(metadata['title'])).encode('utf-8')
+    # One canonical player document for EverCam and MP4. Only the data script
+    # differs; the shared runtime hides chapters for standalone packages.
+    template = (base / 'evercam_player/index.html').read_text(encoding='utf-8')
+    template = re.sub(r'<title>.*?</title>', lambda _: '<title>' + html.escape(metadata['title']) + '</title>',
+                      template, count=1, flags=re.S)
+    resources['index.html'] = template.replace('src="config.js"', 'src="player-config.js"').encode('utf-8')
     tracks, manifest_tracks = [], []
     for source in request.subtitles:
         text, cues = read_subtitle(source.path)

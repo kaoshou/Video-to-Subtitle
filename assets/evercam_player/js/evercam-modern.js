@@ -284,9 +284,7 @@
                 closeMenus();
                 if (readingSettings) { readingSettings.open = false; }
                 if (destination === "transcript-heading") {
-                    var toggle = document.getElementById("transcript-toggle");
-                    if (standalone && chapterCard.hidden && toggle) { toggle.click(); }
-                    else { activateReadingTab("transcript"); }
+                    activateReadingTab("transcript");
                 } else if (destination === "chapters-heading") {
                     activateReadingTab("chapters");
                 } else if (destination === "player-help") {
@@ -338,8 +336,6 @@
             description.hidden = !description.textContent;
         }
         if (standalone) {
-            document.body.classList.add("standalone-player", "standalone-transcript-open");
-            chapterCard.hidden = false;
             chapterCard.setAttribute("aria-label", "逐字稿");
         }
         setCourseDurationMetadata(duration);
@@ -365,7 +361,6 @@
     }
 
     function syncChapterHeight() {
-        if (standalone && chapterCard.hidden) { chapterCard.style.height = ""; return; }
         if (window.matchMedia("(max-width: 1040px)").matches) {
             chapterCard.style.height = "";
             return;
@@ -841,24 +836,6 @@
     function installTranscript() {
         // Read embedded subtitle data, so search also works offline and with CC off.
         if (!transcriptSearch || !transcriptLanguage || !transcriptList) { return; }
-        var transcriptToggle = document.getElementById("transcript-toggle");
-        if (transcriptToggle && transcriptPanel) {
-            transcriptToggle.addEventListener("click", function () {
-                var open = chapterCard.hidden;
-                chapterCard.hidden = !open;
-                document.body.classList.toggle("standalone-transcript-open", open);
-                activateReadingTab("transcript");
-                transcriptPanel.hidden = !open;
-                transcriptToggle.setAttribute("aria-expanded", String(!transcriptPanel.hidden));
-                transcriptToggle.setAttribute("aria-label", transcriptPanel.hidden ? "顯示逐字稿與搜尋" : "收合逐字稿與搜尋");
-                transcriptToggle.title = transcriptPanel.hidden ? "顯示逐字稿與搜尋" : "收合逐字稿與搜尋";
-                if (!transcriptPanel.hidden) {
-                    updateTranscriptPosition(true);
-                    if (!transcriptSearch.disabled) { transcriptSearch.focus(); }
-                }
-                syncChapterHeight();
-            });
-        }
         transcriptTracks = (Array.isArray(subtitleData.tracks) ? subtitleData.tracks : []).map(function (track) {
             var cues = (Array.isArray(track.cues) ? track.cues : []).filter(function (cue) {
                 return Number.isFinite(Number(cue.start)) && Number(cue.start) >= 0 &&
@@ -875,6 +852,12 @@
             option.textContent = track.label;
             transcriptLanguage.appendChild(option);
         });
+        if (transcriptTracks.length === 0) {
+            var unavailableOption = document.createElement("option");
+            unavailableOption.value = "";
+            unavailableOption.textContent = "沒有可用字幕";
+            transcriptLanguage.appendChild(unavailableOption);
+        }
         if (transcriptTracks.some(function (track) { return track.language === activeSubtitleLanguage; })) {
             transcriptLanguage.value = activeSubtitleLanguage;
         }
