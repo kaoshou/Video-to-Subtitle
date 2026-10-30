@@ -736,3 +736,17 @@ test('empty subtitle language selectors have a meaningful state in both players'
     assert.equal(w.document.querySelector('#transcript-download-html').disabled,true);
   }
 });
+
+test('MP4 machine-code labels use the same readable language names as EverCam and preserve custom labels', t => {
+  for (const standalone of [true,false]) {
+    const {dom,w}=player({mode:standalone?'standalone':undefined}, {standalone,subtitles:{tracks:[
+      {language:'zh-TW',...(standalone?{label:'zh-TW'}:{}),cues:[{start:0,end:1,text:'字幕'}]},
+      {language:'en',...(standalone?{label:'en'}:{}),cues:[{start:0,end:1,text:'Text'}]},
+      {language:'ja',label:'老師的日文字幕',cues:[{start:0,end:1,text:'字幕'}]}
+    ]}});
+    t.after(()=>dom.window.close());
+    assert.deepEqual([...w.document.querySelector('#transcript-language').options].map(o=>o.textContent),
+      ['正體中文','English','老師的日文字幕']);
+    assert.equal(w.document.querySelector('#caption-menu button[data-value="zh-TW"]').textContent,'正體中文');
+  }
+});

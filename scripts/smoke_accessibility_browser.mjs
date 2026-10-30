@@ -58,12 +58,20 @@ function cueText(language, index) {
     return `[${token}] ${sentence}${index < 2 ? ' needle' : ''}${index === 0 ? ' <script>window.__transcriptInjected=true</script> & "教材"' : ''}`;
 }
 
-async function fixture(parent, sourceRoot, mode, media, suffix = '') {
+export async function fixture(parent, sourceRoot, mode, media, suffix = '') {
     const folder = join(parent, `${mode}${suffix}`);
     await mkdir(folder, { recursive: true });
     await cp(join(sourceRoot, 'assets/evercam_player/css'), join(folder, 'css'), { recursive: true });
     await cp(join(sourceRoot, 'assets/evercam_player/js'), join(folder, 'js'), { recursive: true });
-    const template = await readFile(join(sourceRoot, 'assets/evercam_player/index.html'), 'utf8');
+    let template;
+    // Preserve the actual old MP4 document in an explicitly requested
+    // historical comparison; current fixtures always use the canonical HTML.
+    if (mode === 'standalone' && suffix === '-baseline') {
+        try { template = await readFile(join(sourceRoot, 'assets/standalone_player/index.html'), 'utf8'); }
+        catch (error) { if (error.code !== 'ENOENT') throw error; }
+    }
+    template ??= await readFile(join(sourceRoot, 'assets/evercam_player/index.html'), 'utf8');
+    template = template.replaceAll('{{TITLE}}', TITLE);
     await writeFile(join(folder, 'index.html'), mode === 'standalone' ? template.replace('src="config.js"', 'src="player-config.js"') : template);
     const config = { title: TITLE, author: '數位教材工作室', organization: '教學資源中心',
         packageId: `accessibility-smoke-${mode}`, duration: 270, defaultSubtitle: 'zh-TW',
@@ -72,7 +80,7 @@ async function fixture(parent, sourceRoot, mode, media, suffix = '') {
     if (mode === 'standalone') config.mode = 'standalone';
     await writeFile(join(folder, mode === 'standalone' ? 'player-config.js' : 'config.js'),
         `window.${mode === 'standalone' ? 'VTS_PLAYER_CONFIG' : 'config'} = ${JSON.stringify(config)};\n`);
-    const tracks = ['zh-TW', 'en'].map(language => ({ language, cues: Array.from({ length: 260 }, (_, index) => ({
+    const tracks = ['zh-TW', 'en'].map(language => ({ language, ...(mode === 'standalone' ? {label:language} : {}), cues: Array.from({ length: 260 }, (_, index) => ({
         start: index, end: index + 0.9, text: cueText(language, index)
     })) }));
     await writeFile(join(folder, 'subtitles-data.js'), `window.EVERCAM_SUBTITLES = ${JSON.stringify({ tracks })};\n`);
@@ -770,4 +778,6 @@ async function main() {
     if (report.status !== 'passed') { if (report.error) console.error(report.error); process.exitCode = 1; }
 }
 
-main().catch(error => { console.error(error.stack || String(error)); console.error(usage); process.exitCode = 1; });
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+    main().catch(error => { console.error(error.stack || String(error)); console.error(usage); process.exitCode = 1; });
+}

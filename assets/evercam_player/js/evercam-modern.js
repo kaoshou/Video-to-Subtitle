@@ -524,7 +524,10 @@
     }
 
     function getLanguageLabel(track) {
-        return track.label || languageLabels[track.language] || track.language || "字幕";
+        // Older MP4 exports stored the language code as a label. Resolve
+        // those through the common names while retaining real custom labels.
+        return (track.label && track.label !== track.language ? track.label : languageLabels[track.language]) ||
+            track.label || track.language || "字幕";
     }
 
     function createMenuItem(menu, label, value, onSelect) {
