@@ -6,22 +6,28 @@ Video to Subtitle 是以 faster-whisper（Windows／一般 CPU 與 CUDA）及 ml
 
 ## 下載與系統需求
 
-請只從 [GitHub Releases](https://github.com/kaoshou/Video-to-Subtitle/releases/latest) 下載最新版。Windows 可選 `VideoToSubtitle-Setup-v<版本>.exe` 安裝版或 `VideoToSubtitle.exe` 免安裝版；macOS 發行檔為 `VideoToSubtitle.dmg`。
+請只從 [GitHub Releases](https://github.com/kaoshou/Video-to-Subtitle/releases/latest) 下載最新版，或使用[官網下載按鈕](https://kaoshou.github.io/Video-to-Subtitle/)自動尋找最新版成品。自 v2.9.1 起，每版只提供下列三種檔案（檔名中的版本號隨更新變動）：
+
+| 平台 | v2.9.1 檔名 | 如何使用 |
+| --- | --- | --- |
+| Windows x64 免安裝 | `VideoToSubtitle_v2.9.1_Windows_x64_Portable.zip` | 解壓後執行內部的 `VideoToSubtitle.exe`。 |
+| Windows x64 安裝版 | `VideoToSubtitle_v2.9.1_Windows_x64_Setup.exe` | 開啟安裝精靈，不需預裝執行環境。 |
+| macOS Apple Silicon | `VideoToSubtitle_v2.9.1_macOS_arm64.dmg` | 開啟後拖入「應用程式」。 |
 
 第一次使用某個 Whisper 模型時需要網路連線。模型下載完成後，一般轉錄、字幕校對及 EverCam 轉換均可在本機執行。模型需要約 75 MB 至 3.1 GB，請預留比模型標示大小更多的暫存與解壓縮空間。
 
 ### Windows 安裝與啟動
 
-1. 下載最新的 `VideoToSubtitle.exe`。
-2. 將檔案放在有寫入權限的位置，例如自己的文件資料夾。
+1. 下載最新的 `VideoToSubtitle_v<版本>_Windows_x64_Portable.zip`。
+2. 將 ZIP 解壓到有寫入權限的位置，例如自己的文件資料夾；不要直接在壓縮檔預覽內執行 EXE。
 3. 雙擊執行。若 Windows SmartScreen 顯示保護提示，先確認檔案確實來自本專案的官方 Releases，再依系統畫面選擇顯示詳細資訊並執行。
 4. 使用 CPU 不需要額外設定；CUDA 為具備相容 NVIDIA 顯示卡之使用者的選用加速功能。
 
 #### Windows 安裝版
 
-正式 Release 提供固定最新版入口 `VideoToSubtitle-Setup.exe`，以及帶版號的 `VideoToSubtitle-Setup-v<版本>.exe` 安裝版，兩者內容相同。免安裝的 `VideoToSubtitle.exe` 繼續保留。
+正式 Release 每版只提供一個 `VideoToSubtitle_v<版本>_Windows_x64_Setup.exe` 安裝程式，不再重複提供不同名稱、相同內容的安裝包。
 
-1. 從[官方 Releases](https://github.com/kaoshou/Video-to-Subtitle/releases/latest) 下載 **VideoToSubtitle-Setup** 安裝包，依繁體中文精靈安裝。預設僅供目前使用者使用，不要求系統管理員權限；可改安裝位置、選擇是否建立桌面捷徑。
+1. 從[官方 Releases](https://github.com/kaoshou/Video-to-Subtitle/releases/latest) 下載檔名結尾為 **Windows_x64_Setup.exe** 的安裝包，依繁體中文精靈安裝。預設僅供目前使用者使用，不要求系統管理員權限；可改安裝位置、選擇是否建立桌面捷徑。
 2. 從「開始」功能表的 **Video to Subtitle** 啟動，或使用已選擇建立的桌面捷徑。安裝包已內含 Python 與必要套件，不需事先準備執行環境。
 3. 初次使用語音模型仍需下載；安裝版不另外附贈模型。CPU 可直接使用，CUDA 仍需相容 NVIDIA 顯示卡與驅動。
 4. 更新前關閉程式，再執行新安裝包。解除安裝可在 Windows「已安裝的應用程式」找到 **Video to Subtitle**；它不會刪除使用者設定、模型或影音。
@@ -32,7 +38,7 @@ Video to Subtitle 是以 faster-whisper（Windows／一般 CPU 與 CUDA）及 ml
 
 ### macOS 安裝與啟動
 
-1. 下載最新的 `VideoToSubtitle.dmg`。
+1. 下載最新的 `VideoToSubtitle_v<版本>_macOS_arm64.dmg`。
 2. 開啟 DMG，將 VideoToSubtitle 拖入「應用程式」。
 3. 第一次啟動若被 macOS 阻擋，請先確認 DMG 來自官方 Releases，再於 Finder 對程式按住 Control 點按並選擇「打開」，或依「隱私權與安全性」畫面的提示允許開啟。
 4. Apple Silicon Mac 可在「運算單元」選擇 `mlx`；若 MLX 無法載入，程式會提供訊息並可改用 CPU。
@@ -49,6 +55,8 @@ Video to Subtitle 是以 faster-whisper（Windows／一般 CPU 與 CUDA）及 ml
 6. 完成後可開啟字幕、開啟所在資料夾或進入「字幕校對」。輸出檔預設與原始影音放在相同資料夾，檔名相同、附檔名改為所選格式。
 
 如果選用尚未快取的模型，第一次執行時間會包含模型下載；這不代表轉錄停住。可從進度文字查看下載量、速度與預估剩餘時間。
+
+也可把資料夾拖入待處理清單，程式會尋找內部的實際影音檔，不會因資料夾名稱結尾為 `.mp4` 就當成影片。資料夾掃描不跟隨子項目的符號連結；重複加入同一路徑不會重複轉錄。辨識到 EverCam 或 OpenCam 專案時，對應檔案列會顯示同名徽章；OpenCam 選取專案對應的 `media.mp4`。
 
 ![v2.9.0 主畫面：加入影片、選擇模型及開始產生字幕](../screenshot_main.png)
 
@@ -290,7 +298,7 @@ SRT／VTT 編輯器會顯示「待校對 N / 總段數」。清單以 `!` 標示
 
 EverCam 播放器右側以「章節／逐字稿」分頁呈現閱讀內容，預設顯示章節。點「逐字稿」即可搜尋字幕，點「章節」返回索引；切換分頁不會改變播放時間，也會保留搜尋字詞及所選語言。
 
-「一般 MP4＋字幕」沒有章節索引，預設先收合逐字稿側欄。按播放器下緣右側的「逐字稿與搜尋」即可開啟右側的「逐字稿」分頁，再次按同一個按鈕可收合；不會顯示空白的章節分頁。手機及窄視窗會將閱讀面板放在影片下方。
+「一般 MP4＋字幕」沒有章節索引，開啟網頁就會直接顯示右側逐字稿，不必再切換。不顯示空白章節分頁；其他搜尋、跟隨播放、閱讀設定、下載及鍵盤導覽功能均沿用 EverCam 播放器。按播放器下緣右側的「逐字稿與搜尋」仍可自行收合／展開。手機及窄視窗會將閱讀面板放在影片下方。
 
 1. 切到「逐字稿」分頁後，在搜尋欄輸入字幕中的關鍵字，即可看到符合的字幕段落與開始時間；英文搜尋不區分大小寫，符合文字會標示底色。
 2. 點選任一結果，影片就會跳到該段字幕的開始時間並播放。清除搜尋可恢復完整逐字稿。

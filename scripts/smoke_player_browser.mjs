@@ -182,8 +182,8 @@ async function runCase(browser, folder, mode, profile, opts, report) {
         }
         const initial = await capture('initial');
         assert.equal(initial.follow, false, 'Follow must default off');
-        assert.equal(initial.panelHidden, true, 'Transcript must start closed');
-        await click(page, show);
+        assert.equal(initial.panelHidden, mode !== 'standalone', 'MP4 starts with transcript; EverCam starts with chapters');
+        if (mode !== 'standalone') await click(page, show);
         await page.locator('#transcript-list').evaluate(list => list.scrollIntoView({ block: 'center' }));
         await settle(page);
         const beforeOff = await capture('opened-default-off');

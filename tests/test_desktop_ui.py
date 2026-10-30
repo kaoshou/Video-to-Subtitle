@@ -603,6 +603,46 @@ class DesktopUI(unittest.TestCase):
         self.assertEqual(app.file_remove_buttons, {})
         self.assertFalse(self.errors, repr(self.errors))
 
+    def test_pending_list_badges_identify_projects_without_hiding_remove_buttons(self):
+        import json
+        app = self.main_app()
+        base = Path(self.temp.name)
+        ec, oc = base / '示範課程.ecmx.mp4', base / 'OpenCam'
+        ec.mkdir(); oc.mkdir()
+        (ec / 'config.js').write_text('var config = {};', encoding='utf-8')
+        (ec / 'media.mp4').touch()
+        (ec / '假的影片.mp4').mkdir()
+        (oc / 'index.html').touch()
+        (oc / 'media.mp4').touch()
+        (oc / 'opencam-player.js').write_text('window.OpenCamPlayerData = ' + json.dumps({
+            'format':'opencam.web-player', 'schemaVersion':1, 'entry':'index.html',
+            'media':'media.mp4', 'title':'示範', 'chapters':[], 'subtitles':None}) + ';', encoding='utf-8')
+        plain = base / ('很長的普通課程名稱' * 6 + '.mp4')
+        plain.touch()
+        app.add_files_from_paths([str(ec), str(oc), str(plain), str(ec / 'media.mp4')])
+        self.root.update()
+        self.assertEqual(set(app.file_list), {str(ec / 'media.mp4'), str(oc / 'media.mp4'), str(plain)})
+        self.assertEqual(len(app.file_list), 3)
+        for path, expected in ((ec / 'media.mp4', 'EverCam'), (oc / 'media.mp4', 'OpenCam'), (plain, None)):
+            row = app.file_name_labels[str(path)].master
+            # Badge can share a heading frame; inspect only this file's row.
+            def labels(widget):
+                result = [widget.cget('text')] if isinstance(widget, self.ctk.CTkLabel) else []
+                for child in widget.winfo_children():
+                    result.extend(labels(child))
+                return result
+            texts = labels(row)
+            self.assertEqual([text for text in texts if text in ('EverCam', 'OpenCam')], [expected] if expected else [])
+        for width in (760, 1040):
+            app.geometry(f'{width}x780'); self.root.update()
+            for button in app.file_remove_buttons.values():
+                self.assertGreaterEqual(button.winfo_rootx(), app.file_rows._parent_canvas.winfo_rootx())
+                self.assertLessEqual(button.winfo_rootx() + button.winfo_width(),
+                                     app.file_rows._parent_canvas.winfo_rootx() + app.file_rows._parent_canvas.winfo_width())
+        app.remove_file(str(oc / 'media.mp4'))
+        self.assertNotIn(str(oc / 'media.mp4'), app.file_remove_buttons)
+        self.assertFalse(self.errors, repr(self.errors))
+
     def test_video_selection_does_not_show_or_register_hidden_dropdown_menus(self):
         # Break caught: recursive DnD registration maps macOS Menu windows.
         import tkinter as tk

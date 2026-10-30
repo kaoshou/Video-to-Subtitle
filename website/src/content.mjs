@@ -41,7 +41,6 @@ function imageLink(file, alt, className = '', eager = false) {
 }
 
 export function renderHome() {
-  const downloadBase = latest + '/download';
   const tasks = [
     ['video', '我有影片，想產生字幕', '從短片開始，完成第一份 SRT。', '#quickstart'],
     ['edit', '我已有字幕，想修改', '直接開啟字幕，不必重新轉錄。', chapter('字幕校對器')],
@@ -52,7 +51,7 @@ export function renderHome() {
   return '<div class="home-page">' +
 '<section class="home-hero"><div class="container home-hero-grid">' +
   '<div class="home-hero-copy"><p class="eyebrow">' + escapeHtml(content.eyebrow) + '</p><h1><span>影片留在電腦，</span><em>字幕安心生成。</em></h1><p class="home-lead">' + escapeHtml(content.heroText) + '</p>' +
-  '<div class="hero-actions"><a class="button button-primary" href="' + downloadBase + '/VideoToSubtitle.exe">下載 Windows 免安裝版</a><a class="button button-primary" href="' + downloadBase + '/VideoToSubtitle-Setup.exe">下載 Windows 安裝版</a><a class="button button-secondary" href="' + downloadBase + '/VideoToSubtitle.dmg">下載 macOS 版</a></div>' +
+  '<div class="hero-actions"><a class="button button-primary" data-release-platform="windows-portable" href="' + latest + '">下載 Windows 免安裝版</a><a class="button button-primary" data-release-platform="windows-setup" href="' + latest + '">下載 Windows 安裝版</a><a class="button button-secondary" data-release-platform="macos" href="' + latest + '">下載 macOS 版</a></div>' +
   '<p class="home-download-note">安裝版通常啟動較快：執行環境在安裝時一次展開，之後開啟不必像免安裝版一樣重新解壓。</p>' +
   '<div class="home-hero-links"><a href="#quickstart">看快速上手 →</a><a href="' + latest + '">版本更新內容 ↗</a></div><ul class="home-trust" aria-label="工具特色"><li>免費・開放原始碼</li><li>本機轉錄</li><li>無顯卡也能用</li></ul></div>' +
   '<figure class="home-hero-visual"><div class="preview-label"><span>你的字幕工作台</span><span>DESKTOP APP</span></div>' + imageLink('screenshot_main.png', 'Video to Subtitle 主畫面，顯示影片清單與轉錄設定', '', true) + '<figcaption><span>v2.9.0 主操作介面 · Linux 示範</span><span>點擊圖片放大 ↗</span></figcaption></figure>' +
@@ -67,7 +66,7 @@ tasks.map(([name, title, text, href]) => '<a class="home-task" href="' + href + 
 '<section class="home-capabilities container" aria-labelledby="features-title"><div class="home-section-head"><p class="section-kicker">ONE WORKFLOW</p><h2 id="features-title">不只產生文字，<br>也讓教材準備得更完整。</h2><p>製作字幕、仔細校對，再選擇適合的分享方式。</p></div><div class="home-feature-grid">' +
 '<article class="home-feature"><span class="feature-index">01 / TRANSCRIBE</span><h3>更有效率地產生字幕</h3><p>CPU／CUDA 預設批次加速，將同一支影片的多段語音一起辨識；音訊重複利用，減少重試開銷。</p><ul><li>批次大小預設 4，可調整或關閉</li><li>記憶體不足自動縮小，品質異常回退</li><li>MLX 保留 Apple 原生加速</li></ul><a class="home-inline-link" href="' + chapter('批次加速-試用') + '">認識轉錄功能 ' + icon('arrow') + '</a></article>' +
 '<article class="home-feature"><span class="feature-index">02 / REVIEW</span><h3>先找到需要確認的句子</h3><p>依模型低信心、疑似重複及時間軸問題標記待校對字幕；只提供線索，不自動刪改。</p><ul><li>待校對數量、篩選與所選原因</li><li>聽音核對，再用 Ctrl+S／⌘S 儲存</li><li>信心值不是正確率，未標記也需核對</li></ul><a class="home-inline-link" href="' + chapter('字幕校對器') + '">認識校對器 ' + icon('arrow') + '</a></article>' +
-'<article class="home-feature"><span class="feature-index">03 / PRESENT</span><h3>整理網頁教材</h3><p>提供閱讀設定與完整逐字稿下載。一般 MP4 和 EverCam 都能整理成更容易閱讀的網頁教材。</p><ul><li>多語字幕、搜尋與跟隨播放</li><li>字級、行距及高對比設定</li><li>HTML／TXT 逐字稿下載</li></ul><div class="feature-links"><a href="' + chapter('一般-mp4-字幕匯出網頁') + '">一般 MP4 →</a><a href="' + chapter('evercam-數位課程') + '">EverCam 課程 →</a></div></article></div>' +
+'<article class="home-feature"><span class="feature-index">03 / PRESENT</span><h3>整理網頁教材</h3><p>一般 MP4 開頁直接顯示逐字稿，EverCam 保留章節分頁；兩者共用閱讀設定、鍵盤導覽與逐字稿下載。</p><ul><li>多語字幕、搜尋與跟隨播放</li><li>字級、行距及高對比設定</li><li>HTML／TXT 逐字稿下載</li></ul><div class="feature-links"><a href="' + chapter('一般-mp4-字幕匯出網頁') + '">一般 MP4 →</a><a href="' + chapter('evercam-數位課程') + '">EverCam 課程 →</a></div></article></div>' +
 '<div class="home-editor-preview"><figure>' + imageLink('screenshot_editor.png', '字幕校對器與影音同步播放器') + '<figcaption>v2.9.0 字幕校對器 · 點擊圖片放大</figcaption></figure><div><p class="section-kicker">THE HUMAN TOUCH</p><h3>AI 先打底，<br>你把關最後一句。</h3><p>自動字幕仍可能誤判。發布前，請特別核對人名、數字、專有名詞與字幕時間。</p><a class="home-inline-link" href="' + chapter('編輯時間與文字') + '">看看如何校對 ' + icon('arrow') + '</a></div></div>' +
 '<p class="home-capture-note">以下為 v2.9.0 在 Linux 雲端虛擬顯示環境的真實介面截圖，使用示範素材：本頁主畫面、步驟縮圖與校對器畫面。Windows／macOS 的字型與視窗外觀可能略有差異。</p></section>' +
 

@@ -187,7 +187,17 @@ async function runPlayer(browser, folder, baselineFolder, mode, profile, opts, r
             const state = await page.locator('video').evaluate(v => ({ duration: v.duration, readyState: v.readyState, nativeTracks: v.textTracks.length }));
             assert.ok(state.duration >= 260, JSON.stringify(state));
             assert.equal(await page.locator('#transcript-follow').isChecked(), false);
-            assert.equal(await page.locator('#transcript-panel').evaluate(el => el.hidden), true);
+            assert.equal(await page.locator('#transcript-panel').evaluate(el => el.hidden), mode !== 'standalone');
+            if (mode === 'standalone') {
+                assert.equal(await page.locator('.chapter-card').isVisible(), true);
+                assert.equal(await page.locator('#chapters-tab').isVisible(), false);
+                assert.equal(await page.locator('#transcript-toggle').getAttribute('aria-expanded'), 'true');
+                if (!profile.mobile) {
+                    const playerBox = await page.locator('.player-card').boundingBox();
+                    const readingBox = await page.locator('.chapter-card').boundingBox();
+                    assert.ok(readingBox.x >= playerBox.x + playerBox.width, 'Transcript is beside the MP4 on a desktop');
+                }
+            }
             await page.locator('video').evaluate(async v => { v.muted = true; await v.play(); });
             await page.waitForFunction(() => document.querySelector('video').currentTime > 0.1);
             await page.locator('video').evaluate(v => { v.pause(); v.muted = false; });
@@ -578,7 +588,7 @@ async function runWebsite(browser, siteDir, opts, report, axeSource) {
     const server = await serve(siteDir);
     try {
         for (const file of await htmlFiles(siteDir)) for (const profile of PROFILES) {
-            const result = { name: `website-${file.replace(/[^a-z0-9]+/gi, '-')}-${profile.name}`, type: 'website', checks: [], axe: [], screenshots: [], browserErrors: [], blockedRequests: [] };
+            const result = { name: `website-${file.replace(/[^a-z0-9]+/gi, '-')}-${profile.name}`, type: 'website', checks: [], axe: [], screenshots: [], browserErrors: [], blockedRequests: [], releaseRequests: [] };
             report.cases.push(result);
             const context = await browser.newContext({ viewport: profile.viewport, isMobile: profile.mobile, hasTouch: profile.mobile });
             const page = await context.newPage();
@@ -586,6 +596,16 @@ async function runWebsite(browser, siteDir, opts, report, axeSource) {
             page.on('response', response => { if (response.status() >= 400) result.browserErrors.push(`HTTP ${response.status()}: ${response.url()}`); });
             await context.route('**/*', route => {
                 if (route.request().url().startsWith(server.url + '/')) return route.continue();
+                if (route.request().url() === 'https://api.github.com/repos/kaoshou/Video-to-Subtitle/releases/latest') {
+                    result.releaseRequests.push(route.request().url());
+                    // Only the remote version-data boundary is simulated;
+                    // the shipped script updates real, keyboard-usable links.
+                    const assets = ['Windows_x64_Portable.zip', 'Windows_x64_Setup.exe', 'macOS_arm64.dmg'].map(suffix => {
+                        const name = `VideoToSubtitle_v9.8.7_${suffix}`;
+                        return { name, state: 'uploaded', browser_download_url: `https://github.com/kaoshou/Video-to-Subtitle/releases/download/v9.8.7/${name}` };
+                    });
+                    return route.fulfill({ json: { tag_name: 'v9.8.7', draft: false, prerelease: false, assets } });
+                }
                 result.blockedRequests.push(route.request().url()); return route.abort();
             });
             try {
@@ -596,6 +616,13 @@ async function runWebsite(browser, siteDir, opts, report, axeSource) {
                 if (file === 'index.html') await step(result, 'direct-downloads-responsive-layout', async () => {
                     const links = page.locator('.home-hero .hero-actions a');
                     assert.equal(await links.count(), 3, 'All desktop downloads have a primary-area entry');
+                    await page.waitForFunction(() => [...document.querySelectorAll('[data-release-platform]')].every(a => a.href.includes('/releases/download/v9.8.7/')));
+                    assert.deepEqual(await links.evaluateAll(nodes => nodes.map(node => node.href)), [
+                        'https://github.com/kaoshou/Video-to-Subtitle/releases/download/v9.8.7/VideoToSubtitle_v9.8.7_Windows_x64_Portable.zip',
+                        'https://github.com/kaoshou/Video-to-Subtitle/releases/download/v9.8.7/VideoToSubtitle_v9.8.7_Windows_x64_Setup.exe',
+                        'https://github.com/kaoshou/Video-to-Subtitle/releases/download/v9.8.7/VideoToSubtitle_v9.8.7_macOS_arm64.dmg'
+                    ]);
+                    assert.equal(result.releaseRequests.length, 1, 'Resolve latest once, not separately per button');
                     for (const width of [1440, 1024, 820, 800, 540, 390, 320]) {
                         await page.setViewportSize({ width, height: 1000 });
                         await settle(page);

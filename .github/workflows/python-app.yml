@@ -14,6 +14,7 @@ on:
       - 'inference_optimizations.py'
       - 'evercam_integration.py'
       - 'opencam*.py'
+      - 'media_inputs.py'
       - 'safe_files.py'
       - 'app_settings.py'
       - 'web_export*.py'
@@ -26,6 +27,7 @@ on:
       - 'packaging/windows/**'
       - 'scripts/smoke_windows_installer.py'
       - 'scripts/smoke_windows_local_page.py'
+      - 'scripts/package_release.py'
       - 'scripts/smoke_player_browser.mjs'
       - 'scripts/make_player_test_media.py'
       - 'tests/browser/**'
@@ -247,26 +249,31 @@ jobs:
         echo "=== 壓縮後最終 DMG 檔案清單與大小 ==="
         ls -lh "dist/VideoToSubtitle.dmg"
 
+    - name: 整理版本、平台與架構檔名（免安裝版為 ZIP）
+      run: python scripts/package_release.py --dist dist
+
     - name: 上傳 Windows 成品 (Artifact)
       if: matrix.os == 'windows-latest'
       uses: actions/upload-artifact@v4
       with:
         name: VideoToSubtitle-Windows
-        path: dist/VideoToSubtitle.exe  # Windows 產出的單一執行檔
+        path: dist/release/VideoToSubtitle_v*_Windows_x64_Portable.zip
+        if-no-files-found: error
 
     - name: 上傳 Mac 成品 (Artifact)
       if: matrix.os == 'macos-latest'
       uses: actions/upload-artifact@v4
       with:
         name: VideoToSubtitle-Mac
-        path: dist/VideoToSubtitle.dmg  # Mac 產出的 DMG 安裝檔
+        path: dist/release/VideoToSubtitle_v*_macOS_arm64.dmg
+        if-no-files-found: error
 
     - name: 上傳 Windows 安裝成品 (Artifact)
       if: matrix.os == 'windows-latest'
       uses: actions/upload-artifact@v4
       with:
         name: VideoToSubtitle-Windows-Setup
-        path: dist/installer/VideoToSubtitle-Setup-v*.exe
+        path: dist/release/VideoToSubtitle_v*_Windows_x64_Setup.exe
         if-no-files-found: error
 
   release:
@@ -304,11 +311,6 @@ jobs:
           name: VideoToSubtitle-Windows-Setup
           path: output-windows-setup
 
-      - name: 建立最新版固定檔名安裝包
-        env:
-          RELEASE_VERSION: ${{ steps.get_version.outputs.version }}
-        run: cp "output-windows-setup/VideoToSubtitle-Setup-v${RELEASE_VERSION}.exe" output-windows-setup/VideoToSubtitle-Setup.exe
-
       - name: 建立 Github Release 並上傳檔案
         uses: softprops/action-gh-release@v2
         with:
@@ -321,9 +323,8 @@ jobs:
           fail_on_unmatched_files: true
           body_path: docs/releases/v${{ steps.get_version.outputs.version }}.md
           files: |
-            output-windows/VideoToSubtitle.exe
-            output-windows-setup/VideoToSubtitle-Setup-v${{ steps.get_version.outputs.version }}.exe
-            output-windows-setup/VideoToSubtitle-Setup.exe
-            output-mac/VideoToSubtitle.dmg
+            output-windows/VideoToSubtitle_v${{ steps.get_version.outputs.version }}_Windows_x64_Portable.zip
+            output-windows-setup/VideoToSubtitle_v${{ steps.get_version.outputs.version }}_Windows_x64_Setup.exe
+            output-mac/VideoToSubtitle_v${{ steps.get_version.outputs.version }}_macOS_arm64.dmg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

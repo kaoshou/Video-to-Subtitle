@@ -34,6 +34,7 @@ from transcriber import (
 # Import EverCam subtitle player integration
 import evercam_integration as evercam
 import opencam_integration as opencam
+from media_inputs import collect_media_inputs
 from opencam_dialog import OpenCamSubtitleDialog
 
 # 啟動時確保系統環境變數 PATH 包含 FFmpeg 常用路徑 (特別是 macOS Homebrew /opt/homebrew/bin)
@@ -167,7 +168,7 @@ def get_version():
     except Exception as e:
         print(f"DEBUG: Failed to load version from pyproject.toml: {e}")
     
-    return "2.9.0" # Fallback
+    return "2.9.1" # Fallback
 
 # --- 設定外觀 ---
 ctk.set_appearance_mode("System")  # Modes: "System" (standard), "Dark", "Light"
@@ -2982,69 +2983,19 @@ class App(BaseClass):
             return
 
         valid_files_added = 0
-        invalid_files = []
-        evercam_detected_count = 0
-
-        for f in paths:
-            # 去除可能的引號與多餘空白
-            f = f.strip().strip('"').strip("'")
-            if not os.path.exists(f):
+        media, invalid_files = collect_media_inputs(paths, SUPPORTED_EXTENSIONS)
+        existing = {os.path.normcase(os.path.abspath(path)) for path in self.file_list}
+        for f in media:
+            identity = os.path.normcase(os.path.abspath(f))
+            if identity in existing:
                 continue
-
-            is_oc, oc_folder = opencam.detect_opencam_project(f)
-            if is_oc:
-                video = os.path.join(oc_folder, 'media.mp4')
-                if video not in self.file_list:
-                    self.file_list.append(video)
-                    valid_files_added += 1
-                    self.log(f"💡 偵測並載入 OpenCam 網頁播放器: {os.path.basename(oc_folder)}")
-                continue
-
-            # 情況 1：若選取或拖入的是資料夾，且屬於 EverCam 課程專案，自動找出媒體檔案並載入
-            if os.path.isdir(f) and evercam.is_evercam_folder(f):
-                ec_found = False
-                for item in sorted(os.listdir(f)):
-                    sub_f = os.path.join(f, item)
-                    sub_ext = os.path.splitext(item)[1].lower()
-                    if sub_ext in SUPPORTED_EXTENSIONS and sub_f not in self.file_list:
-                        self.file_list.append(sub_f)
-                        valid_files_added += 1
-                        ec_found = True
-                if ec_found:
-                    evercam_detected_count += 1
-                    self.log(f"💡 偵測並載入 EverCam 數位課程專案: {os.path.basename(f)}")
-                continue
-
-            # 情況 2：若選取的是 EverCam 專案目錄下的設定檔或標誌檔案 (如 config.js 或 index.html)
-            if os.path.isfile(f) and os.path.basename(f).lower() in ("config.js", "index.html"):
-                p_dir = os.path.dirname(f)
-                if evercam.is_evercam_folder(p_dir):
-                    ec_found = False
-                    for item in sorted(os.listdir(p_dir)):
-                        sub_f = os.path.join(p_dir, item)
-                        sub_ext = os.path.splitext(item)[1].lower()
-                        if sub_ext in SUPPORTED_EXTENSIONS and sub_f not in self.file_list:
-                            self.file_list.append(sub_f)
-                            valid_files_added += 1
-                            ec_found = True
-                    if ec_found:
-                        evercam_detected_count += 1
-                        self.log(f"💡 偵測並載入 EverCam 數位課程專案: {os.path.basename(p_dir)}")
-                    continue
-
-            # 情況 3：驗證副檔名是否為支援的影音檔案
-            _, ext = os.path.splitext(f)
-            if ext.lower() in SUPPORTED_EXTENSIONS:
-                if f not in self.file_list:
-                    self.file_list.append(f)
-                    valid_files_added += 1
-                    # 檢查是否屬於 EverCam 課程媒體 (支援透過父目錄特徵溯源檢測)
-                    is_ec, _ = evercam.detect_evercam_project(f)
-                    if is_ec:
-                        evercam_detected_count += 1
-                        self.log(f"💡 偵測到 EverCam 課程媒體: {os.path.basename(f)}")
-            else:
-                invalid_files.append(os.path.basename(f))
+            existing.add(identity)
+            self.file_list.append(f)
+            valid_files_added += 1
+            if opencam.detect_opencam_project(f)[0]:
+                self.log(f"💡 偵測並載入 OpenCam 網頁播放器: {os.path.basename(os.path.dirname(f))}")
+            elif evercam.detect_evercam_project(f)[0]:
+                self.log(f"💡 偵測到 EverCam 課程媒體: {os.path.basename(f)}")
 
         self.update_file_list_ui()
 
@@ -3096,6 +3047,7 @@ class App(BaseClass):
         self.file_remove_buttons = {}
         self.file_name_labels = {}
         self.file_path_labels = {}
+        self.file_project_badges = {}
         if not self.file_list:
             label = ctk.CTkLabel(self.file_rows, text='將影片或音訊拖曳到這裡\n或按右側「加入檔案」開始。',
                                  text_color=MUTED, anchor='w', justify='left', font=ui_font(size=13))
@@ -3117,6 +3069,16 @@ class App(BaseClass):
                                     command=lambda selected=path: self.remove_file(selected),
                                     state='disabled' if self.is_running else 'normal', **secondary_button_style())
             remove.grid(row=0, column=1, rowspan=2, padx=(2, 10), pady=8)
+            # A separate compact line keeps long filenames from squeezing
+            # either the badge or the remove action in narrow windows.
+            project = 'OpenCam' if opencam.detect_opencam_project(path)[0] else (
+                'EverCam' if evercam.detect_evercam_project(path)[0] else None)
+            if project:
+                badge = ctk.CTkLabel(row, text=project, height=20, corner_radius=5,
+                                     fg_color=('#e5f2ee', '#203c36'), text_color=('#245f4f', '#a5d9c6'),
+                                     font=ui_font(size=11, weight='bold'))
+                badge.grid(row=2, column=0, sticky='w', padx=10, pady=(0, 5), ipadx=6)
+                self.file_project_badges[path] = badge
             self.file_remove_buttons[path] = remove
             self.file_name_labels[path] = name
             self.file_path_labels[path] = location

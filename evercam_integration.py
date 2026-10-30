@@ -42,7 +42,7 @@ def is_evercam_folder(folder_path):
     # 檢查是否含有 media.mp4 或其他影音檔
     for item in os.listdir(folder_path):
         ext = os.path.splitext(item)[1].lower()
-        if ext in SUPPORTED_VIDEO_EXTENSIONS:
+        if ext in SUPPORTED_VIDEO_EXTENSIONS and os.path.isfile(os.path.join(folder_path, item)):
             return True
             
     return False

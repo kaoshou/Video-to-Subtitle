@@ -8,9 +8,13 @@
 
 | Windows 免安裝版 | Windows 安裝版 | macOS |
 | --- | --- | --- |
-| [下載 EXE](https://github.com/kaoshou/Video-to-Subtitle/releases/latest/download/VideoToSubtitle.exe) | [下載安裝程式](https://github.com/kaoshou/Video-to-Subtitle/releases/latest/download/VideoToSubtitle-Setup.exe) | [下載 DMG](https://github.com/kaoshou/Video-to-Subtitle/releases/latest/download/VideoToSubtitle.dmg) |
+| [下載 ZIP](https://github.com/kaoshou/Video-to-Subtitle/releases/latest) | [下載安裝程式](https://github.com/kaoshou/Video-to-Subtitle/releases/latest) | [下載 DMG](https://github.com/kaoshou/Video-to-Subtitle/releases/latest) |
 
 Windows 安裝版將執行環境在安裝時一次展開，通常比每次需要解壓的免安裝版啟動快；兩者的字幕計算方式相同。正式發行版不需另裝 Python 或 FFmpeg；首次使用某個模型仍需下載。
+
+免安裝版下載後先解壓 ZIP，再執行內部的 `VideoToSubtitle.exe`。檔名會標示版本、平台與架構，Windows 安裝程式只提供一份。上方連結皆前往最新正式 Release；[官網下載按鈕](https://kaoshou.github.io/Video-to-Subtitle/)會自動對應最新成品。
+
+**v2.9.1**：一般 MP4 網頁播放器預設顯示右側逐字稿，沿用 EverCam 的搜尋、閱讀設定與鍵盤導覽；待處理清單新增 EverCam／OpenCam 徽章，並修正 MP4 命名資料夾的辨識。[本次更新說明](docs/releases/v2.9.1.md)
 
 1. 加入或拖入影片／音訊，選擇已下載的模型。
 2. 選運算單元與 SRT；中文課程可勾選「強制繁體中文」。
@@ -32,7 +36,7 @@ CPU／CUDA 預設啟用「批次加速（試用）」：先以 VAD 找出同一�
 
 ![批次加速處理流程](docs/images/batch-flow.svg)
 
-[批次大小與效能調整](docs/USER_GUIDE.zh-TW.md#批次加速試用) ｜ [本次更新說明](docs/releases/v2.9.0.md)
+[批次大小與效能調整](docs/USER_GUIDE.zh-TW.md#批次加速試用) ｜ [效能更新說明](docs/releases/v2.9.0.md)
 
 ## 校對更有方向，也保留你的修改
 
@@ -55,7 +59,7 @@ CPU／CUDA 預設啟用「批次加速（試用）」：先以 VAD 找出同一�
 | 使用情境 | 提供的功能 |
 | --- | --- |
 | 一般影片／音訊 | SRT、VTT、TXT、TSV、JSON；多檔案依序轉錄；前導提示、熱詞及繁體中文後處理。 |
-| 一般 MP4＋字幕 | 自動配對同檔名及語系字幕，另存含影片與 `index.html` 的網頁資料夾。 |
+| 一般 MP4＋字幕 | 自動配對同檔名及語系字幕，另存含影片與 `index.html` 的網頁資料夾；右側直接顯示可搜尋的逐字稿。 |
 | EverCam 課程 | 保留原首頁備份，轉換為支援章節、多語字幕與逐字稿搜尋的播放器。 |
 | OpenCam 網頁 | 備份後置入字幕資料，保留原播放器、章節及其他語系字幕。 |
 | 網頁閱讀與輔助操作 | 逐字稿搜尋、點擊跳轉、跟隨播放、字級／對比設定、鍵盤導覽與 HTML／TXT 閱讀版下載。 |

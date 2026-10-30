@@ -15,6 +15,7 @@ export function renderLayout({ title, description, page, body }) {
 <title>${escapeHtml(title)} · Video to Subtitle</title><meta name="description" content="${escapeHtml(description)}">
 <link rel="canonical" href="https://kaoshou.github.io${routeFor(page)}"><link rel="icon" href="${assetPath('app_icon.png')}"><link rel="stylesheet" href="${assetPath('site.css')}">
 <script src="${assetPath('lightbox.js')}" defer></script>
+<script src="${assetPath('downloads.js')}" defer></script>
 </head><body><a class="skip-link" href="#main">跳至主要內容</a>
 <header class="site-header"><nav class="nav-wrap" aria-label="主要導覽"><a class="brand" href="${home}"><img src="${assetPath('app_icon.png')}" alt="Video to Subtitle 圖示" width="34" height="34">Video to Subtitle</a><div class="nav-links"><a href="${home}"${current('home')}>首頁</a><a href="${guide}"${current('guide')}>完整手冊</a><a href="https://github.com/kaoshou/Video-to-Subtitle">GitHub</a><a class="nav-download" href="https://github.com/kaoshou/Video-to-Subtitle/releases/latest">下載</a></div></nav></header>
 <main id="main" tabindex="-1">${body}</main>

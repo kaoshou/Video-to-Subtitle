@@ -338,8 +338,8 @@
             description.hidden = !description.textContent;
         }
         if (standalone) {
-            document.body.classList.add("standalone-player");
-            chapterCard.hidden = true;
+            document.body.classList.add("standalone-player", "standalone-transcript-open");
+            chapterCard.hidden = false;
             chapterCard.setAttribute("aria-label", "逐字稿");
         }
         setCourseDurationMetadata(duration);
@@ -956,7 +956,6 @@
             });
         });
         activateReadingTab(standalone ? "transcript" : "chapters");
-        if (standalone) { transcriptPanel.hidden = true; }
     }
 
     function searchTranscript() {

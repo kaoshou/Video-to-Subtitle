@@ -1600,7 +1600,8 @@ body[data-reading-contrast="high"] .keyboard-hints { color: var(--muted); }
         transition-duration: 0.01ms !important;
     }
 }
-/* Standalone exports share controls, but do not reserve an empty chapter column. */
+/* Standalone exports open with the same reading sidebar, without a chapter tab.
+   The one-column layout is reserved for an explicit viewer collapse. */
 .standalone-player .learning-layout {
     grid-template-columns: minmax(0, 1fr);
     max-width: 1200px;

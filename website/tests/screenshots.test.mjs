@@ -8,7 +8,12 @@ test('published screenshots identify their actual capture version and platform',
   const capture = JSON.parse(await readFile(new URL('docs/screenshots.json', root), 'utf8'));
   const version = capture.version;
   const project = await readFile(new URL('pyproject.toml', root), 'utf8');
-  assert.match(project, new RegExp('version = "' + version.replaceAll('.', '\\.') + '"'));
+  const current=project.match(/^version = "(\d+\.\d+\.\d+)"/m)?.[1];
+  const [major,minor,patch]=version.split('.').map(Number);
+  const [currentMajor,currentMinor,currentPatch]=current.split('.').map(Number);
+  assert.ok(major<currentMajor || (major===currentMajor &&
+    (minor<currentMinor || (minor===currentMinor && patch<=currentPatch))),
+    'Captures may retain their genuine older version, but never claim an unreleased future version');
   const readme = await readFile(new URL('README.md', root), 'utf8');
   const { renderHome } = await import('../src/content.mjs');
   assert.ok(readme.includes(`截圖均擷取自 **v${version}**`));

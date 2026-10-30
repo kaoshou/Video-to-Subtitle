@@ -58,7 +58,9 @@ function setFollowing(w, checked) {
 }
 
 function showTranscript(w, standalone) {
-  w.document.querySelector(standalone ? '#transcript-toggle' : '#transcript-tab').click();
+  if (w.document.querySelector('#transcript-panel').hidden) {
+    w.document.querySelector(standalone ? '#transcript-toggle' : '#transcript-tab').click();
+  }
 }
 
 function changeValue(w, selector, value) {
@@ -430,6 +432,7 @@ test('hidden transcript never scrolls or opens itself; reopening follows the cur
                          {standalone,subtitles:searchable});
     t.after(()=>dom.window.close());
     const list=transcriptViewport(w); setFollowing(w,true);
+    if (standalone) w.document.querySelector('#transcript-toggle').click();
     const video=w.document.querySelector('video');
     video.currentTime=30.5; video.dispatchEvent(new w.Event('timeupdate'));
     assert.equal(w.document.querySelector('#transcript-panel').hidden,true);
@@ -522,10 +525,10 @@ test('viewport shrink and orientation changes keep the same current cue visible'
   assert.equal(video.currentTime,30.5);
 });
 
-test('standalone metadata is text, chapter card is hidden', () => {
+test('standalone metadata is text and transcript sidebar is visible without chapters', () => {
   const {dom,w} = player({mode:'standalone', packageId:'a', title:'<script>title</script>', organization:'單位', description:'第一行\n<em>原文</em>', defaultSubtitle:'en'});
   assert.equal(w.document.title,'<script>title</script>');
-  assert.equal(w.document.querySelector('.chapter-card').hidden,true);
+  assert.equal(w.document.querySelector('.chapter-card').hidden,false);
   assert.equal(w.document.querySelector('#course-title').children.length,0);
   assert.equal(w.document.querySelector('#course-description').textContent,'第一行\n<em>原文</em>');
   assert.equal(w.document.querySelector('#course-author').hidden,true);
@@ -642,20 +645,18 @@ test('large transcripts have bounded initial results with more results available
   dom.window.close();
 });
 
-test('standalone player hides transcript sidebar initially and retains searches when reopened', () => {
+test('standalone player shows transcript sidebar initially and retains searches when reopened', () => {
   for (const standalone of [true]) {
     const {dom,w}=player({mode:standalone?'standalone':undefined,title:'course',defaultSubtitle:'zh-TW'}, {standalone,subtitles:searchable});
     const toggle=w.document.querySelector('#transcript-toggle');
     const panel=w.document.querySelector('#transcript-panel');
     assert.ok(toggle, 'viewer can expand the transcript with a button');
-    assert.equal(panel.hidden,true);
-    assert.equal(toggle.getAttribute('aria-expanded'),'false');
-    toggle.click();
     assert.equal(panel.hidden,false);
     assert.equal(w.document.querySelector('.chapter-card').hidden,false);
+    assert.equal(w.document.body.classList.contains('standalone-transcript-open'),true);
     assert.equal(toggle.getAttribute('aria-expanded'),'true');
     const input=w.document.querySelector('#transcript-search');
-    assert.equal(w.document.activeElement,input);
+    assert.notEqual(w.document.activeElement,input,'Loading the page must not steal keyboard focus');
     input.value='索引'; input.dispatchEvent(new w.Event('input'));
     toggle.click();
     assert.equal(panel.hidden,true);
@@ -701,10 +702,19 @@ test('standalone reading sidebar offers transcript only, without empty chapters'
   const chapters=w.document.querySelector('#chapters-tab');
   assert.ok(chapters);
   assert.equal(chapters.hidden,true);
-  w.document.querySelector('#transcript-toggle').click();
   assert.equal(w.document.querySelector('#transcript-tab').getAttribute('aria-selected'),'true');
   assert.equal(w.document.querySelector('#chapters-panel').hidden,true);
   assert.equal(w.document.querySelector('#transcript-panel').hidden,false);
   assert.equal(w.document.querySelector('.chapter-card').hidden,false);
   dom.window.close();
+});
+
+test('standalone empty subtitles show an explanation rather than an empty right column', t => {
+  const {dom,w}=player({mode:'standalone'}, {subtitles:{tracks:[]}});
+  t.after(()=>dom.window.close());
+  const doc=w.document;
+  assert.equal(doc.querySelector('.chapter-card').hidden,false);
+  assert.equal(doc.querySelector('#transcript-panel').hidden,false);
+  assert.equal(doc.querySelector('#transcript-search').disabled,true);
+  assert.ok(doc.querySelector('#transcript-status').textContent.trim());
 });
