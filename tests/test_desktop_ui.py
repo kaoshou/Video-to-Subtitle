@@ -382,6 +382,73 @@ class DesktopUI(unittest.TestCase):
         self.assertEqual(launched, [str(page)])
         self.assertFalse(self.errors, repr(self.errors))
 
+    def test_mp4_completion_exports_inline_without_another_window_or_question(self):
+        from unittest.mock import patch
+        from test_web_export_inputs import make_video
+        import SubtitleTranscriber as desktop
+        app = self.main_app()
+        root = Path(self.temp.name)
+        video = root / '教學.mp4'
+        make_video(video)
+        subtitle = root / '教學.srt'
+        subtitle.write_text('1\n00:00:00,000 --> 00:00:00,900\n你好\n', encoding='utf-8')
+        app.show_completion_dialog(1, [str(subtitle)], {str(subtitle): str(video)}, 'zh-TW')
+        app.update()
+        completion = next(w for w in app.winfo_children() if isinstance(w, self.ctk.CTkToplevel)
+                          and w.title() == '轉錄任務完成')
+        # Reproduce the Windows modal input grab even when run on macOS.
+        completion.grab_set()
+        button = next(w for w in self.widgets(completion) if isinstance(w, self.ctk.CTkButton)
+                      and w.cget('text') == '匯出字幕網頁')
+        def unexpected(*args, **kwargs):
+            raise AssertionError('one-click export must not open another dialog')
+        with patch.object(desktop, 'WebExportDialog', side_effect=unexpected), \
+                patch.object(desktop.messagebox, 'askyesno', side_effect=unexpected), \
+                patch.object(desktop.messagebox, 'showinfo', side_effect=unexpected):
+            button.invoke()
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline and button.cget('text') != '開啟網頁':
+                app.update(); time.sleep(.02)
+        self.assertTrue((root / '教學-web/index.html').is_file())
+        self.assertEqual(button.cget('text'), '開啟網頁')
+        self.assertEqual(button.cget('state'), 'normal')
+        self.assertIs(app.grab_current(), completion)
+        self.assertFalse(self.errors, repr(self.errors))
+
+    def test_mp4_completion_export_error_stays_inline_and_can_retry(self):
+        from test_web_export_inputs import make_video
+        app = self.main_app()
+        root = Path(self.temp.name)
+        video = root / '重試.mp4'
+        make_video(video)
+        subtitle = root / '重試.srt'
+        subtitle.write_text('broken', encoding='utf-8')
+        app.show_completion_dialog(1, [str(subtitle)], {str(subtitle): str(video)}, 'zh-TW')
+        app.update()
+        completion = next(w for w in app.winfo_children() if isinstance(w, self.ctk.CTkToplevel)
+                          and w.title() == '轉錄任務完成')
+        button = next(w for w in self.widgets(completion) if isinstance(w, self.ctk.CTkButton)
+                      and w.cget('text') == '匯出字幕網頁')
+        button.invoke()
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and button.cget('state') == 'disabled':
+            app.update(); time.sleep(.02)
+        self.assertEqual(button.cget('text'), '重試匯出')
+        self.assertTrue(any('未完成：' in w.cget('text') for w in self.widgets(completion)
+                            if isinstance(w, self.ctk.CTkLabel)))
+        self.assertFalse((root / '重試-web').exists())
+        subtitle.write_text('1\n00:00:00,000 --> 00:00:00,900\n成功\n', encoding='utf-8')
+        button.invoke()
+        self.assertEqual(button.cget('state'), 'disabled')
+        button.invoke()  # Rapid repeat clicks must not start a second export.
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and button.cget('state') == 'disabled':
+            app.update(); time.sleep(.02)
+        self.assertEqual(button.cget('text'), '開啟網頁')
+        self.assertTrue((root / '重試-web/index.html').is_file())
+        self.assertFalse((root / '重試-web-2').exists())
+        self.assertFalse(self.errors, repr(self.errors))
+
     def test_opencam_homepage_and_completion_button_open_prefilled_ui(self):
         import test_opencam_integration as fixtures
         from unittest.mock import patch

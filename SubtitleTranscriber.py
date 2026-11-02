@@ -11,7 +11,7 @@ import time
 import json
 from functools import lru_cache
 from pathlib import Path
-from web_export_dialog import WebExportDialog, completion_video
+from web_export_dialog import WebExportDialog, completion_video, ExportJob, export_completed_video
 from web_export_model import SubtitleSource
 from safe_files import atomic_write_text
 from app_settings import resolve_settings_path, read_settings, write_settings
@@ -168,7 +168,7 @@ def get_version():
     except Exception as e:
         print(f"DEBUG: Failed to load version from pyproject.toml: {e}")
     
-    return "2.9.1" # Fallback
+    return "2.9.2" # Fallback
 
 # --- 設定外觀 ---
 ctk.set_appearance_mode("System")  # Modes: "System" (standard), "Dark", "Light"
@@ -4922,6 +4922,46 @@ class App(BaseClass):
         ctk.CTkButton(choice, text='OpenCam 置入字幕', height=36, width=250, command=lambda: open_mode('opencam')).pack(pady=8)
         center_and_smooth_show(choice, self, 360, 280)
 
+    def export_completion_web(self, dialog, video, subtitle, language, button, status):
+        """Keep progress/results in the modal list instead of opening a blocked sibling."""
+        if button.cget('state') == 'disabled':
+            return
+        button.configure(state='disabled', text='正在建立…')
+        status.configure(text='正在建立網頁，原始影片與字幕不會被修改。', text_color=MUTED)
+        status.grid()
+        version = get_version()
+        job = ExportJob(lambda progress, cancelled: export_completed_video(
+            video, subtitle, language, app_version=version, progress=progress, cancelled=cancelled))
+
+        def poll():
+            visible = dialog.winfo_exists()
+            if not visible:
+                job.cancel()
+            try:
+                kind, result = job.events.get_nowait()
+            except queue.Empty:
+                if visible:
+                    done, total = job.progress
+                    status.configure(text=f'正在建立網頁… {done / total:.0%}（可關閉清單取消）')
+                self.after(80, poll)
+                return
+            if kind == 'success':
+                self.log(f'✅ 字幕網頁已建立：{result.folder}')
+                if visible:
+                    status.configure(text=f'已建立：{result.folder}', text_color=MUTED)
+                    button.configure(state='normal', text='開啟網頁',
+                        command=lambda: open_local_page(result.index_path, parent=dialog))
+            else:
+                details = str(result)
+                if hasattr(result, 'staging_path'):
+                    details += f'\n保留的暫存：{result.staging_path}'
+                self.log(f'❌ 字幕網頁未建立：{details}')
+                if visible:
+                    status.configure(text=f'未完成：{details}', text_color=('#B42318', '#FF9B91'))
+                    button.configure(state='normal', text='重試匯出')
+
+        self.after(80, poll)
+
     def show_completion_dialog(self, count, files, sources=None, subtitle_language=''):
         sources = sources or {}
         self.last_completed_files = list(files) if files else []
@@ -5202,12 +5242,17 @@ class App(BaseClass):
                             fld, (SubtitleSource(Path(s), subtitle_language),))
                     ).pack(side='left', padx=2)
                 else:
-                    ctk.CTkButton(
+                    export_status = ctk.CTkLabel(row_frame, text='', anchor='w', justify='left',
+                        font=ui_font(size=12), wraplength=680)
+                    export_status.grid(row=1, column=0, columnspan=2, sticky='ew', padx=12, pady=(0, 6))
+                    wrap_to_width(export_status)
+                    export_status.grid_remove()
+                    export_button = ctk.CTkButton(
                         btn_group, text='匯出字幕網頁', width=96, height=26,
-                        command=lambda v=source_video, s=f_path: WebExportDialog(
-                            self, app_version=get_version(), video=v,
-                            subtitles=(SubtitleSource(Path(s), subtitle_language),))
-                    ).pack(side='left', padx=2)
+                    )
+                    export_button.configure(command=lambda v=source_video, s=f_path, b=export_button, t=export_status:
+                        self.export_completion_web(dialog, v, s, subtitle_language, b, t))
+                    export_button.pack(side='left', padx=2)
 
             # 按鈕 4 (若為 EverCam 專案)：EverCam網頁轉換 (質感翡翠綠特色按鈕)
             if is_ec_row:

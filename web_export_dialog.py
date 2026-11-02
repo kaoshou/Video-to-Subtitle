@@ -23,6 +23,26 @@ def completion_video(subtitle, sources):
     return video if video.suffix.lower() == '.mp4' and video.is_file() and subtitle.is_file() else None
 
 
+def export_completed_video(video, subtitle, language, *, app_version, progress, cancelled):
+    """Export beside the source without UI; retain the safe writer's checks.
+
+    The newly generated track wins over older same-language neighbours.
+    Compatibility/timing warnings do not prompt or change media/timestamps.
+    Invalid inputs and unsafe filesystem paths still abort the export.
+    """
+    video, subtitle = Path(video).absolute(), Path(subtitle).absolute()
+    candidates = find_subtitle_candidates(video)
+    language = language or next((t.language for t in candidates if t.path == subtitle), 'und')
+    form = ExportFormState()
+    form.select_video(video)
+    form.add_track(subtitle, language)
+    form.offer_candidates(candidates)
+    request = ExportRequest(video, tuple(SubtitleSource(t.path, t.language) for t in form.tracks),
+        Metadata(form.title.value), form.output_parent, form.folder_name, language)
+    return export_package(request, app_version=app_version, progress=progress,
+                          cancelled=cancelled, accept_warnings=True)
+
+
 class ExportJob:
     def __init__(self, operation):
         self.events = queue.Queue()

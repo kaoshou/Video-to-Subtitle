@@ -8,11 +8,11 @@ Video to Subtitle 是以 faster-whisper（Windows／一般 CPU 與 CUDA）及 ml
 
 請只從 [GitHub Releases](https://github.com/kaoshou/Video-to-Subtitle/releases/latest) 下載最新版，或使用[官網下載按鈕](https://kaoshou.github.io/Video-to-Subtitle/)自動尋找最新版成品。自 v2.9.1 起，每版只提供下列三種檔案（檔名中的版本號隨更新變動）：
 
-| 平台 | v2.9.1 檔名 | 如何使用 |
+| 平台 | v2.9.2 檔名 | 如何使用 |
 | --- | --- | --- |
-| Windows x64 免安裝 | `VideoToSubtitle_v2.9.1_Windows_x64_Portable.zip` | 解壓後執行內部的 `VideoToSubtitle.exe`。 |
-| Windows x64 安裝版 | `VideoToSubtitle_v2.9.1_Windows_x64_Setup.exe` | 開啟安裝精靈，不需預裝執行環境。 |
-| macOS Apple Silicon | `VideoToSubtitle_v2.9.1_macOS_arm64.dmg` | 開啟後拖入「應用程式」。 |
+| Windows x64 免安裝 | `VideoToSubtitle_v2.9.2_Windows_x64_Portable.zip` | 解壓後執行內部的 `VideoToSubtitle.exe`。 |
+| Windows x64 安裝版 | `VideoToSubtitle_v2.9.2_Windows_x64_Setup.exe` | 開啟安裝精靈，不需預裝執行環境。 |
+| macOS Apple Silicon | `VideoToSubtitle_v2.9.2_macOS_arm64.dmg` | 開啟後拖入「應用程式」。 |
 
 第一次使用某個 Whisper 模型時需要網路連線。模型下載完成後，一般轉錄、字幕校對及 EverCam 轉換均可在本機執行。模型需要約 75 MB 至 3.1 GB，請預留比模型標示大小更多的暫存與解壓縮空間。
 
@@ -388,6 +388,12 @@ Windows 直接以新版 EXE 取代舊檔；macOS 重新掛載新版 DMG，將 Ap
 ## 一般 MP4＋字幕匯出網頁
 
 不需要 EverCam 專案，也不必重新轉錄。
+
+**剛轉錄完成：**在結果清單按「匯出字幕網頁」，會直接在影片所在位置建立 `影片名稱-web` 資料夾，放入 `index.html`、`media.mp4`、字幕及播放器資源，不再開啟設定或詢問視窗。已存在同名資料夾時，自動使用 `-web-2`、`-web-3` 等名稱，不覆寫舊結果。進度、完成路徑及錯誤均顯示在原清單；完成後按「開啟網頁」。建立期間關閉清單可取消作業。
+
+此快捷匯出優先使用本次產生的字幕，也會加入同資料夾內可自動配對的其他語系。相容性或字幕超出影片長度的提醒不另行詢問，影片與字幕時間軸均保持原樣；無效字幕、權限與安全檢查失敗仍會中止，並提供重試。
+
+**需要自訂標題、儲存位置或其他參數：**從首頁開啟完整設定介面：
 
 1. 按「網頁播放器」→「一般影片＋字幕」。
 2. 按「選擇 MP4 影片」。程式自動讀取**同資料夾**內同檔名或加語系碼的 UTF-8 SRT／VTT 字幕，主畫面只顯示已讀入的字幕摘要，不必逐一加入或選語言。
