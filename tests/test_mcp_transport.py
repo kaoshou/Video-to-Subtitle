@@ -1,5 +1,6 @@
 """Real broker/bridge contracts; no models, user state or host configuration."""
 import importlib.util
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -11,11 +12,204 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 
 from mcp_state import State
 
 ROOT = Path(__file__).resolve().parents[1]
 SDK = importlib.util.find_spec('mcp') is not None
+
+
+class _NativePipeContract:
+    """Windows API boundary model: first-instance exclusivity and hard capacity.
+
+    Runs the real descriptor/creation/listener code; only OS calls and the native
+    Connection wrapper are replaced. Handles remain live until explicitly closed.
+    """
+    ERROR_NO_DATA, ERROR_BROKEN_PIPE = 232, 109
+
+    def __init__(self):
+        from types import SimpleNamespace
+        self.live, self.pending = set(), {}
+        self.next_id, self.last_error = 100, 0
+        self.connect_error = None
+        self.namespace_gaps = 0
+        self.limit = None
+        self.sids = []
+        self.kernel = SimpleNamespace()
+        self.adv = SimpleNamespace()
+        # Plain functions accept the ctypes signature attributes production sets.
+        def bind(target, name, function):
+            setattr(target, name, lambda *args: function(*args))
+        bind(self.kernel, 'GetCurrentProcess', lambda: 1)
+        bind(self.kernel, 'CloseHandle', self.CloseHandle)
+        bind(self.kernel, 'LocalFree', lambda pointer: None)
+        bind(self.kernel, 'CreateNamedPipeW', self.create_pipe)
+        bind(self.adv, 'OpenProcessToken', self.open_token)
+        bind(self.adv, 'GetTokenInformation', self.token_information)
+        bind(self.adv, 'ConvertSidToStringSidW', self.sid_string)
+        bind(self.adv, 'ConvertStringSecurityDescriptorToSecurityDescriptorW', self.descriptor)
+
+    def open_token(self, process, access, output):
+        import ctypes
+        from ctypes import wintypes as w
+        ctypes.cast(output, ctypes.POINTER(w.HANDLE))[0] = 99
+        return True
+
+    def token_information(self, token, kind, buffer, count, size):
+        import ctypes
+        from ctypes import wintypes as w
+        ctypes.cast(size, ctypes.POINTER(w.DWORD))[0] = ctypes.sizeof(ctypes.c_void_p)
+        if buffer is not None:
+            ctypes.c_void_p.from_buffer(buffer).value = 1
+        return buffer is not None
+
+    def sid_string(self, sid, output):
+        import ctypes
+        value = ctypes.c_wchar_p('S-1-5-21-1000')
+        self.sids.append(value)
+        ctypes.cast(output, ctypes.POINTER(ctypes.c_wchar_p))[0] = value
+        return True
+
+    def descriptor(self, text, revision, output, size):
+        import ctypes
+        ctypes.cast(output, ctypes.POINTER(ctypes.c_void_p))[0] = 2
+        return True
+
+    def create_pipe(self, address, flags, mode, limit, *args):
+        import ctypes
+        self.limit = limit
+        if flags & 0x00080000 and self.live:
+            self.last_error = 5  # FIRST_PIPE_INSTANCE cannot coexist with earlier handles
+            return ctypes.c_void_p(-1).value
+        if len(self.live) >= limit:
+            self.last_error = 231  # every instance slot is in use
+            return ctypes.c_void_p(-1).value
+        self.next_id += 1
+        self.live.add(self.next_id)
+        return self.next_id
+
+    def CloseHandle(self, handle):
+        handle = getattr(handle, 'value', handle)
+        if handle in self.live:
+            self.live.remove(handle)
+            if not self.live:
+                self.namespace_gaps += 1
+        return True
+
+    def ConnectNamedPipe(self, handle, *, overlapped):
+        from types import SimpleNamespace
+        if self.connect_error is not None:
+            code, self.connect_error = self.connect_error, None
+            raise self.WinError(code)
+        pending = SimpleNamespace(event=handle, error=0)
+        pending.cancel = lambda: None
+        pending.GetOverlappedResult = lambda wait: (0, pending.error)
+        self.pending[handle] = pending
+        return pending
+
+    def WaitForMultipleObjects(self, events, wait_all, timeout):
+        return 0
+
+    def WinError(self, code):
+        error = OSError(code, 'modeled native pipe error')
+        error.winerror = code
+        return error
+
+    def connection(self, handle):
+        from types import SimpleNamespace
+        return SimpleNamespace(close=lambda: self.CloseHandle(handle), fileno=lambda: handle)
+
+    @contextlib.contextmanager
+    def installed(self):
+        import ctypes
+        import multiprocessing.connection
+        with mock.patch.dict(sys.modules, {'_winapi': self}), \
+                mock.patch.object(ctypes, 'WinDLL', side_effect=lambda name, **kwargs:
+                                  self.kernel if name == 'kernel32' else self.adv, create=True), \
+                mock.patch.object(ctypes, 'get_last_error', side_effect=lambda: self.last_error, create=True), \
+                mock.patch.object(ctypes, 'WinError', side_effect=self.WinError, create=True), \
+                mock.patch.object(multiprocessing.connection, 'PipeConnection', side_effect=self.connection, create=True):
+            yield
+
+
+class WindowsListenerContractTests(unittest.TestCase):
+    def test_early_disconnect_recovery_preserves_existing_channels_and_namespace(self):
+        from mcp_transport import _WindowsListener
+        for stage in ('connect', 'overlapped'):
+            with self.subTest(stage=stage):
+                native = _NativePipeContract()
+                with native.installed():
+                    listener = _WindowsListener('controlled-native-pipe')
+                    channels = []
+                    try:
+                        if stage == 'connect':
+                            native.connect_error = native.ERROR_NO_DATA
+                            channels.append(listener.accept())
+                        else:
+                            channels.append(listener.accept())
+                            native.pending[listener.handle].error = native.ERROR_BROKEN_PIPE
+                            with self.assertRaises(TimeoutError):
+                                listener.accept()
+                        channels.append(listener.accept())
+                        self.assertTrue(all(c.connection.fileno() in native.live for c in channels))
+                        self.assertEqual(native.namespace_gaps, 0)
+                    finally:
+                        for channel in channels:
+                            channel.close()
+                        listener.close()
+                    self.assertEqual(native.live, set())
+
+    def test_recovery_keeps_namespace_when_last_client_closes(self):
+        from mcp_transport import _WindowsListener
+        native = _NativePipeContract()
+        with native.installed():
+            listener = _WindowsListener('controlled-native-pipe')
+            native.connect_error = native.ERROR_NO_DATA
+            channel = listener.accept()
+            try:
+                channel.close()
+                self.assertEqual(native.namespace_gaps, 0)
+                replacement = listener.accept()
+                replacement.close()
+            finally:
+                listener.close()
+            self.assertEqual(native.live, set())
+
+    def test_saturation_can_reject_extra_channel_without_losing_live_work(self):
+        from mcp_transport import _WindowsListener, MAX_CLIENTS
+        native = _NativePipeContract()
+        with native.installed():
+            listener = _WindowsListener('controlled-native-pipe')
+            channels = []
+            try:
+                for _ in range(MAX_CLIENTS):
+                    channels.append(listener.accept())
+                overflow = listener.accept()  # broker rejects only after listener returns
+                overflow.close()
+                self.assertTrue(all(c.connection.fileno() in native.live for c in channels))
+                self.assertIn(listener.handle, native.live)
+                self.assertEqual(native.namespace_gaps, 0)
+                channels.pop().close()
+                channels.append(listener.accept())
+            finally:
+                for channel in channels:
+                    channel.close()
+                listener.close()
+            self.assertEqual(native.live, set())
+
+    def test_first_instance_ownership_failure_is_not_suppressed(self):
+        from mcp_transport import _WindowsListener
+        native = _NativePipeContract()
+        with native.installed():
+            first = _WindowsListener('controlled-native-pipe')
+            try:
+                with self.assertRaises(OSError) as caught:
+                    _WindowsListener('controlled-native-pipe')
+                self.assertEqual(caught.exception.winerror, 5)
+                self.assertIn(first.handle, native.live)
+            finally:
+                first.close()
 
 
 class TransportTests(unittest.TestCase):
@@ -273,6 +467,54 @@ raise SystemExit(app_entry.main(sys.argv[3:]))
             raw = _connect(client.address)
             raw.close()
         self.assertFalse(client.call('get_status', {})['enabled'])
+
+    @unittest.skipUnless(os.name == 'nt', 'native Windows live-instance saturation gate')
+    def test_windows_listener_saturation_and_disconnect_keep_open_channel_usable(self):
+        import secrets
+        from mcp_transport import _WindowsListener, _connect, MAX_CLIENTS
+        address = r'\\.\pipe\vts-capacity-test-' + secrets.token_hex(16)
+        listener = _WindowsListener(address)
+        peers, accepted = [], []
+        try:
+            for _ in range(MAX_CLIENTS):
+                peers.append(_connect(address))
+                accepted.append(listener.accept())
+            overflow_peer = _connect(address)
+            try:
+                overflow = listener.accept()
+                overflow.close()  # same immediate overflow rejection as Broker
+            finally:
+                overflow_peer.close()
+            disconnected = _connect(address)
+            disconnected.close()
+            try:
+                early = listener.accept()
+            except TimeoutError:
+                pass  # native completion can report the early disconnect here
+            else:
+                early.close()
+            # Recovery is exercised while the first sixteen channels stay open.
+            from concurrent.futures import ThreadPoolExecutor
+            def accept_recovered():
+                deadline = time.monotonic() + 5
+                while True:
+                    try:
+                        return listener.accept()
+                    except TimeoutError:
+                        if time.monotonic() >= deadline:
+                            raise
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(accept_recovered)
+                peers.append(_connect(address))
+                accepted.append(future.result(timeout=6))
+            peers[0].send_bytes(b'still-running')
+            self.assertEqual(accepted[0].recv_bytes(), b'still-running')
+            accepted.pop().close()
+            peers.pop().close()
+        finally:
+            for channel in accepted + peers:
+                channel.close()
+            listener.close()
 
     def test_second_broker_does_not_create_service_owner(self):
         from mcp_transport import Broker

@@ -160,8 +160,10 @@ def _private_pipe_handle(address, first):
             f'D:P(A;;GA;;;{sid_text.value})', 1, ctypes.byref(descriptor), None))
         attributes = SA(ctypes.sizeof(SA), descriptor, False)
         flags = 3 | 0x40000000 | (0x00080000 if first else 0)  # DUPLEX, OVERLAPPED, FIRST
+        # At saturation: active handlers + overflow awaiting broker rejection +
+        # replacement listener. Recovery also briefly holds old/new listeners.
         handle = kernel.CreateNamedPipeW(address, flags, 4 | 2 | 8,  # MESSAGE, READMODE, REJECT_REMOTE
-                                         MAX_CLIENTS + 1, 65536, 65536, 0, ctypes.byref(attributes))
+                                         MAX_CLIENTS + 2, 65536, 65536, 0, ctypes.byref(attributes))
         if handle == w.HANDLE(-1).value:
             raise ctypes.WinError(ctypes.get_last_error())
         return handle
@@ -224,34 +226,37 @@ class _WindowsListener:
 
     def _next(self, first=False):
         import _winapi
-        self.handle = _private_pipe_handle(self.address, first)
+        handle = _private_pipe_handle(self.address, first)
         try:
-            self.pending = _winapi.ConnectNamedPipe(self.handle, overlapped=True)
+            pending = _winapi.ConnectNamedPipe(handle, overlapped=True)
         except OSError as error:
-            _winapi.CloseHandle(self.handle)
-            self.handle, self.pending = None, None
             if error.winerror != _winapi.ERROR_NO_DATA:
+                _winapi.CloseHandle(handle)
                 raise
             # A client may disconnect between creation and ConnectNamedPipe.
-            # Leave no pending handle; the accept loop recreates it safely.
+            # Retain this instance as namespace owner until its replacement is
+            # created, even if every previously accepted client also closes.
+            pending = None
         except BaseException:
-            _winapi.CloseHandle(self.handle)
-            self.handle = None
+            _winapi.CloseHandle(handle)
             raise
+        previous = self.handle
+        self.handle, self.pending = handle, pending
+        if previous is not None:
+            _winapi.CloseHandle(previous)
 
     def accept(self):
         import _winapi
         from multiprocessing.connection import PipeConnection
         if self.pending is None:
-            self._next(first=True)
+            self._next()
             if self.pending is None:
                 raise TimeoutError()
         if _winapi.WaitForMultipleObjects([self.pending.event], False, 100) == 258:
             raise TimeoutError()
         _, error = self.pending.GetOverlappedResult(True)
         if error in (_winapi.ERROR_NO_DATA, _winapi.ERROR_BROKEN_PIPE):
-            _winapi.CloseHandle(self.handle)
-            self.handle, self.pending = None, None
+            self.pending = None  # keep namespace ownership during replacement
             raise TimeoutError()
         if error:
             raise OSError(error, 'Pipe connection failed')
