@@ -4,7 +4,7 @@
 
 基準：v2.9.2，commit `050a6683693bfd1900c1e9aebbac5118aba3522d`。
 
-狀態：使用者已同意「獨立背景 MCP、預設關閉、不必先開主視窗」架構。本文件是待使用者確認的設計，不代表已實作、已設定任何 AI 用戶端或已授權發布。
+狀態：使用者已同意本設計並授權開始本機實作；預設關閉、不必先開主視窗。這不代表已設定任何實際 AI 用戶端或已授權發布。
 
 ## 1. 使用者需求與方案選擇
 
@@ -12,7 +12,7 @@
 
 - MCP 是選用功能，使用者決定是否開啟，不影響一般轉錄。
 - 操作簡單；除手動設定，提供功能入口、已安裝 AI 工具偵測及一鍵設定。
-- 涵蓋 Codex 本機用戶端、Claude、Google Antigravity 等工具；不可把不同產品當成同一設定格式。
+- 涵蓋 Codex 本機用戶端、Claude、Google Antigravity、Gemini CLI，以及 Cursor、VS Code／GitHub Copilot、Windsurf、OpenCode 等工具；不可把不同產品當成同一設定格式。未驗證版本提供對應手動設定，不宣稱一鍵連通。
 - 目標工作流：AI 呼叫本機工具轉錄 → AI 翻譯多語 → 回填字幕 → 匯出多語網頁播放器。
 - 採獨立背景模式，使用時不必預先開啟字幕工具主視窗。
 
@@ -24,7 +24,7 @@
 | 主視窗開啟時提供服務 | 背景生命週期較單純 | 忘記開啟即連不上，關閉時中斷使用；不採用 |
 | 公開 HTTP／雲端 MCP | 可服務一般網頁端／遠端用戶端 | 額外暴露、登入與部署需求，不符合首版範圍；延後 |
 
-### 1.3 本文件提出、待確認的預設
+### 1.3 實作預設
 
 - 首版以 Windows x64、macOS arm64 為正式封裝平台，沿用三種 Release 成品名稱規則，不額外增加重複安裝檔。
 - 模型未下載時回報 `MODEL_DOWNLOAD_REQUIRED`；AI 不自行下載或刪除模型。使用者先在原模型管理介面下載。
@@ -85,6 +85,10 @@
 | Claude Desktop | 優先提供由程式產生的本機 `.mcpb` binary extension 安裝流程與必要的使用者確認；手動路線限已驗證版本。不把擴充套件安裝說成無需確認的靜默設定 |
 | Antigravity | 依安裝版本、現有設定及官方 schema 選適配器；新舊路徑不盲目同時寫入。位置不明確時要求手動選取，不猜測成功 |
 | Gemini CLI | 獨立 settings／MCP 管理適配器，不沿用 Antigravity 路徑。不使用略過工具確認的 trust 選項 |
+| Cursor | 獨立 `mcpServers` 設定；區分全域與專案範圍，不變更其他 server 或信任設定 |
+| VS Code／GitHub Copilot | VS Code 的 `servers` 與 Copilot 可攜設定的 `mcpServers` 分開；不能保留 JSONC 註解或無法確認使用者 profile 時提供手動路線 |
+| Windsurf | 偵測已知安裝中繼資料；新舊版本設定未驗證時提供手動路線，不猜測寫入 |
+| OpenCode | 獨立 `mcp`、`type: local` 與 argv 陣列；不能安全保留 JSONC 時只匯出片段 |
 | 其他／未知版本 | 產生命令、參數與 JSON／TOML 片段供手動連接；不對未知 schema 自動寫入 |
 
 「支援設定」和「真實用戶端驗證通過」在文件分開標示。首版必須驗證 Windows／macOS 的 Codex 與 Claude 路線；Antigravity／Gemini 適配器未通過相對應實測版本時，只提供手動匯出，不宣稱已一鍵連通。
@@ -124,14 +128,14 @@
 - 協定 STDOUT 僅 JSON-RPC；診斷進 STDERR／私有記錄。第三方的 print、progress、FFmpeg 輸出不污染協定通道。
 - 使用同一 OS 使用者私有的 IPC，不新增 TCP 監聽埠：POSIX 使用私有 Unix socket 目錄，Windows 使用限制目前使用者 SID 的 named pipe。其他使用者不可連線；同帳戶惡意程式不在隔離保證內。
 - 不把 MCP client name、connection identity、工具 annotation 或請求傳入的路徑當成授權依據。授權由 GUI 所保存的政策及伺服器驗證決定。
-- 原生 GUI 與 MCP 共用跨進程高負載鎖；首版 GUI 原有執行流程可繼續直接呼叫核心，但必須參與同一把鎖。MCP 對忙碌工作排隊；GUI 顯示已有背景任務並提供等待／取消，不擅自搶占。
+- 原生 GUI 與 MCP 共用跨進程高負載鎖；MCP 關閉時保留原行程內核心，啟用後由隔離推論進程執行同一核心並參與同一把鎖。MCP 對忙碌工作排隊；GUI 顯示已有背景任務並提供等待／取消，不擅自搶占。
 
 ### 5.2 按需啟動與模型
 
 - MCP 關閉時，所有入口拒絕工作；GUI 一般啟動不啟動 worker、不掃描用戶端，不變更模型快取。
 - MCP handshake、health、讀取既有逐字稿不載入模型。只有排到的轉錄工作才載入已下載模型。
 - 按實際 CPU／CUDA／MLX 支援重用核心回退規則，不為 MCP 另行放寬品質或繁體檢查。
-- 同一協調器在安全的相同模型／設定下重用模型；一次僅有一份高負載 worker。不同 AI 用戶端不能各自載入同一模型占滿記憶體。
+- 一次僅有一份高負載 worker；模型可在同一 GUI 批次內重用。背景工作及啟用 MCP 後的 GUI 批次採獨立短生命週期推論進程，退出後才釋放共享鎖，避免 MLX 等套件的全域快取殘留造成兩份模型同時占用記憶體。代價是不同工作間須重新載入已下載模型，不重新下載。若 GUI 已使用原本的行程內引擎，啟用前先提示正常重新啟動，不猜測清除第三方快取。
 - 斷開 AI 連線不立即取消已被接受的轉錄；可用工作編號再次查詢。關閉主視窗不取消背景工作。OS 登出／當機／重啟後未完成的轉錄標為 interrupted，重試從該檔案開始，不假稱可從 Whisper 的任意中間狀態續跑。
 - 閒置退出不刪工作、字幕與模型；下次連線讀回工作狀態。
 
@@ -249,7 +253,7 @@
 4. 文件與試用：主程式簡短引導、完整手冊、隱私／資料流、各用戶端設定與故障排除；先試用包，不自動發布正式版。
 5. 後續另行設計：EverCam／OpenCam 原地多語置入、跨課程檢索、校對 patch、人類確認與教材產生範本；遠端 MCP／雲端算力不混入首版。
 
-設計文件核准後再寫執行計畫及測試清單。本次設計不自動升版、不推送、不中途修改任何 AI 用戶端設定；正式 Release 仍需使用者授權。
+依執行計畫逐項實作及驗證。本次不自動升版、不推送、不修改任何日常 AI 用戶端設定；正式 Release 仍需使用者授權。
 
 ## 12. 官方依據與後續確認
 
@@ -258,6 +262,9 @@
 - [OpenAI：MCP、Codex 本機設定與 ChatGPT 網頁範圍](https://learn.chatgpt.com/docs/extend/mcp)
 - [Claude Code：MCP 管理、範圍與信任](https://code.claude.com/docs/en/mcp)
 - [Claude Desktop：本機 MCP／`.mcpb` 擴充套件](https://support.claude.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop)
+- [Cursor：MCP 設定](https://cursor.com/docs/mcp)
+- [VS Code：MCP 設定參考](https://code.visualstudio.com/docs/agents/reference/mcp-configuration)
+- [OpenCode：MCP 伺服器](https://opencode.ai/docs/mcp-servers/)
 - [Google Antigravity：MCP 用戶端及設定](https://antigravity.google/docs/mcp)
 - [Gemini CLI：MCP 設定與管理](https://geminicli.com/docs/tools/mcp-server/)
 - [MCP Python SDK](https://py.sdk.modelcontextprotocol.io/get-started/first-steps/)
