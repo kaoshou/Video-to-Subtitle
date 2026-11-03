@@ -26,6 +26,7 @@ _ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z')
 _OPTIONS = frozenset(('model', 'device', 'cache', 'cache_dir', 'model_cache_dir',
                       'stop_mode', 'backend_command'))
 _RESERVED = re.compile(r'(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?\Z', re.I)
+_STAGING = re.compile(r'\.mcp-[0-9a-f]{32}\Z')
 
 
 class MCPError(Exception):
@@ -297,6 +298,34 @@ def _write_json(directory, name, data):
             _retry_sharing_violation(lambda: os.rmdir(directory._path(staging)))
 
 
+def _record_names(directory):
+    """Return only published names; retain private stages for local recovery.
+
+    Staging can be active or left by a process death. Never open its contents,
+    follow its links, or delete it from a reader. A concurrent publisher may
+    remove an observed staging directory before its metadata is inspected.
+    """
+    names = []
+    for name in directory.names():
+        if _STAGING.fullmatch(name):
+            info = directory.info(name)
+            if info is None:
+                continue
+            if (not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode) or
+                    getattr(info, 'st_file_attributes', 0) & 0x400):
+                raise MCPError('invalid_state', 'Unsafe record staging entry.')
+            if os.name != 'nt' and (info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077):
+                raise MCPError('private_storage', 'Record staging permissions are not private.')
+            continue
+        if not name.endswith('.json'):
+            raise MCPError('invalid_state', 'Unexpected record entry.')
+        _id(name[:-5])
+        names.append(name)
+        if len(names) > MAX_RECORDS:
+            raise MCPError('storage_limit', 'The record namespace is too large.')
+    return names
+
+
 def _validate_options(options):
     if not isinstance(options, dict) or set(options) - _OPTIONS:
         raise MCPError('invalid_policy', 'Unknown or secret-bearing policy option.')
@@ -421,7 +450,7 @@ class State:
 
     def _put(self, kind, id, data):
         encoded = _encode(data, MAX_RECORD_BYTES)
-        with ProcessLock(self.path / 'locks', kind + '-index'):
+        with ProcessLock(self.path / 'locks', 'namespace-' + kind):
             with _private_directory(self.path, create=True) as directory:
                 try:
                     if directory.fd is not None:
@@ -432,7 +461,7 @@ class State:
                     pass
                 with directory.child(kind) as records:
                     _check_private(records)
-                    if records.info(id + '.json') is None and len(records.names()) >= MAX_RECORDS:
+                    if records.info(id + '.json') is None and len(_record_names(records)) >= MAX_RECORDS:
                         raise MCPError('storage_limit', 'The record namespace is full.')
                     _write_json(records, id + '.json', encoded)
 
@@ -440,7 +469,7 @@ class State:
         _kind(kind)
         _id(id)
         _encode(data, MAX_RECORD_BYTES)
-        with _errors('invalid_state'), ProcessLock(self.path / 'locks', kind + '-' + id):
+        with _errors('invalid_state'), ProcessLock(self.path / 'locks', 'record-' + kind + '-' + id):
             self._put(kind, id, data)
 
     @contextlib.contextmanager
@@ -448,7 +477,7 @@ class State:
         """Serialize a whole read-modify-write; exception exits publish nothing."""
         _kind(kind)
         _id(id)
-        with _errors('invalid_state'), ProcessLock(self.path / 'locks', kind + '-' + id):
+        with _errors('invalid_state'), ProcessLock(self.path / 'locks', 'record-' + kind + '-' + id):
             try:
                 data = self.get(kind, id)
             except MCPError as error:
@@ -464,15 +493,10 @@ class State:
             try:
                 with _private_directory(self.path) as directory, directory.child(kind) as records:
                     _check_private(records)
-                    names = records.names()
-                    if len(names) > MAX_RECORDS:
-                        raise MCPError('storage_limit', 'The record namespace is too large.')
+                    names = _record_names(records)
                     result = []
                     total = 0
                     for name in sorted(names):
-                        if not name.endswith('.json'):
-                            raise MCPError('invalid_state', 'Unexpected record entry.')
-                        _id(name[:-5])
                         value = _read_json(records, name, MAX_RECORD_BYTES)
                         total += len(_encode(value, MAX_RECORD_BYTES))
                         if total > 32 * 1024 * 1024:

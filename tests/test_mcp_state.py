@@ -6,6 +6,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -241,6 +242,81 @@ class StateTests(unittest.TestCase):
             output, errors = process.communicate(timeout=20)
             self.assertEqual(process.returncode, 0, errors)
         self.assertEqual(self.state.get('jobs', 'counter'), {'count': 36})
+
+    def test_index_record_put_and_mutation_do_not_deadlock(self):
+        for operation in ('put', 'mutation'):
+            with self.subTest(operation=operation):
+                script = ('from mcp_state import State; import sys; state=State(sys.argv[1]); '
+                          '\nif sys.argv[2] == "put": state.put("jobs", "index", {"ok": True})'
+                          '\nelse:\n with state.mutation("jobs", "index") as data: data["ok"] = True')
+                process = subprocess.Popen([sys.executable, '-c', script, str(self.state.path), operation],
+                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                try:
+                    output, errors = process.communicate(timeout=2)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.communicate(timeout=5)
+                    self.fail(f'{operation} deadlocked for valid record ID index')
+                self.assertEqual(process.returncode, 0, errors)
+                self.assertEqual(self.state.get('jobs', 'index'), {'ok': True})
+
+    def test_listing_during_private_record_publication(self):
+        self.state.put('jobs', 'first', {'status': 'queued'})
+        ready, resume = threading.Event(), threading.Event()
+        failures = []
+        original = os.replace
+        def pause(source, destination, **kwargs):
+            ready.set()
+            if not resume.wait(5):
+                raise RuntimeError('publication test timed out')
+            return original(source, destination, **kwargs)
+        def publish():
+            try:
+                self.state.put('jobs', 'second', {'status': 'running'})
+            except BaseException as error:
+                failures.append(error)
+        with mock.patch('os.replace', side_effect=pause):
+            writer = threading.Thread(target=publish)
+            writer.start()
+            try:
+                self.assertTrue(ready.wait(2), 'writer did not reach real atomic publication')
+                self.assertEqual(self.state.records('jobs'), [{'status': 'queued'}])
+            finally:
+                resume.set()
+                writer.join(5)
+        self.assertFalse(writer.is_alive())
+        self.assertEqual(failures, [])
+        self.assertEqual(self.state.records('jobs'), [{'status': 'queued'}, {'status': 'running'}])
+
+    def test_listing_survives_crashed_private_publication(self):
+        self.state.put('jobs', 'first', {'status': 'queued'})
+        script = ('from mcp_state import State; import os, sys; '
+                  '\ndef crash(*args, **kwargs): os._exit(17)'
+                  '\nos.replace = crash\nState(sys.argv[1]).put("jobs", "second", {"private": "staged"})')
+        process = subprocess.run([sys.executable, '-c', script, str(self.state.path)],
+                                 capture_output=True, text=True, timeout=5)
+        self.assertEqual(process.returncode, 17, process.stderr)
+        self.assertTrue(list((self.state.path / 'jobs').glob('.mcp-*')))
+        self.assertEqual(self.state.records('jobs'), [{'status': 'queued'}])
+        self.state.put('jobs', 'second', {'status': 'recovered'})
+        self.assertEqual(self.state.get('jobs', 'second'), {'status': 'recovered'})
+
+    def test_abandoned_private_stage_does_not_consume_record_quota(self):
+        self.state.put('jobs', 'first', {})
+        stage = self.state.path / 'jobs' / ('.mcp-' + '0' * 32)
+        stage.mkdir(mode=0o700)
+        with mock.patch('mcp_state.MAX_RECORDS', 2):
+            self.state.put('jobs', 'second', {'ok': True})
+            self.assertEqual(self.state.records('jobs'), [{}, {'ok': True}])
+
+    def test_staging_name_does_not_hide_symlink(self):
+        self.state.put('jobs', 'first', {})
+        try:
+            (self.state.path / 'jobs' / ('.mcp-' + 'a' * 32)).symlink_to(self.root, target_is_directory=True)
+        except OSError as error:
+            self.skipTest(f'symlinks unavailable: {error}')
+        with self.assertRaises(MCPError):
+            self.state.records('jobs')
 
     @unittest.skipUnless(os.name == 'nt', 'Windows current-user ACL integration')
     def test_windows_private_acl_records_and_policy(self):
