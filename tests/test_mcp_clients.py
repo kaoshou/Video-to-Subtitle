@@ -55,7 +55,8 @@ class ClientTests(unittest.TestCase):
         rows = self.api().discover_clients(home=self.home, environ={
             'CODEX_HOME': str(self.home / 'codex-custom'),
             'COPILOT_HOME': str(self.home / 'copilot-custom'),
-            'OPENCODE_CONFIG': str(self.home / 'open-custom.json')}, system='Darwin')
+            'OPENCODE_CONFIG': str(self.home / 'open-custom.json')}, system='Darwin',
+            application_roots=(), executable_roots=())
         by_id = {row['id']: row for row in rows}
         self.assertEqual(set(by_id), {'codex', 'claude-code', 'claude-desktop', 'gemini-cli',
                                      'antigravity', 'cursor', 'vscode', 'copilot', 'windsurf',
@@ -64,6 +65,8 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(by_id['copilot']['config_path'], str(self.home / 'copilot-custom' / 'mcp-config.json'))
         self.assertEqual(by_id['opencode']['config_path'], str(self.home / 'open-custom.json'))
         self.assertTrue(by_id['cursor']['detected'])
+        self.assertTrue(by_id['cursor']['configuration_detected'])
+        self.assertFalse(by_id['cursor']['installation_detected'])
         for row in rows:
             self.assertFalse(row['live_verified'])
             self.assertFalse(row['version_verified'])
@@ -310,10 +313,117 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, 'MANUAL_ONLY')
 
     def test_relative_environment_override_does_not_guess_a_writable_target(self):
-        rows = self.api().discover_clients(home=self.home, environ={'CODEX_HOME': 'relative'}, system='Darwin')
+        rows = self.api().discover_clients(home=self.home, environ={'CODEX_HOME': 'relative'}, system='Darwin',
+                                          application_roots=(), executable_roots=())
         row = next(row for row in rows if row['id'] == 'codex')
         self.assertFalse(row['can_apply'])
         self.assertTrue(row['manual_reason'])
+
+    def test_fresh_macos_apps_are_discovered_without_mcp_configuration(self):
+        apps = self.home / 'Applications'
+        apps.mkdir()
+        expected = {'codex': 'Codex.app', 'claude-desktop': 'Claude.app', 'cursor': 'Cursor.app',
+                    'vscode': 'Visual Studio Code.app', 'windsurf': 'Windsurf.app',
+                    'antigravity': 'Antigravity.app'}
+        for name in expected.values():
+            (apps / name).mkdir()
+        rows = self.api().discover_clients(home=self.home, environ={}, system='Darwin',
+                                          application_roots=[apps], executable_roots=())
+        by_id = {row['id']: row for row in rows}
+        for client_id, name in expected.items():
+            with self.subTest(client=client_id):
+                self.assertTrue(by_id[client_id]['detected'])
+                self.assertTrue(by_id[client_id]['installation_detected'])
+                self.assertFalse(by_id[client_id]['configuration_detected'])
+                self.assertEqual(by_id[client_id]['installation_evidence'],
+                                 [{'kind': 'app-bundle', 'path': str(apps / name)}])
+                self.assertEqual(by_id[client_id]['configuration_evidence'], [])
+                self.assertFalse(by_id[client_id]['version_verified'])
+                self.assertFalse(by_id[client_id]['live_verified'])
+        self.assertFalse(self.state.exists())
+
+    def test_fixed_cli_metadata_is_discovered_without_reading_or_executing_files(self):
+        executables = self.home / 'bin'
+        executables.mkdir()
+        expected = {'codex': 'codex', 'claude-code': 'claude', 'gemini-cli': 'gemini',
+                    'opencode': 'opencode', 'copilot': 'copilot'}
+        for name in expected.values():
+            executable = executables / name
+            executable.write_text('do not execute this controlled fixture')
+            executable.chmod(0o755)
+        with mock.patch.object(Path, 'open', side_effect=AssertionError('discovery read file contents')):
+            rows = self.api().discover_clients(home=self.home, environ={}, system='Linux',
+                                              application_roots=(), executable_roots=[executables])
+        by_id = {row['id']: row for row in rows}
+        for client_id, name in expected.items():
+            with self.subTest(client=client_id):
+                self.assertTrue(by_id[client_id]['installation_detected'])
+                self.assertFalse(by_id[client_id]['configuration_detected'])
+                self.assertEqual(by_id[client_id]['installation_evidence'],
+                                 [{'kind': 'command-file', 'path': str(executables / name)}])
+                self.assertIsNone(by_id[client_id]['client_version'])
+        self.assertFalse(self.state.exists())
+
+    def test_discovery_does_not_recurse_or_count_nonexecutables_as_installed(self):
+        apps = self.home / 'Applications'
+        (apps / 'Other' / 'Cursor.app').mkdir(parents=True)
+        (apps / 'Claude.app').write_text('not an application directory')
+        executables = self.home / 'bin'
+        executables.mkdir()
+        (executables / 'codex').write_text('not executable')
+        (executables / 'codex').chmod(0o600)
+        (executables / 'gemini').mkdir()
+        rows = self.api().discover_clients(home=self.home, environ={}, system='Darwin',
+                                          application_roots=[apps], executable_roots=[executables])
+        self.assertFalse(any(row['installation_detected'] for row in rows))
+
+    def test_windows_known_app_and_cli_metadata_is_separate_from_config(self):
+        apps = self.home / 'Programs'
+        (apps / 'Microsoft VS Code').mkdir(parents=True)
+        (apps / 'Microsoft VS Code' / 'Code.exe').write_bytes(b'controlled inert app fixture')
+        executables = self.home / 'local-bin'
+        executables.mkdir()
+        (executables / 'claude.exe').write_bytes(b'controlled inert cli fixture')
+        rows = self.api().discover_clients(home=self.home, environ={}, system='Windows',
+                                          application_roots=[apps], executable_roots=[executables])
+        by_id = {row['id']: row for row in rows}
+        self.assertEqual(by_id['vscode']['installation_evidence'],
+                         [{'kind': 'application-file', 'path': str(apps / 'Microsoft VS Code' / 'Code.exe')}])
+        self.assertTrue(by_id['claude-code']['installation_detected'])
+        self.assertFalse(by_id['claude-code']['configuration_detected'])
+
+    def test_npm_command_links_use_metadata_only_and_broken_links_are_not_installations(self):
+        executables = self.home / 'bin'
+        executables.mkdir()
+        target = self.home / 'controlled-cli'
+        target.write_bytes(b'controlled inert executable fixture')
+        target.chmod(0o755)
+        (executables / 'codex').symlink_to(target)
+        (executables / 'claude').symlink_to(self.home / 'missing-cli')
+        rows = self.api().discover_clients(home=self.home, environ={}, system='Linux',
+                                          application_roots=(), executable_roots=[executables])
+        by_id = {row['id']: row for row in rows}
+        self.assertEqual(by_id['codex']['installation_evidence'],
+                         [{'kind': 'command-file-link', 'path': str(executables / 'codex')}])
+        self.assertFalse(by_id['claude-code']['installation_detected'])
+        self.assertFalse(by_id['codex']['publisher_verified'])
+
+    def test_windows_default_roots_use_only_fake_home_and_environment(self):
+        local = self.home / 'AppData' / 'Local'
+        roaming = self.home / 'custom-roaming'
+        (local / 'Programs' / 'Microsoft VS Code').mkdir(parents=True)
+        (local / 'Programs' / 'Microsoft VS Code' / 'Code.exe').write_bytes(b'inert app')
+        (self.home / '.local' / 'bin').mkdir(parents=True)
+        (self.home / '.local' / 'bin' / 'claude.exe').write_bytes(b'inert native cli')
+        (roaming / 'npm').mkdir(parents=True)
+        (roaming / 'npm' / 'copilot.cmd').write_bytes(b'inert npm cli')
+        rows = self.api().discover_clients(home=self.home, environ={'APPDATA': str(roaming)},
+                                          system='Windows')
+        by_id = {row['id']: row for row in rows}
+        for client_id in ('vscode', 'claude-code', 'copilot'):
+            with self.subTest(client=client_id):
+                self.assertTrue(by_id[client_id]['installation_detected'])
+                self.assertFalse(by_id[client_id]['configuration_detected'])
 
 
 if __name__ == '__main__':

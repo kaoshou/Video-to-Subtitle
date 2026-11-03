@@ -35,6 +35,12 @@ _CLIENTS = {
     'opencode': ('OpenCode', 'mcp', 'json'),
     'generic': ('Other MCP client', 'mcpServers', 'json'),
 }
+_MAC_APPS = {'codex': 'Codex.app', 'claude-desktop': 'Claude.app', 'cursor': 'Cursor.app',
+             'vscode': 'Visual Studio Code.app', 'windsurf': 'Windsurf.app',
+             'antigravity': 'Antigravity.app'}
+_CLI_NAMES = {'codex': 'codex', 'claude-code': 'claude', 'gemini-cli': 'gemini',
+              'cursor': 'cursor', 'vscode': 'code', 'windsurf': 'windsurf',
+              'antigravity': 'antigravity', 'opencode': 'opencode', 'copilot': 'copilot'}
 
 
 def _client(client_id):
@@ -90,9 +96,59 @@ def _effective_owner(record, current, raw):
     return record
 
 
-def discover_clients(*, home=None, environ=None, system=None):
+def _discovery_roots(roots):
+    """Bounded explicit roots; never expand PATH or enumerate their contents."""
+    roots = list(roots)
+    if len(roots) > 32:
+        raise MCPError('invalid_discovery', 'Select at most 32 discovery directories.')
+    result = []
+    for value in roots:
+        _path(value)
+        path = Path(value)
+        if path not in result:
+            result.append(path)
+    return result
+
+
+def _installation_evidence(client_id, app_roots, executable_roots, system):
+    candidates = []
+    if system == 'Darwin' and client_id in _MAC_APPS:
+        candidates.extend((root / _MAC_APPS[client_id], 'app-bundle', True)
+                          for root in app_roots)
+    elif system == 'Windows' and client_id == 'vscode':
+        candidates.extend((root / 'Microsoft VS Code' / 'Code.exe', 'application-file', False)
+                          for root in app_roots)
+    if client_id in _CLI_NAMES:
+        name = _CLI_NAMES[client_id]
+        names = (name + '.exe', name + '.cmd') if system == 'Windows' else (name,)
+        candidates.extend((root / name, 'command-file', False)
+                          for root in executable_roots for name in names)
+    evidence = []
+    for path, kind, directory in candidates:
+        try:
+            info = path.lstat()
+            linked = stat.S_ISLNK(info.st_mode) or bool(getattr(info, 'st_file_attributes', 0) & 0x400)
+            if linked:
+                # Resolve metadata only, so a broken npm/bin link is not an
+                # installation signal. Never read or invoke the target.
+                info = path.stat()
+            if not (stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode)):
+                continue
+            if kind == 'command-file' and system != 'Windows' and not info.st_mode & 0o111:
+                continue
+            evidence.append({'kind': kind + '-link' if linked else kind, 'path': str(path)})
+        except OSError:
+            continue
+    return evidence
+
+
+def discover_clients(*, home=None, environ=None, system=None,
+                     application_roots=None, executable_roots=None):
     """Inspect path metadata only. Evidence is not an installed/live/version badge.
 
+    ``detected`` combines separate installation/configuration metadata flags;
+    a config file alone is never installation evidence. Optional root lists
+    replace the bounded OS defaults; pass empty tuples for isolated fixtures.
     ``can_apply`` describes the adapter and unambiguous target, not current file
     writability or a successful preview. The GUI must still preview and consent.
     """
@@ -107,6 +163,29 @@ def discover_clients(*, home=None, environ=None, system=None):
             if candidate.is_absolute():
                 return candidate
         return fallback
+
+    if application_roots is None:
+        if system == 'Darwin':
+            application_roots = (Path('/Applications'), home / 'Applications')
+        elif system == 'Windows':
+            application_roots = [override('LOCALAPPDATA', home / 'AppData' / 'Local') / 'Programs']
+            application_roots.extend(Path(env[key]) for key in ('ProgramFiles', 'ProgramFiles(x86)')
+                                     if env.get(key) and Path(env[key]).is_absolute())
+        else:
+            application_roots = ()
+    if executable_roots is None:
+        executable_roots = [home / '.local' / 'bin', home / '.opencode' / 'bin']
+        if system == 'Windows':
+            executable_roots.append(override('APPDATA', home / 'AppData' / 'Roaming') / 'npm')
+        else:
+            executable_roots.extend((Path('/usr/local/bin'), Path('/usr/bin')))
+            if system == 'Darwin':
+                executable_roots.append(Path('/opt/homebrew/bin'))
+        prefix = env.get('NPM_CONFIG_PREFIX') or env.get('npm_config_prefix')
+        if prefix and Path(prefix).is_absolute():
+            executable_roots.append(Path(prefix) if system == 'Windows' else Path(prefix) / 'bin')
+    app_roots = _discovery_roots(application_roots)
+    executable_roots = _discovery_roots(executable_roots)
 
     paths = {
         'codex': override('CODEX_HOME', home / '.codex') / 'config.toml',
@@ -125,14 +204,16 @@ def discover_clients(*, home=None, environ=None, system=None):
     rows = []
     for client_id, (name, section, format_name) in _CLIENTS.items():
         path = paths[client_id]
-        evidence = []
+        configuration_evidence = []
         if path is not None:
             try:
                 info = path.lstat()
                 if stat.S_ISREG(info.st_mode) and not getattr(info, 'st_file_attributes', 0) & 0x400:
-                    evidence.append({'kind': 'config-file', 'path': str(path)})
+                    configuration_evidence.append({'kind': 'config-file', 'path': str(path)})
             except OSError:
                 pass
+        installation_evidence = _installation_evidence(client_id, app_roots, executable_roots, system)
+        evidence = installation_evidence + configuration_evidence
         reason = ''
         if client_id == 'windsurf':
             reason = 'Current official Windsurf format could not be verified; legacy snippet only.'
@@ -150,6 +231,12 @@ def discover_clients(*, home=None, environ=None, system=None):
             reason = 'The configured environment override is relative; select the configuration file explicitly.'
         rows.append({'id': client_id, 'name': name, 'detected': bool(evidence),
                      'evidence': evidence, 'config_path': str(path) if path else None,
+                     'installation_detected': bool(installation_evidence),
+                     'configuration_detected': bool(configuration_evidence),
+                     'installation_evidence': installation_evidence,
+                     'configuration_evidence': configuration_evidence,
+                     'publisher_verified': False,
+                     'installation_note': '僅發現已知安裝位置或指令檔；未驗證發行者、版本或連線。',
                      'format': format_name, 'section': section,
                      'schema_supported': client_id not in ('windsurf', 'generic', 'claude-desktop'),
                      'can_apply': not reason, 'manual_reason': reason,
