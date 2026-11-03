@@ -17,3 +17,6 @@ dependencies = [
     "sounddevice",
     "tomli; python_version < '3.11'"
 ]
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.30,<2"]

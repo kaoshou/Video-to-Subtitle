@@ -529,7 +529,23 @@ class ProcessLock:
                 directory.check_file(self.name)
                 flags = os.O_RDWR | os.O_CREAT | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0)
                 if directory.fd is not None:
-                    fd = os.open(self.name, flags, 0o600, dir_fd=directory.fd)
+                    try:
+                        fd = os.open(self.name, flags, 0o600, dir_fd=directory.fd)
+                    except FileNotFoundError:
+                        # Some POSIX filesystems return ENOENT to concurrent
+                        # first creators even after a peer has created the leaf.
+                        # Retry exactly once only for that now-safe existing
+                        # file, retaining the pinned parent and nofollow flags.
+                        _check_private(directory)
+                        parent = os.fstat(directory.fd)
+                        named = os.stat(directory.path, follow_symlinks=False)
+                        leaf = directory.info(self.name)
+                        if (not parent.st_nlink or (parent.st_dev, parent.st_ino) !=
+                                (named.st_dev, named.st_ino) or leaf is None or
+                                not stat.S_ISREG(leaf.st_mode) or leaf.st_nlink != 1 or
+                                leaf.st_uid != os.getuid() or stat.S_IMODE(leaf.st_mode) & 0o077):
+                            raise
+                        fd = os.open(self.name, flags, 0o600, dir_fd=directory.fd)
                 else:
                     # Open the leaf itself and deny delete sharing, so the lock
                     # inode cannot be exchanged for a reparse point/new lock.
