@@ -171,6 +171,33 @@ class ServiceTests(ServiceFixture):
         self.assertEqual(result['state'], 'interrupted')
         self.assertEqual(result['error']['code'], 'JOB_INTERRUPTED')
 
+    def test_durable_cancellation_from_other_idle_service_prevents_publication(self):
+        entered, release = threading.Event(), threading.Event()
+        class Fake:
+            def __init__(fake, **kwargs): pass
+            def load_model(fake, **kwargs): pass
+            def run(fake, path, **kwargs):
+                entered.set()
+                release.wait(5)
+                output = Path(path).with_suffix('.srt')
+                output.write_text(SRT)
+                return str(output)
+        self.service.close()
+        self.service = self.api.Service(self.state, transcribe_factory=Fake)
+        other = self.api.Service(self.state)
+        self.addCleanup(other.close)
+        accepted = self.service.call('start_transcription', {'asset_id': self.assets()['lesson.mp4'],
+                                                            'request_id': 'durable-cancel'})
+        try:
+            self.assertTrue(entered.wait(3))
+            self.assertEqual(other.call('cancel_job', accepted)['state'], 'cancelling')
+        finally:
+            release.set()
+        job = self.wait_job(accepted['job_id'])
+        self.assertEqual(job['state'], 'cancelled', job)
+        self.assertEqual(self.state.records('sources'), [])
+        self.assertEqual(self.state.records('tracks'), [])
+
     def test_child_local_only_guard_sends_bounded_json_when_model_is_missing(self):
         import multiprocessing
         context = multiprocessing.get_context('spawn')

@@ -80,6 +80,42 @@ class TranslationTests(ServiceFixture):
             self.submit(draft)
         self.assertEqual(raised.exception.code, 'SOURCE_CHANGED')
 
+    def test_revocation_during_final_render_blocks_track_publication(self):
+        source = self.imported()
+        draft = self.prepare(source)
+        self.submit(draft)
+        original = self.api.render_srt
+        def revoke_during_render(*args, **kwargs):
+            result = original(*args, **kwargs)
+            self.state.configure(True, [])
+            return result
+        with patch.object(self.api, 'render_srt', revoke_during_render):
+            with self.assertRaises(MCPError) as raised:
+                self.service.call('finalize_translation', {
+                    'draft_id': draft['draft_id'], 'request_id': 'revoke-finalize'})
+        self.assertEqual(raised.exception.code, 'ROOT_NOT_ALLOWED')
+        self.assertEqual([track['id'] for track in self.state.records('tracks')], [source['track_id']])
+        self.assertNotIn('track_id', self.state.get('drafts', draft['draft_id']))
+
+    def test_final_authorization_and_track_write_share_policy_lock(self):
+        source = self.imported()
+        draft = self.prepare(source)
+        self.submit(draft)
+        original = self.state.put
+        def assert_guarded_publication(kind, id, data):
+            if kind == 'tracks':
+                from mcp_state import ProcessLock
+                contender = ProcessLock(self.state.path / 'locks', 'policy')
+                acquired = contender.acquire()
+                if acquired:
+                    contender.release()
+                self.assertFalse(acquired, 'Policy changes can race final authorized track publication')
+            return original(kind, id, data)
+        with patch.object(self.state, 'put', assert_guarded_publication):
+            result = self.service.call('finalize_translation', {
+                'draft_id': draft['draft_id'], 'request_id': 'guarded-finalize'})
+        self.assertTrue(result['complete'])
+
     def test_batches_bound_cues_and_characters_and_reject_one_oversize_cue(self):
         text = '\n\n'.join(f'{i}\n00:00:00,123 --> 00:00:00,987\n' + 'x' * 200 for i in range(1, 52))
         (self.media / 'lesson.srt').write_text(text)

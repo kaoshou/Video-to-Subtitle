@@ -457,12 +457,18 @@ class Service:
                         'review_status': 'ai_translation_needs_review'}
             text = render_srt(source['cues'], draft['translations'])
             track_id = secrets.token_hex(16)
-            self.state.require_enabled()
-            self.state.put('tracks', track_id, {'id': track_id, 'source_id': source['id'],
-                           'revision': source['revision'], 'media_id': source['media_id'],
-                           'language': draft['language'], 'complete': True, 'text': text,
-                           'review_status': 'ai_translation_needs_review'})
-            draft['track_id'] = track_id
+            self._source(source['id'])
+            # configure() uses this same lock. Keep the final root checks and
+            # content publication in one policy transaction; hashing stays
+            # outside so a large source cannot delay local policy changes.
+            with ProcessLock(self.state.path / 'locks', 'policy'):
+                self._asset(source['media_id'])
+                self._asset(source['origin_id'])
+                self.state.put('tracks', track_id, {'id': track_id, 'source_id': source['id'],
+                               'revision': source['revision'], 'media_id': source['media_id'],
+                               'language': draft['language'], 'complete': True, 'text': text,
+                               'review_status': 'ai_translation_needs_review'})
+                draft['track_id'] = track_id
         return {'track_id': track_id, 'language': draft['language'], 'complete': True,
                 'review_status': 'ai_translation_needs_review'}
 
@@ -556,7 +562,9 @@ class Service:
         return {'job_id': job_id, 'state': job['state']}
 
     def _checkpoint(self, job):
-        if self._stop.is_set() or self._events[job['id']].is_set():
+        current = self.state.get('jobs', job['id'])
+        if (self._stop.is_set() or self._events[job['id']].is_set() or
+                current.get('cancel_requested')):
             raise MCPError('CANCELLED', 'Job cancellation was requested.')
         return self._asset(job['asset_id'], job['generation'])
 
