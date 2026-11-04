@@ -89,6 +89,64 @@ class StateTests(unittest.TestCase):
         with self.assertRaises(MCPError):
             self.state.require_enabled(admitted_generation=generation)
 
+    def test_disable_absent_creates_nothing_and_rejects_invalid_mode(self):
+        self.assertEqual(self.state.disable(), {'enabled': False, 'roots': [], 'generation': 0})
+        with self.assertRaises(MCPError):
+            self.state.disable(stop_mode='unknown')
+        self.assertFalse((self.base / 'private').exists())
+
+    def test_disable_does_not_resolve_or_open_replaced_root(self):
+        enabled = self.state.configure(True, [self.root], model='small')
+        old_root = self.base / 'old-media'
+        self.root.rename(old_root)
+        try:
+            self.root.symlink_to(old_root, target_is_directory=True)
+        except OSError as error:
+            self.skipTest(f'symlinks unavailable: {error}')
+        import mcp_state
+        original_directory = mcp_state._absolute_directory
+        @contextlib.contextmanager
+        def state_only(path):
+            self.assertNotIn(Path(path), (self.root, old_root), 'revocation must not open approved roots')
+            with original_directory(path) as directory:
+                yield directory
+        with mock.patch('mcp_state._absolute_directory', side_effect=state_only), \
+                mock.patch.object(Path, 'resolve', side_effect=AssertionError('disable resolved a root')):
+            disabled = self.state.disable(stop_mode='finish')
+        self.assertEqual(disabled['roots'], enabled['roots'])
+        self.assertEqual(disabled['options'], {**enabled['options'], 'stop_mode': 'finish'})
+        self.assertEqual(disabled['drain_generation'], enabled['generation'])
+        again = self.state.disable(stop_mode='finish')
+        self.assertEqual(again['drain_generation'], enabled['generation'])
+        self.state.disable(stop_mode='cancel')
+        with self.assertRaises(MCPError):
+            self.state.require_enabled(admitted_generation=enabled['generation'])
+
+    def test_disable_reads_latest_policy_under_lock_and_publishes_while_locked(self):
+        self.state.configure(True, [self.root], model='small')
+        other = self.base / 'other'
+        other.mkdir()
+        original_acquire = ProcessLock.acquire
+        updated = []
+        def acquire(lock, *args, **kwargs):
+            if lock.name == 'policy.lock' and not updated:
+                updated.append(None)
+                updated[0] = self.state.configure(True, [other], device='cpu')
+            return original_acquire(lock, *args, **kwargs)
+        import mcp_state
+        publish = mcp_state._write_json
+        def guarded_publish(*args):
+            contender = ProcessLock(self.state.path / 'locks', 'policy')
+            self.assertFalse(original_acquire(contender), 'policy published without its lock')
+            return publish(*args)
+        with mock.patch.object(ProcessLock, 'acquire', acquire), \
+                mock.patch('mcp_state._write_json', side_effect=guarded_publish):
+            disabled = self.state.disable(stop_mode='finish')
+        self.assertEqual(disabled['roots'], updated[0]['roots'])
+        self.assertEqual(disabled['options'], {**updated[0]['options'], 'stop_mode': 'finish'})
+        self.assertEqual(disabled['generation'], updated[0]['generation'] + 1)
+        self.assertEqual(disabled['drain_generation'], updated[0]['generation'])
+
     def test_pinned_nested_reads_survive_directory_rename(self):
         root_id = self.enable()
         with self.state.directory(root_id, 'nested') as folder:

@@ -45,6 +45,40 @@ class RuntimeTests(unittest.TestCase):
         with self.assertRaises(MCPError):
             self.state.require_enabled(admitted_generation=enabled['generation'])
 
+    def test_disable_missing_saved_root_revokes_remaining_root_in_both_modes(self):
+        runtime = self.runtime()
+        available = self.root / 'available'
+        available.mkdir()
+        (available / 'lesson.srt').write_text('existing result')
+        unavailable = self.root / 'disconnected'
+        for mode in ('cancel', 'finish'):
+            with self.subTest(stop_mode=mode):
+                unavailable.mkdir()
+                enabled = self.state.configure(True, [unavailable, available], model='small', device='cpu')
+                session = State(self.state.path)
+                available_id = enabled['roots'][1]['id']
+                with session.file(available_id, 'lesson.srt') as stream:
+                    self.assertEqual(stream.read(), b'existing result')
+                unavailable.rmdir()
+                disabled = runtime.disable(self.state, stop_mode=mode)
+                self.assertFalse(disabled['enabled'])
+                self.assertEqual(disabled['roots'], enabled['roots'])
+                self.assertEqual(disabled['generation'], enabled['generation'] + 1)
+                self.assertEqual(disabled['options'], {**enabled['options'], 'stop_mode': mode})
+                with self.assertRaises(MCPError) as denied:
+                    with session.file(available_id, 'lesson.srt'):
+                        self.fail('new tool access survived disable')
+                self.assertEqual(denied.exception.code, 'MCP_DISABLED')
+                if mode == 'finish':
+                    self.assertEqual(disabled['drain_generation'], enabled['generation'])
+                    with session.file(available_id, 'lesson.srt', admitted_generation=enabled['generation']) as stream:
+                        self.assertEqual(stream.read(), b'existing result')
+                else:
+                    self.assertNotIn('drain_generation', disabled)
+                    with self.assertRaises(MCPError):
+                        session.require_enabled(admitted_generation=enabled['generation'])
+                self.assertEqual((available / 'lesson.srt').read_text(), 'existing result')
+
     def test_enable_conflict_is_refused_before_policy_changes(self):
         runtime = self.runtime()
         lock = ProcessLock(self.state.path / 'locks', 'inference')

@@ -78,9 +78,4 @@ def enable(state, roots, *, owner=None, **options):
 
 def disable(state, stop_mode='cancel'):
     """Immediately revoke tool access; let the service cooperatively drain."""
-    if stop_mode not in ('cancel', 'finish'):
-        raise MCPError('INVALID_POLICY', 'Invalid stop mode.')
-    policy = state.policy()
-    if policy['generation'] == 0:
-        return policy
-    return state.configure(False, [Path(root['path']) for root in policy['roots']], stop_mode=stop_mode)
+    return state.disable(stop_mode=stop_mode)

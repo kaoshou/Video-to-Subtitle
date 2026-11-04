@@ -1,6 +1,6 @@
 """Private local MCP policy and durable records; importing this module does no I/O.
 
-Only the local GUI/admin calls ``configure``. Tool handlers must never expose it,
+Only the local GUI/admin calls ``configure`` or ``disable``. Tool handlers must never expose them,
 or accept ``admitted_generation`` from a client: that keyword is an internal
 capability for jobs admitted before a finish-mode disable.
 """
@@ -396,6 +396,30 @@ class State:
                       'options': {**old.get('options', {}), **options}}
             if (not enabled and policy['options'].get('stop_mode') == 'finish' and
                     old['roots'] == selected):
+                admission = old['generation'] if old['enabled'] else old.get('drain_generation')
+                if admission is not None:
+                    policy['drain_generation'] = admission
+            with _private_directory(self.path, create=True) as directory:
+                _write_json(directory, 'policy.json', _encode(policy, MAX_POLICY_BYTES))
+            return policy
+
+    def disable(self, stop_mode='cancel') -> dict:
+        """Local admin revocation without resolving/opening any approved root.
+
+        Preserve the latest saved roots verbatim, including unavailable ones.
+        New grants still go through configure's full filesystem validation.
+        """
+        _validate_options({'stop_mode': stop_mode})
+        old = self.policy()
+        if old['generation'] == 0:
+            return old  # No policy means no lock or storage creation either.
+        with _errors('invalid_policy'), ProcessLock(self.path / 'locks', 'policy'):
+            old = self.policy()  # An intervening configure must not be lost.
+            if old['generation'] == 0:
+                return old
+            policy = {'enabled': False, 'roots': old['roots'], 'generation': old['generation'] + 1,
+                      'options': {**old.get('options', {}), 'stop_mode': stop_mode}}
+            if stop_mode == 'finish':
                 admission = old['generation'] if old['enabled'] else old.get('drain_generation')
                 if admission is not None:
                     policy['drain_generation'] = admission
