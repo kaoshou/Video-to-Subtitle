@@ -1,10 +1,14 @@
 """Human-readable local job summaries, without exposing opaque IDs by default."""
 from pathlib import Path
+import math
+from mcp_progress import valid_progress
 
 STATES = {'queued':'等待處理', 'preparing':'準備中', 'running':'處理中',
           'validating':'檢查成果', 'publishing':'儲存成果', 'cancelling':'取消中',
           'succeeded':'已完成', 'failed':'未完成', 'cancelled':'已取消', 'interrupted':'已中斷'}
 STAGES = {'snapshot':'建立工作副本', 'transcription':'辨識語音並產生字幕',
+          'model':'準備辨識模型', 'audio':'處理音訊', 'recognition':'辨識語音',
+          'output':'整理字幕', 'retry':'調整批次後重新辨識',
           'subtitle':'檢查字幕格式', 'export':'建立網頁播放器', 'package':'整理播放器檔案',
           'complete':'處理完成'}
 ERRORS = {'MODEL_DOWNLOAD_REQUIRED':'所選模型尚未備妥，請先到模型儲存管理完成下載。',
@@ -48,7 +52,19 @@ def job_card(job):
         technical += '\n辨識引擎：' + info.get('backend', '未記錄')
     project = {'opencam':'OpenCam', 'evercam':'EverCam', 'mp4':'MP4'}.get(
         result.get('player_type') or job.get('project_type'), '')
+    progress = job.get('progress')
+    fraction, progress_text = None, ''
+    if state not in ('succeeded', 'failed', 'cancelled', 'interrupted') and valid_progress(progress):
+        fraction = progress['fraction']
+        phase = STAGES.get(progress['stage'], '處理中')
+        progress_text = phase + (f' · {fraction * 100:.0f}%' if fraction is not None else ' · 處理中')
+    elapsed = job.get('elapsed_seconds')
+    timing_text = ''
+    if type(elapsed) in (float, int) and math.isfinite(elapsed) and elapsed >= 0:
+        minutes, seconds = divmod(round(elapsed), 60)
+        timing_text = f'處理耗時：{minutes} 分 {seconds:02} 秒' if minutes else f'處理耗時：{seconds} 秒'
     return {'title':title, 'kind':kind + (' · ' + project if project else ''),
+            'progress_fraction': fraction, 'progress_text': progress_text, 'timing_text': timing_text,
             'status':STATES.get(state, '狀態待確認'), 'description':description,
             'models':model_lines, 'technical':technical,
             'can_open':state == 'succeeded' and bool(result.get('index_path')),

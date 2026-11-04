@@ -15,6 +15,8 @@ import secrets
 import shutil
 import stat
 import threading
+import time
+from mcp_progress import ProgressEmitter, valid_progress
 
 from mcp_state import MCPError, ProcessLock, State, _private_directory, file_version, directory_identity
 from mcp_translation import batches, render_srt, validate_batch
@@ -85,7 +87,8 @@ def _child_run(settings, media_path, connection, cancelled):
         transcriber.download_model_with_progress = _local_model_path
         _ready(settings)
         engine = transcriber.SubtitleTranscriber(**_engine_settings(settings))
-        result = _run_engine(engine, settings, media_path, cancelled.is_set)
+        result = _run_engine(engine, settings, media_path, cancelled.is_set,
+                             lambda event: connection.send_bytes(json.dumps(dict(event, event='progress')).encode('utf-8')))
         # The output path is fixed server-side, never accepted from IPC.
         if result:
             output = Path(media_path).with_suffix('.srt')
@@ -120,7 +123,11 @@ def _execution_report(engine, settings):
         'batch_decision': decision_summary(getattr(engine, 'last_batch_decision', None))}
 
 
-def _run_engine(engine, settings, media_path, cancelled):
+def _run_engine(engine, settings, media_path, cancelled, event_callback=None):
+    progress = ProgressEmitter(event_callback or (lambda event: None))
+    # Only send events for clients that explicitly requested them.
+    if event_callback:
+        progress.stage('model')
     engine.load_model(cancel_check_callback=cancelled)
     if cancelled():
         return None
@@ -129,7 +136,8 @@ def _run_engine(engine, settings, media_path, cancelled):
     if settings.get('batch_mode') == 'auto':
         options['batch_size'] = 'auto'
     return engine.run(str(media_path), output_format='srt', cancel_check_callback=cancelled,
-                      _tag_language=False, **options)
+                      _tag_language=False, progress_callback=progress.progress,
+                      stage_callback=progress.stage, **options)
 
 
 class Service:
@@ -138,6 +146,7 @@ class Service:
         self.state, self._factory = state, transcribe_factory
         self._guard, self._queue = threading.RLock(), queue.Queue()
         self._closed, self._stop = False, threading.Event()
+        self._job_clocks = {}
         self._events, self._thread = {}, None
         self._owner = None
         # Read-only construction remains lazy when no old jobs exist.
@@ -155,7 +164,9 @@ class Service:
             for old in self.state.records('jobs'):
                 if old.get('state') not in _TERMINAL:
                     with self.state.mutation('jobs', old['id']) as job:
-                        job.update(state='interrupted', error={'code': 'JOB_INTERRUPTED',
+                        job.update(state='interrupted', finished_at=time.time(), elapsed_seconds=None,
+                                   progress={'stage': job.get('stage', 'transcription'), 'fraction': None},
+                                   error={'code': 'JOB_INTERRUPTED',
                                                              'message': 'Previous service stopped before completion.'})
         except BaseException:
             owner.release()
@@ -552,6 +563,7 @@ class Service:
             policy = self.state.require_enabled()
             self._asset(asset_id)
             job = {'id': id, 'kind': kind, 'asset_id': asset_id, 'state': 'queued',
+                   'created_at': time.time(),
                    'generation': policy['generation'], 'arguments': arguments, 'input_version': asset['version']}
             self.state.put('jobs', id, job)
         self._events[id] = threading.Event()
@@ -628,10 +640,11 @@ class Service:
 
     def _get_job(self, job_id):
         job = self.state.get('jobs', job_id)
-        result = {k: job[k] for k in ('state', 'stage', 'error') if k in job}
+        result = {k: job[k] for k in ('state', 'stage', 'error', 'progress', 'created_at',
+                                    'started_at', 'finished_at', 'elapsed_seconds') if k in job}
         result['job_id'] = job_id
         with ProcessLock(self.state.path / 'locks', 'policy'):
-            if self.state.policy()['enabled'] and 'result' in job:
+            if self.state.policy()['enabled'] and ('result' in job or job.get('arguments', {}).get('execution_plan')):
                 try:
                     self._asset(job['asset_id'])
                 except MCPError as error:
@@ -640,10 +653,8 @@ class Service:
                 else:
                     if job.get('arguments', {}).get('execution_plan'):
                         result['execution_plan'] = job['arguments']['execution_plan']
-                    result['result'] = job['result']
-            elif self.state.policy()['enabled'] and job.get('arguments', {}).get('execution_plan'):
-                self._asset(job['asset_id'])
-                result['execution_plan'] = job['arguments']['execution_plan']
+                    if 'result' in job:
+                        result['result'] = job['result']
         return result
 
     def _cancel_job(self, job_id):
@@ -666,7 +677,25 @@ class Service:
         with self.state.mutation('jobs', id) as record:
             if record.get('cancel_requested') and values.get('state') not in _TERMINAL:
                 values['state'] = 'cancelling'
+            if 'stage' in values and values['stage'] != record.get('stage') and 'progress' not in values:
+                values['progress'] = {'stage': values['stage'], 'fraction': None}
             record.update(values)
+            if record.get('state') in _TERMINAL:
+                self._finish_timing(record)
+
+    def _finish_timing(self, record):
+        record.setdefault('finished_at', time.time())
+        clock = self._job_clocks.get(record['id'])
+        if clock is not None:
+            record['elapsed_seconds'] = round(max(0., time.monotonic() - clock), 3)
+        if record['state'] == 'succeeded':
+            record['progress'] = {'stage': 'complete', 'fraction': 1.0}
+
+    def _job_progress(self, job):
+        def update(event):
+            self._checkpoint(job)
+            self._update_job(job['id'], stage=event['stage'], progress=event)
+        return ProgressEmitter(update)
 
     @contextlib.contextmanager
     def _job_commit(self, job):
@@ -680,6 +709,8 @@ class Service:
                 self._checkpoint(job)
                 current = self.state.get('jobs', job['id'])
                 yield current
+                if current.get('state') in _TERMINAL:
+                    self._finish_timing(current)
                 self.state._put('jobs', job['id'], current)
 
     def _worker(self):
@@ -699,6 +730,8 @@ class Service:
                     if not lock.acquire(blocking=True, cancelled=lambda: self._cancelled(job)):
                         raise MCPError('CANCELLED', 'Job cancelled while waiting for inference.')
                     self._checkpoint(job)
+                    self._job_clocks[id] = time.monotonic()
+                    self._update_job(id, started_at=time.time())
                     self._execute(job)
                 finally:
                     lock.release()
@@ -711,6 +744,7 @@ class Service:
             finally:
                 with self._guard:
                     self._events.pop(id, None)
+                    self._job_clocks.pop(id, None)
                 self._queue.task_done()
 
     @contextlib.contextmanager
@@ -720,11 +754,14 @@ class Service:
 
     def _execute(self, job):
         asset = self._checkpoint(job)
+        progress = self._job_progress(job)
+        progress.stage('snapshot')
         with self._workspace(job['id']) as workspace:
             suffix = Path(asset['relative']).suffix.lower()
             with StagedDirectory(workspace) as snapshot:
                 with self.state.file(asset['root_id'], asset['relative'], admitted_generation=job['generation']) as source:
-                    snapshot.copy_from(source, 'media' + suffix, progress=lambda n: None,
+                    size = os.fstat(source.fileno()).st_size
+                    snapshot.copy_from(source, 'media' + suffix, progress=lambda n: progress.progress(n / size if size else 1.),
                                        cancelled=lambda: self._cancelled(job))
                 folder = snapshot.publish('input')
             media = folder / ('media' + suffix)
@@ -758,10 +795,11 @@ class Service:
 
     def _transcribe(self, job, media):
         settings = job['arguments']['settings']
+        progress = self._job_progress(job)
         if self._factory is not None:
             engine = self._factory(**_engine_settings(settings))
             result = _run_engine(engine, settings, media,
-                                 lambda: self._cancelled(job))
+                                 lambda: self._cancelled(job), progress.emit)
             if not result:
                 raise MCPError('CANCELLED', 'Transcription cancelled.')
             if Path(result) != media.with_suffix('.srt'):
@@ -783,13 +821,30 @@ class Service:
                     cancel.set()
                 if message is None and read.poll(.05):
                     try:
-                        message = json.loads(read.recv_bytes(4096).decode())
+                        event = json.loads(read.recv_bytes(4096).decode())
+                        if isinstance(event, dict) and event.get('event') == 'progress':
+                            value = {k: v for k, v in event.items() if k != 'event'}
+                            if not valid_progress(value):
+                                raise ValueError('Invalid progress')
+                            progress.emit(value)
+                        else:
+                            message = event
                     except (ValueError, OSError, EOFError):
                         failure = MCPError('TRANSCRIPTION_FAILED', 'Invalid worker response.')
                 process.join(.05)
             process.join()  # MUST exit before releasing the shared inference lock.
-            if message is None and read.poll():
-                message = json.loads(read.recv_bytes(4096).decode())
+            while read.poll():
+                try:
+                    event = json.loads(read.recv_bytes(4096).decode())
+                except EOFError:
+                    break
+                if isinstance(event, dict) and event.get('event') == 'progress':
+                    value = {k: v for k, v in event.items() if k != 'event'}
+                    if not valid_progress(value):
+                        raise MCPError('TRANSCRIPTION_FAILED', 'Invalid worker progress.')
+                    progress.emit(value)
+                else:
+                    message = event
             if failure:
                 raise failure
             if not isinstance(message, dict) or not message.get('ok'):
@@ -805,6 +860,8 @@ class Service:
 
     def _export(self, job, asset, media, workspace, version):
         arguments = job['arguments']
+        progress = self._job_progress(job)
+        progress.stage('export')
         tracks = self._tracks(job['asset_id'], arguments['track_ids'], job['generation'])
         subtitles = []
         for track in tracks:
@@ -820,7 +877,7 @@ class Service:
             built = SimpleNamespace(folder=build_project(self.state, asset, job, media, workspace,
                 tuple(subtitles), lambda: self._cancelled(job)))
         else:
-            built = export_package(request, app_version='mcp-1', progress=lambda done, total: None,
+            built = export_package(request, app_version='mcp-1', progress=lambda done, total: progress.progress(done / total if total else 1.),
                                    cancelled=lambda: self._cancelled(job))
         self._checkpoint(job)
         if self._asset_hash(asset, job['generation']) != version:
@@ -839,7 +896,9 @@ class Service:
                     name = path.relative_to(built.folder).as_posix()
                     if name == 'media.mp4':
                         with package.open_read(name) as source:
-                            output.copy_from(source, name, progress=lambda n: None,
+                            progress.stage('package')
+                            size = os.fstat(source.fileno()).st_size
+                            output.copy_from(source, name, progress=lambda n: progress.progress(n / size if size else 1.),
                                              cancelled=lambda: self._cancelled(job))
                     else:
                         with contextlib.ExitStack() as stack:

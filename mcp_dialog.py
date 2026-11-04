@@ -491,10 +491,16 @@ class MCPSettingsDialog:
                 title = self.ctk.CTkLabel(header, text=card['title'], font=ui_font(size=15, weight='bold'), anchor='w', justify='left', width=1, height=1)
                 title.pack(side='left', fill='x', expand=True)
                 wrap_to_width(title)
-                for text in (card['kind'], card['description'], *card['models']):
+                for text in (card['kind'], card['description'], *card['models'], card['progress_text'], card['timing_text']):
+                    if not text:
+                        continue
                     label = self.ctk.CTkLabel(row, text=text, anchor='w', justify='left', text_color=MUTED, height=1)
                     label.pack(fill='x', padx=14, pady=3)
                     wrap_to_width(label)
+                if card['progress_fraction'] is not None:
+                    bar = self.ctk.CTkProgressBar(row, height=5)
+                    bar.pack(fill='x', padx=14, pady=(3, 5))
+                    bar.set(card['progress_fraction'])
                 actions = self.ctk.CTkFrame(row, fg_color='transparent')
                 actions.pack(fill='x', padx=14, pady=(6, 10))
                 if card['can_cancel']:

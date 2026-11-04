@@ -300,7 +300,7 @@ class ServiceTests(ServiceFixture):
         with patch.dict(sys.modules, {'transcriber': module}), patch.object(self.api, '_ready'):
             self.api._child_run({'model':'small', 'device':'cpu'}, str(self.media / 'lesson.mp4'),
                                 connection, threading.Event())
-        result = json.loads(messages[0])
+        result = json.loads(messages[-1])
         self.assertTrue(result['ok'])
         self.assertEqual(result['transcription'],
             {'model':'large-v3-turbo', 'device':'mlx', 'backend':'mlx-whisper'})
