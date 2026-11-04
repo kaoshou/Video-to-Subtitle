@@ -12,6 +12,7 @@ const root = resolve(import.meta.dirname, '../..');
 test('project-site routes retain the GitHub Pages prefix', () => {
   assert.equal(routeFor('home'), '/Video-to-Subtitle/');
   assert.equal(routeFor('guide'), '/Video-to-Subtitle/guide/');
+  assert.equal(routeFor('mcp'), '/Video-to-Subtitle/mcp/');
   assert.equal(assetPath('site.css'), '/Video-to-Subtitle/assets/site.css');
   assert.throws(() => routeFor('missing'), /Unsupported page/);
   assert.throws(() => assetPath('../secret'), /Unsafe asset/);
@@ -34,7 +35,7 @@ test('build emits homepage and guide deep links', async () => {
   const out = await mkdtemp(join(tmpdir(), 'video-subtitle-routes-'));
   try {
     await buildSite({ repositoryRoot: root, outputRoot: out });
-    for (const page of ['index.html', 'guide/index.html']) {
+    for (const page of ['index.html', 'guide/index.html', 'mcp/index.html']) {
       assert.match(await readFile(join(out, page), 'utf8'), /Video to Subtitle/);
     }
   } finally {

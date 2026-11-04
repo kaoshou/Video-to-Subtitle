@@ -120,13 +120,52 @@ def main():
 
             app.show_storage_settings()
             capture(app.storage_window, 'screenshot_models.png')
+            app.storage_window.destroy()
+            settle()
+
+            # Only a temporary private MCP state is used; never change an
+            # installed AI client's configuration or start a real model job.
+            from mcp_state import State
+            from mcp_dialog import MCPSettingsDialog
+            state = State(demo / 'mcp-demo')
+            state.configure(True, [], access_mode='general')
+            state.put('assets', 'demo-video', {'id': 'demo-video',
+                'relative': 'Python 程式設計入門.mp4', 'project': {'type': 'mp4'}})
+            dialog = MCPSettingsDialog(app, state=state)
+            try:
+                dialog.top.geometry('940x1040+80+70')
+                settle()
+                dialog.client.set('codex')
+                dialog._notice('示範畫面：使用暫存資料，不影響實際設定與影片。')
+                capture(dialog.top, 'screenshot_mcp_connect.png')
+                state.put('jobs', 'demo-job', {'id': 'demo-job', 'asset_id': 'demo-video',
+                    'kind': 'export', 'state': 'succeeded', 'stage': 'complete', 'elapsed_seconds': 71.9,
+                    'result': {'folder': '/示範教材/Python 程式設計入門-web',
+                        'index_path': '/示範教材/Python 程式設計入門-web/index.html',
+                        'player_type': 'mp4', 'languages': ['zh-TW', 'en', 'ja'],
+                        'cue_counts': {'zh-TW': 136, 'en': 136, 'ja': 136},
+                        'transcriptions': [{'model': 'large-v3-turbo', 'device': 'cuda', 'backend': 'faster-whisper'}],
+                        'review_by_language': {
+                            'zh-TW': {'review_count': 4, 'reason_counts': {'辨識信心偏低': 3, '疑似重複內容': 1}},
+                            'en': {'review_count': 3, 'reason_counts': {'reading_speed': 3}, 'review_status': 'ai_translation_needs_review'},
+                            'ja': {'review_count': 0, 'reason_counts': {}, 'review_status': 'ai_translation_needs_review'}},
+                        'unchecked_languages': []}})
+                dialog.tabs.set('工作狀態')
+                dialog.refresh_jobs()
+                capture(dialog.top, 'screenshot_mcp_jobs.png')
+                dialog.tabs.set('進階管理')
+                capture(dialog.top, 'screenshot_mcp_advanced.png')
+            finally:
+                for worker in dialog.workers:
+                    worker.join(timeout=3)
+                dialog.close()
         finally:
             app.destroy()
 
         (output / 'capture.json').write_text(json.dumps({
             'version': version, 'source_commit': commit, 'platform': platform.system(),
             'method': 'Real application under Xvfb; window client areas; no UI compositing',
-            'fixture': 'Synthetic lecture slide, silent video, hand-written sample subtitles and review signals',
+            'fixture': 'Synthetic lecture slide, silent video, hand-written subtitles, review signals and private MCP demonstration jobs',
             'capture_run': f'https://github.com/{os.environ["GITHUB_REPOSITORY"]}/actions/runs/{os.environ["GITHUB_RUN_ID"]}',
             'captures': captures,
         }, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')

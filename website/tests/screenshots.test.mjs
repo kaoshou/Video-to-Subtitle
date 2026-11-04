@@ -18,7 +18,7 @@ test('published screenshots identify their actual capture version and platform',
   const { renderHome } = await import('../src/content.mjs');
   assert.ok(readme.includes(`截圖均擷取自 **v${version}**`));
   assert.ok(renderHome().includes(`以下為 v${version} 在 Linux`));
-  for (const name of ['screenshot_main.png', 'screenshot_editor.png', 'screenshot_models.png', 'screenshot_advanced.png']) {
+  for (const name of ['screenshot_main.png', 'screenshot_editor.png', 'screenshot_models.png', 'screenshot_advanced.png', 'screenshot_mcp_connect.png', 'screenshot_mcp_jobs.png', 'screenshot_mcp_advanced.png']) {
     const png = await readFile(new URL(name, root));
     const metadata = {};
     for (let offset = 8; offset + 12 <= png.length;) {

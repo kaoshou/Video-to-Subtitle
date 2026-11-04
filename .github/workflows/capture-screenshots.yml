@@ -39,6 +39,9 @@ jobs:
           cp screenshot-artifacts/screenshot_editor.png screenshot_editor.png
           cp screenshot-artifacts/screenshot_models.png screenshot_models.png
           cp screenshot-artifacts/screenshot_advanced.png screenshot_advanced.png
+          cp screenshot-artifacts/screenshot_mcp_connect.png screenshot_mcp_connect.png
+          cp screenshot-artifacts/screenshot_mcp_jobs.png screenshot_mcp_jobs.png
+          cp screenshot-artifacts/screenshot_mcp_advanced.png screenshot_mcp_advanced.png
           cp screenshot-artifacts/capture.json docs/screenshots.json
           npm ci --prefix website
           npm test --prefix website

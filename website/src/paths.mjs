@@ -3,6 +3,7 @@ const base = '/Video-to-Subtitle/';
 export function routeFor(page) {
   if (page === 'home') return base;
   if (page === 'guide') return `${base}guide/`;
+  if (page === 'mcp') return `${base}mcp/`;
   throw new TypeError(`Unsupported page: ${page}`);
 }
 

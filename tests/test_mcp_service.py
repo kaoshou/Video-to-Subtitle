@@ -41,13 +41,15 @@ class ServiceFixture(unittest.TestCase):
             'language': 'en', 'request_id': 'import-one'})
 
     def wait_job(self, id):
-        deadline = time.monotonic() + 10
+        # Export includes Windows safe publication/revalidation and can exceed
+        # ten seconds on shared CI disks; keep a bounded wait with diagnostics.
+        deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             job = self.service.call('get_job', {'job_id': id})
             if job['state'] in ('succeeded', 'failed', 'cancelled', 'interrupted'):
                 return job
             time.sleep(.01)
-        self.fail('Job did not settle')
+        self.fail(f'Job did not settle: {job!r}')
 
 
 class ServiceTests(ServiceFixture):

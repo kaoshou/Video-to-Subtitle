@@ -226,6 +226,10 @@ class ReviewProgressGUI(unittest.TestCase):
         self.root.update()
         self.assertTrue(editor.has_unsaved_changes)
         self.assertIn('未儲存', editor.save_status.cget('text'))
+        # Windows routes key events to the focused window. A synthetic key
+        # without focus can be discarded before reaching the toplevel binding.
+        editor.txt_item_editor._textbox.focus_force()
+        self.root.update()
         editor.txt_item_editor._textbox.event_generate('<Control-s>')
         self.root.update()
         self.assertTrue(editor.winfo_exists())

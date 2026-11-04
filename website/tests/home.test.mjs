@@ -29,7 +29,8 @@ test('hero always links to latest downloads regardless of source version', async
   try {
     await mkdir(join(fixture, 'docs'));
     await copyFile(join(root, 'docs/USER_GUIDE.zh-TW.md'), join(fixture, 'docs/USER_GUIDE.zh-TW.md'));
-    for (const asset of ['app_icon.png', 'screenshot_main.png', 'screenshot_editor.png', 'screenshot_models.png', 'screenshot_advanced.png']) {
+    await copyFile(join(root, 'docs/MCP.zh-TW.md'), join(fixture, 'docs/MCP.zh-TW.md'));
+    for (const asset of ['app_icon.png', 'screenshot_main.png', 'screenshot_editor.png', 'screenshot_models.png', 'screenshot_advanced.png', 'screenshot_mcp_connect.png', 'screenshot_mcp_jobs.png', 'screenshot_mcp_advanced.png']) {
       await copyFile(join(root, asset), join(fixture, asset));
     }
     await mkdir(join(fixture, 'docs/images'));

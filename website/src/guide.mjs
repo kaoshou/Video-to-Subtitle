@@ -1,6 +1,6 @@
 import MarkdownIt from 'markdown-it';
 import { escapeHtml } from './layout.mjs';
-import { assetPath } from './paths.mjs';
+import { assetPath, routeFor } from './paths.mjs';
 
 const markdown = new MarkdownIt({ html: false, linkify: true, typographer: false });
 const guideImages = new Map([
@@ -8,6 +8,9 @@ const guideImages = new Map([
   ['../screenshot_editor.png', 'screenshot_editor.png'],
   ['../screenshot_models.png', 'screenshot_models.png'],
   ['../screenshot_advanced.png', 'screenshot_advanced.png'],
+  ['../screenshot_mcp_connect.png', 'screenshot_mcp_connect.png'],
+  ['../screenshot_mcp_jobs.png', 'screenshot_mcp_jobs.png'],
+  ['../screenshot_mcp_advanced.png', 'screenshot_mcp_advanced.png'],
   ['images/batch-flow.svg', 'batch-flow.svg']
 ]);
 const renderImage = markdown.renderer.rules.image;
@@ -34,6 +37,11 @@ markdown.renderer.rules.table_close = (tokens, index, options, env, renderer) =>
 
 export function rewriteGuideHref(href) {
   if (href === '../README.md') return 'https://github.com/kaoshou/Video-to-Subtitle#readme';
+  if (/^USER_GUIDE\.zh-TW\.md(?:#.*)?$/.test(href)) {
+    const fragment = href.includes('#') ? '#' + href.split('#')[1].replace('批次加速試用', '批次加速-試用') : '';
+    return routeFor('guide') + fragment;
+  }
+  if (href === 'MCP.zh-TW.md') return routeFor('mcp');
   if (/^(https?:|mailto:|#)/i.test(href)) return href;
   throw new Error(`Unresolved guide link: ${href}`);
 }

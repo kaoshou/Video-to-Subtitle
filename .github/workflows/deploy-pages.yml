@@ -6,6 +6,8 @@ on:
     paths:
       - 'website/**'
       - 'docs/USER_GUIDE.zh-TW.md'
+      - 'docs/MCP.zh-TW.md'
+      - 'screenshot_mcp_*.png'
       - 'screenshot_main.png'
       - 'screenshot_editor.png'
       - 'screenshot_models.png'
@@ -18,6 +20,8 @@ on:
     paths:
       - 'website/**'
       - 'docs/USER_GUIDE.zh-TW.md'
+      - 'docs/MCP.zh-TW.md'
+      - 'screenshot_mcp_*.png'
       - 'screenshot_main.png'
       - 'screenshot_editor.png'
       - 'screenshot_models.png'

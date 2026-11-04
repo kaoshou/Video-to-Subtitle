@@ -12,9 +12,12 @@ const requiredAssets = [
   ['screenshot_editor.png', 'screenshot_editor.png'],
   ['screenshot_models.png', 'screenshot_models.png'],
   ['screenshot_advanced.png', 'screenshot_advanced.png'],
+  ['screenshot_mcp_connect.png', 'screenshot_mcp_connect.png'],
+  ['screenshot_mcp_jobs.png', 'screenshot_mcp_jobs.png'],
+  ['screenshot_mcp_advanced.png', 'screenshot_mcp_advanced.png'],
   ['docs/images/batch-flow.svg', 'batch-flow.svg']
 ];
-const routeFiles = ['index.html', 'guide/index.html'];
+const routeFiles = ['index.html', 'guide/index.html', 'mcp/index.html'];
 
 async function writePage(outputRoot, path, html) {
   const directory = join(outputRoot, path);
@@ -95,6 +98,10 @@ export async function buildSite({ repositoryRoot = resolve(websiteRoot, '..'), o
   const toc = guide.toc.map(item => `<li class="toc-level-${item.level}"><a href="#${escapeHtml(item.id)}">${escapeHtml(item.label)}</a></li>`).join('');
   const guideBody = `<div class="container guide-shell"><aside class="guide-sidebar"><nav class="guide-toc" aria-label="本頁目錄"><strong>本頁目錄</strong><ol>${toc}</ol></nav></aside><article class="guide-article">${guide.html}</article></div>`;
   await writePage(outputRoot, 'guide', renderLayout({ title: '完整使用手冊', description: 'Video to Subtitle 完整繁體中文使用手冊', page: 'guide', body: guideBody }));
+  const mcp = renderGuide(await readFile(await required(join(repositoryRoot, 'docs/MCP.zh-TW.md')), 'utf8'));
+  const mcpToc = mcp.toc.map(item => `<li class="toc-level-${item.level}"><a href="#${escapeHtml(item.id)}">${escapeHtml(item.label)}</a></li>`).join('');
+  const mcpBody = `<div class="container guide-shell"><aside class="guide-sidebar"><nav class="guide-toc" aria-label="本頁目錄"><strong>AI 協作指南</strong><ol>${mcpToc}</ol></nav></aside><article class="guide-article">${mcp.html}</article></div>`;
+  await writePage(outputRoot, 'mcp', renderLayout({ title: 'AI 工具連接與多語教材', description: '透過 MCP 結合 AI，本機轉字幕、分批翻譯與多語網頁播放器完整教學', page: 'mcp', body: mcpBody }));
   await validateOutput(outputRoot);
   return outputRoot;
 }
