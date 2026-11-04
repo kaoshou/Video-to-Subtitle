@@ -254,6 +254,7 @@ class ServiceTests(ServiceFixture):
                 fake.model_size = 'medium'
                 fake.device = 'cuda'
                 fake.model_type = 'faster-whisper'
+                fake.last_output_language = 'ja'
             def load_model(fake, **kwargs): pass
             def run(fake, path, **kwargs):
                 output = Path(path).with_suffix('.srt')
@@ -269,6 +270,7 @@ class ServiceTests(ServiceFixture):
         expected = {'model':'medium', 'device':'cuda', 'backend':'faster-whisper'}
         self.assertEqual(finished['result']['transcription'], expected)
         self.assertEqual(self.state.get('sources', finished['result']['source_id'])['transcription'], expected)
+        self.assertEqual(self.state.get('sources', finished['result']['source_id'])['language'], 'ja')
         exported = self.service.call('export_player', dict(asset_id=asset,
             track_ids=[finished['result']['track_id']], request_id='report-export'))
         self.assertEqual(self.wait_job(exported['job_id'])['result']['transcriptions'], [expected])

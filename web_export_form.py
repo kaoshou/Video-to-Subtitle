@@ -6,8 +6,9 @@ import re
 
 from web_export_model import SubtitleSource, TitleState, canonical_language, validate_folder_name
 
-LANGUAGES = {'und': '預設字幕', 'zh-TW': '繁體中文', 'zh-CN': '簡體中文', 'en': '英文',
-             'ja': '日文', 'ko': '韓文', 'fr': '法文', 'de': '德文', 'es': '西班牙文'}
+LANGUAGES = {'und': '未標示語言', 'zh': '中文', 'zh-TW': '繁體中文', 'zh-CN': '簡體中文', 'en': '英文',
+             'ja': '日文', 'ko': '韓文', 'fr': '法文', 'de': '德文', 'es': '西班牙文',
+             'vi': '越南文', 'id': '印尼文', 'th': '泰文', 'my': '緬甸文', 'pt': '葡萄牙文', 'ru': '俄文'}
 
 
 def language_label(value):
@@ -15,6 +16,8 @@ def language_label(value):
 
 
 def language_code(value):
+    if value == '預設字幕':  # Accept older saved form labels.
+        return 'und'
     value = {label: code for code, label in LANGUAGES.items()}.get(value, value)
     try:
         return canonical_language(value)
@@ -84,7 +87,7 @@ def find_subtitle_candidates(video):
             if path.stem != video.stem:
                 if not path.stem.startswith(video.stem + '.'):
                     continue
-                language = language_code(path.stem[len(video.stem) + 1:])
+                language = language_code(re.sub(r'_\d+$', '', path.stem[len(video.stem) + 1:]))
                 if not language:
                     continue
             found.append(SubtitleSource(path, language))

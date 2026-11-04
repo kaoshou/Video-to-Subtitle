@@ -19,6 +19,7 @@ import threading
 from mcp_state import MCPError, ProcessLock, State, _private_directory, file_version, directory_identity
 from mcp_translation import batches, render_srt, validate_batch
 from app_settings import DEFAULT_MODEL
+from subtitle_languages import output_language
 from mcp_projects import inspect_project, project_for_asset, build_project
 from safe_files import SafeDirectory, StagedDirectory
 from web_export import export_package, parse_subtitles
@@ -113,6 +114,9 @@ def _execution_report(engine, settings):
         'model': getattr(engine, 'model_size', settings['model']),
         'device': device,
         'backend': getattr(engine, 'model_type', 'mlx-whisper' if device in ('mlx', 'mps') else 'faster-whisper')},
+        'output_language': output_language(getattr(engine, 'last_output_language', None) or
+                                           settings.get('language'), task=settings.get('task', 'transcribe'),
+                                           force_zh_tw=settings.get('force_zh_tw', False)),
         'batch_decision': decision_summary(getattr(engine, 'last_batch_decision', None))}
 
 
@@ -124,7 +128,8 @@ def _run_engine(engine, settings, media_path, cancelled):
                if key in _SETTINGS and key not in ('model', 'device', 'language', 'batch_mode')}
     if settings.get('batch_mode') == 'auto':
         options['batch_size'] = 'auto'
-    return engine.run(str(media_path), output_format='srt', cancel_check_callback=cancelled, **options)
+    return engine.run(str(media_path), output_format='srt', cancel_check_callback=cancelled,
+                      _tag_language=False, **options)
 
 
 class Service:
@@ -563,7 +568,33 @@ class Service:
         settings = self._settings(settings or {})
         if self._factory is None:
             _ready(settings)
-        return self._admit('transcription', asset_id, {'settings': settings})
+        plan = self._transcription_plan(asset, settings, 'ready' if self._factory is None else 'unknown')
+        return self._admit('transcription', asset_id, {'settings': settings, 'execution_plan': plan})
+
+    def _transcription_plan(self, asset, settings, status):
+        project = project_for_asset(self.state, asset)
+        parent = Path(asset['relative']).parent
+        with self.state.directory(asset['root_id'], '' if parent == Path('.') else parent.as_posix()) as directory:
+            output_parent = str(directory.path)
+        blockers = ([] if status == 'ready' else ['MODEL_ACCESS_ERROR' if status in ('unknown', 'unavailable')
+                                                else 'MODEL_DOWNLOAD_REQUIRED'])
+        return {'settings': {k: v for k, v in settings.items() if k in _SETTINGS},
+                'model_status': status, 'can_start': not blockers, 'blockers': blockers,
+                'source_name': Path(asset['relative']).name, 'output_parent': output_parent,
+                'output_mode': 'private_subtitle_then_new_player_folder_beside_source',
+                'project_type': project['type'], 'hardware_verified': False}
+
+    def _preview_transcription(self, asset_id, settings=None):
+        from transcriber import inspect_model_cache
+        asset = self._asset(asset_id)
+        if asset['kind'] != 'media':
+            raise MCPError('INVALID_ARGUMENT', 'Expected a media asset.')
+        settings = self._settings(settings or {})
+        status = inspect_model_cache(settings['model'], settings.get('cache_dir'), settings['device'])
+        plan = self._transcription_plan(asset, settings, status.state)
+        with ProcessLock(self.state.path / 'locks', 'policy'):
+            self._asset(asset_id)
+            return plan
 
     def _tracks(self, asset_id, track_ids, generation=None):
         if len(set(track_ids)) != len(track_ids):
@@ -607,7 +638,12 @@ class Service:
                     if error.code not in ('ROOT_NOT_ALLOWED', 'SOURCE_CHANGED', 'UNSAFE_PATH', 'MCP_DISABLED'):
                         raise
                 else:
+                    if job.get('arguments', {}).get('execution_plan'):
+                        result['execution_plan'] = job['arguments']['execution_plan']
                     result['result'] = job['result']
+            elif self.state.policy()['enabled'] and job.get('arguments', {}).get('execution_plan'):
+                self._asset(job['asset_id'])
+                result['execution_plan'] = job['arguments']['execution_plan']
         return result
 
     def _cancel_job(self, job_id):
@@ -709,7 +745,7 @@ class Service:
                 self._update_job(job['id'], state='publishing')
                 with self._job_commit(job) as current:
                     result = self._save_source(job['asset_id'], job['asset_id'], version, cues,
-                                               job['arguments']['settings']['language'], text, report['transcription'])
+                                               report['output_language'], text, report['transcription'])
                     if report['batch_decision'] is not None:
                         result['batch_decision'] = report['batch_decision']
                     current.update(state='succeeded', stage='complete', result=result)
@@ -758,7 +794,8 @@ class Service:
                 raise failure
             if not isinstance(message, dict) or not message.get('ok'):
                 raise MCPError((message or {}).get('error', 'TRANSCRIPTION_FAILED'), 'Transcription did not complete.')
-            return {'transcription': message['transcription'], 'batch_decision': message.get('batch_decision')}
+            return {'transcription': message['transcription'], 'batch_decision': message.get('batch_decision'),
+                    'output_language': output_language(message.get('output_language'))}
         finally:
             if process.is_alive():
                 cancel.set()

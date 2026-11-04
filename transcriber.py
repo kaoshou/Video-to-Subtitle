@@ -9,6 +9,7 @@ import json
 import logging
 import stat
 from app_settings import DEFAULT_MODEL
+from subtitle_languages import output_language
 from subtitle_review import collect_segment_review
 from dataclasses import dataclass
 
@@ -845,9 +846,11 @@ class SubtitleTranscriber:
         millis = int(td.microseconds / 1000)
         return f"{hours:02}:{minutes:02}:{secs:02}{separator}{millis:03}"
 
-    def run(self, file_path, log_callback=None, progress_callback=None, cancel_check_callback=None, output_format="srt", initial_prompt=None, task="transcribe", force_zh_tw=False, max_chars=35, hotwords=None, clean_punctuation="space", word_timestamps=True, spacing=True, case_correction=True, vad_filter=True, batch_acceleration=False, batch_size=4, review_callback=None, stage_callback=None):
+    def run(self, file_path, log_callback=None, progress_callback=None, cancel_check_callback=None, output_format="srt", initial_prompt=None, task="transcribe", force_zh_tw=False, max_chars=35, hotwords=None, clean_punctuation="space", word_timestamps=True, spacing=True, case_correction=True, vad_filter=True, batch_acceleration=False, batch_size=4, review_callback=None, stage_callback=None, _tag_language=True):
         """Observers are advisory; only deliver evidence after a successful write."""
         evidence = []
+        self.last_detected_language = None
+        self.last_output_language = 'und'
 
         def notify(callback, *args):
             if callback:
@@ -867,7 +870,7 @@ class SubtitleTranscriber:
                                    output_format, initial_prompt, task, force_zh_tw, max_chars,
                                    hotwords, clean_punctuation, word_timestamps, spacing,
                                    case_correction, vad_filter, batch_acceleration, batch_size,
-                                   evidence, stage)
+                                   evidence, stage, _tag_language)
         except Exception:
             stage('failed')
             raise
@@ -883,7 +886,7 @@ class SubtitleTranscriber:
     def _run_job(self, file_path, log_callback, progress_callback, cancel_check_callback,
                  output_format, initial_prompt, task, force_zh_tw, max_chars, hotwords,
                  clean_punctuation, word_timestamps, spacing, case_correction, vad_filter,
-                 batch_acceleration, batch_size, evidence, stage):
+                 batch_acceleration, batch_size, evidence, stage, _tag_language):
         """Optional batched inference retries into private output, publishing only success."""
         options = dict(log_callback=log_callback, progress_callback=progress_callback,
                        cancel_check_callback=cancel_check_callback, output_format=output_format,
@@ -891,7 +894,7 @@ class SubtitleTranscriber:
                        max_chars=max_chars, hotwords=hotwords, clean_punctuation=clean_punctuation,
                        word_timestamps=word_timestamps, spacing=spacing,
                        case_correction=case_correction, vad_filter=vad_filter,
-                       _review_evidence=evidence, _stage_callback=stage)
+                       _review_evidence=evidence, _stage_callback=stage, _tag_language=_tag_language)
         cancelled = lambda: bool(cancel_check_callback and cancel_check_callback())
         automatic = type(batch_size) is str and batch_size == 'auto'
         self.last_batch_decision = {'requested_mode': 'disabled' if not batch_acceleration else 'auto' if automatic else 'manual',
@@ -1008,7 +1011,9 @@ class SubtitleTranscriber:
                     return None
                 data = Path(result).read_bytes()
                 base = os.path.splitext(os.path.abspath(file_path))[0]
-                if task == 'translate':
+                if options['_tag_language']:
+                    base += '.' + self.last_output_language
+                elif task == 'translate':
                     base += '.en'
                 # Exclusive safe publication preserves existing subtitles and rejects links.
                 with SafeDirectory(os.path.dirname(base)) as destination:
@@ -1034,7 +1039,7 @@ class SubtitleTranscriber:
                 progress_callback(1.0)
             return output
 
-    def _run_once(self, file_path, log_callback=None, progress_callback=None, cancel_check_callback=None, output_format="srt", initial_prompt=None, task="transcribe", force_zh_tw=False, max_chars=35, hotwords=None, clean_punctuation="space", word_timestamps=True, spacing=True, case_correction=True, vad_filter=True, _batch_size=None, _output_path=None, _audio_input=None, _review_evidence=None, _stage_callback=None):
+    def _run_once(self, file_path, log_callback=None, progress_callback=None, cancel_check_callback=None, output_format="srt", initial_prompt=None, task="transcribe", force_zh_tw=False, max_chars=35, hotwords=None, clean_punctuation="space", word_timestamps=True, spacing=True, case_correction=True, vad_filter=True, _batch_size=None, _output_path=None, _audio_input=None, _review_evidence=None, _stage_callback=None, _tag_language=True):
         """
         執行轉錄
         output_format: "srt", "vtt", "txt", "tsv", "json"
@@ -1219,6 +1224,8 @@ class SubtitleTranscriber:
             raise e
         
         total_duration = info.duration
+        self.last_detected_language = getattr(info, 'language', None)
+        self.last_output_language = output_language(self.last_detected_language, task=task, force_zh_tw=force_zh_tw)
         batch_guard = None
         if _batch_size:
             from batch_quality import BatchQualityGuard
@@ -1232,7 +1239,7 @@ class SubtitleTranscriber:
             log_callback(f"影片長度: {datetime.timedelta(seconds=int(total_duration))}")
         
         ext = f".{output_format.lower()}"
-        suffix = ".en" if task == "translate" else ""
+        suffix = '.' + self.last_output_language if _tag_language else '.en' if task == 'translate' else ''
         
         base_output_path = _output_path or (os.path.splitext(file_path)[0] + suffix + ext)
         output_path = base_output_path

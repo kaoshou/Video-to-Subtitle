@@ -239,7 +239,7 @@ def export_package(request, *, app_version, progress, cancelled, accept_warnings
         name = f'media.{language}{source.path.suffix.lower()}'
         resources[name] = text.encode('utf-8')
         manifest_tracks.append({'language': language, 'path': name})
-        tracks.append({'language': language, 'label': '預設字幕' if language == 'und' else language, 'cues': cues})
+        tracks.append({'language': language, 'label': '未標示語言' if language == 'und' else language, 'cues': cues})
     poster = 'poster.png' if request.poster else None
     if poster: resources[poster] = prepare_poster(request.poster)
     default = 'off' if request.default_subtitle == 'off' else canonical_language(request.default_subtitle)

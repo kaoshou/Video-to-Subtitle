@@ -6,6 +6,11 @@
     var CHAPTER_TITLE_LINES = 1;
 
     var languageLabels = {
+        und: "未標示語言",
+        zh: "中文",
+        my: "မြန်မာဘာသာ",
+        pt: "Português",
+        ru: "Русский",
         "zh-TW": "正體中文",
         "zh-CN": "簡體中文",
         "zh-Hant": "正體中文",
@@ -526,8 +531,16 @@
     function getLanguageLabel(track) {
         // Older MP4 exports stored the language code as a label. Resolve
         // those through the common names while retaining real custom labels.
-        return (track.label && track.label !== track.language ? track.label : languageLabels[track.language]) ||
-            track.label || track.language || "字幕";
+        var custom = track.label && track.label !== track.language &&
+            track.label !== "預設字幕" && track.label !== "未標示語言";
+        if (custom) return track.label;
+        if (languageLabels[track.language]) return languageLabels[track.language];
+        try {
+            if (window.Intl && Intl.DisplayNames && track.language) {
+                return new Intl.DisplayNames(["zh-TW"], {type: "language"}).of(track.language);
+            }
+        } catch (error) { /* Invalid legacy tags retain their original code. */ }
+        return track.language || "未標示語言";
     }
 
     function createMenuItem(menu, label, value, onSelect) {

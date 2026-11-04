@@ -3,6 +3,10 @@ from types import MappingProxyType
 from mcp_state import MCPError
 
 SERVER_INSTRUCTIONS = (
+    'Before transcription use preview_transcription to disclose resolved model, device, batch strategy '
+    'and output location. Proceed directly when user intent and settings are clear; ask only for missing '
+    'choices, unavailable models or a proposed strategy change. Preview is read-only and never reserves '
+    'a model or authorizes a different one; start_transcription revalidates. '
     'Transcription runs locally. Your AI client may send returned subtitle text '
     'to its cloud service. Private local storage is not encryption or a promise '
     'that the entire workflow stays offline. '
@@ -38,6 +42,7 @@ SERVER_INSTRUCTIONS = (
 )
 
 TOOL_DESCRIPTIONS = MappingProxyType({
+    'preview_transcription': 'Read-only execution preview: resolved settings, local model readiness, source/project type and output location. No loading, downloading or job submission. Rechecked at start.',
     'get_status': 'Read enabled state, default transcription model/device, downloaded-model catalog for faster-whisper and MLX, authorized roots and job summaries. Read-only offline cache checks, no model loading or downloads.',
     'list_media': 'List media/subtitles and identify OpenCam/EverCam projects by absolute directory/file path or root ID. Each media item reports project_type; general mode needs no folder setup and restricted mode enforces roots.',
     'start_transcription': 'Queue local transcription of an asset using an already downloaded model. Poll the returned job ID.',
@@ -76,6 +81,7 @@ def _schema(properties, required=()):
 
 
 TOOL_SCHEMAS = MappingProxyType({
+    'preview_transcription': _schema({'asset_id': _ID, 'settings': _schema(_SETTINGS)}, ('asset_id',)),
     'get_status': _schema({}),
     'list_media': _schema({'root_id': _ID, 'path': {'type': 'string', 'minLength': 1, 'maxLength': 4096}, 'relative': {'type': 'string', 'maxLength': 4096},
                            'cursor': {'type': 'integer', 'minimum': 0, 'maximum': 4096},

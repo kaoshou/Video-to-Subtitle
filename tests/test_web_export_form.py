@@ -42,8 +42,15 @@ class QuickFormTests(unittest.TestCase):
         self.assertTrue(state.offer_candidates(candidates))
         self.assertEqual([(t.path,t.language) for t in state.tracks], [(preferred,'und')])
         self.assertEqual(state.default_language(), 'und')
-        self.assertEqual(m.language_label('und'), '預設字幕')
+        self.assertEqual(m.language_label('und'), '未標示語言')
         self.assertEqual(m.language_code('預設字幕'), 'und')
+
+    def test_numbered_language_outputs_are_discovered(self):
+        m = self.api(); video = self.touch('media.mp4')
+        tagged = self.touch('media.zh-TW_1.srt')
+        self.touch('media_1.en.srt')
+        self.assertEqual([(s.path, s.language) for s in m.find_subtitle_candidates(video)],
+                         [(tagged, 'zh-TW')])
 
     def test_all_languages_loaded_once_with_vtt_preference_and_exact_matching(self):
         m = self.api(); video = self.touch('lesson.mp4')

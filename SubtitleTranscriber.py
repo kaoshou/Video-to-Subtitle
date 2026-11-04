@@ -1084,12 +1084,10 @@ class SubtitleEditorWindow(DialogWindow):
         
         # 尋找同目錄同名影片
         if not self.video_path and not self.is_txt:
-            base_no_ext, _ = os.path.splitext(file_path)
-            for ext in [".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".m4v", ".ts", ".mp3", ".wav"]:
-                cand = base_no_ext + ext
-                if os.path.exists(cand):
-                    self.video_path = cand
-                    break
+            from subtitle_languages import matching_media
+            matched = matching_media(file_path)
+            if matched:
+                self.video_path = str(matched)
                     
         self.items = []
         self.filtered_indices = []
@@ -4796,7 +4794,7 @@ class App(BaseClass):
                     # before the next 250 ms progress tick.
                     self._poll_stage_tracking(stage_token)
                     self.show_completion_dialog(completed_count, produced_files, produced_sources,
-                                                'en' if task == 'translate' else '')
+                                                'en' if task == 'translate' else 'zh-TW' if use_zh_tw else '')
                 self.after(0, show_results)
             
         except Exception as e:
@@ -4972,6 +4970,11 @@ class App(BaseClass):
 
     def show_completion_dialog(self, count, files, sources=None, subtitle_language=''):
         sources = sources or {}
+        from subtitle_languages import subtitle_language as language_from_path
+
+        def completion_language(path):
+            return subtitle_language or language_from_path(path, sources.get(str(path)))
+
         self.last_completed_files = list(files) if files else []
         if not files:
             messagebox.showinfo("任務完成", f"批次處理結束！\n共成功轉錄 0 個檔案。")
@@ -5036,7 +5039,7 @@ class App(BaseClass):
         bottom_frame.pack(side="bottom", fill="x", padx=24, pady=(10, 16))
 
         def deploy_and_preview_evercam(target_folder, srt_file):
-            target_l = "en" if self.translate_en_var.get() else "zh-TW"
+            target_l = completion_language(srt_file)
             ok, msg, idx_p = evercam.deploy_evercam_player(target_folder, source_srt=srt_file, target_lang=target_l)
             if ok:
                 self.log(f"✅ [EverCam] {msg} ({os.path.basename(target_folder)})")
@@ -5051,11 +5054,11 @@ class App(BaseClass):
 
         if evercam_projects:
             def deploy_all_evercam():
-                target_l = "en" if self.translate_en_var.get() else "zh-TW"
                 success_count = 0
                 first_preview_path = None
                 
                 for c_dir, s_file in evercam_projects.items():
+                    target_l = completion_language(s_file)
                     ok, msg, idx_p = evercam.deploy_evercam_player(c_dir, source_srt=s_file, target_lang=target_l)
                     if ok:
                         success_count += 1
@@ -5247,7 +5250,7 @@ class App(BaseClass):
                     ctk.CTkButton(
                         btn_group, text='OpenCam 置入字幕', width=116, height=26,
                         command=lambda fld=oc_row_dir, s=f_path: self.open_opencam_tool(
-                            fld, (SubtitleSource(Path(s), subtitle_language),))
+                            fld, (SubtitleSource(Path(s), completion_language(s)),))
                     ).pack(side='left', padx=2)
                 else:
                     export_status = ctk.CTkLabel(row_frame, text='', anchor='w', justify='left',
@@ -5259,7 +5262,7 @@ class App(BaseClass):
                         btn_group, text='匯出字幕網頁', width=96, height=26,
                     )
                     export_button.configure(command=lambda v=source_video, s=f_path, b=export_button, t=export_status:
-                        self.export_completion_web(dialog, v, s, subtitle_language, b, t))
+                        self.export_completion_web(dialog, v, s, completion_language(s), b, t))
                     export_button.pack(side='left', padx=2)
 
             # 按鈕 4 (若為 EverCam 專案)：EverCam網頁轉換 (質感翡翠綠特色按鈕)

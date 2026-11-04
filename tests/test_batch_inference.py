@@ -53,6 +53,18 @@ class BatchInference(unittest.TestCase):
             return self.worker.run(str(self.folder / 'media.mp4'),
                                    clean_punctuation='none', spacing=False, **options)
 
+    def test_subtitle_filename_identifies_output_language_in_standard_and_batch_modes(self):
+        for accelerated in (False, True):
+            for task, force, detected, expected in (('transcribe', True, 'zh', 'zh-TW'),
+                    ('translate', True, 'zh', 'en'), ('transcribe', False, 'ja', 'ja'),
+                    ('transcribe', False, 'zh', 'zh')):
+                with self.subTest(accelerated=accelerated, task=task, force=force, detected=detected):
+                    self.info.language = detected
+                    path = Path(self.run_job(batch_acceleration=accelerated, batch_size=4,
+                                             task=task, force_zh_tw=force))
+                    self.assertRegex(path.name, rf'^media\.{expected}(?:_\d+)?\.srt$')
+                    self.assertEqual(self.worker.last_output_language, expected)
+
     def test_batch_preserves_time_prompt_and_output_formats(self):
         for fmt in ('srt', 'vtt', 'txt', 'tsv', 'json'):
             with self.subTest(fmt=fmt):
@@ -149,17 +161,17 @@ class BatchInference(unittest.TestCase):
         from batch_policy import ResourceSnapshot
         self.worker.model_size, self.worker.compute_type = 'small', 'float16'
         self.recognize = lambda size: iter([segment('这是软件与数据库课程')])
-        existing = self.folder / 'media.srt'
+        existing = self.folder / 'media.zh-TW.srt'
         existing.write_text('保留原檔', encoding='utf-8')
         with patch('batch_policy.probe_resources', return_value=ResourceSnapshot(16*1073741824,32*1073741824,8,5*1073741824,8*1073741824)):
             result = self.run_job(batch_acceleration=True, batch_size='auto', force_zh_tw=True)
         self.assertEqual(existing.read_text(encoding='utf-8'), '保留原檔')
-        self.assertEqual(Path(result).name, 'media_1.srt')
+        self.assertEqual(Path(result).name, 'media.zh-TW_1.srt')
         self.assertIn('這是軟體與資料庫課程', Path(result).read_text(encoding='utf-8'))
         self.assertIn('00:00:55,000 --> 00:00:57,000', Path(result).read_text(encoding='utf-8'))
 
     def test_oom_during_iteration_restarts_without_duplicate_or_overwriting_output(self):
-        existing = self.folder / 'media.srt'
+        existing = self.folder / 'media.zh.srt'
         existing.write_text('保留原檔', encoding='utf-8')
         def recognize(size):
             yield segment('失敗嘗試的部分字幕')
@@ -171,7 +183,7 @@ class BatchInference(unittest.TestCase):
         text = Path(path).read_text(encoding='utf-8')
         self.assertIn('標準結果', text)
         self.assertNotIn('失敗嘗試', text)
-        self.assertEqual(Path(path).name, 'media_1.srt')
+        self.assertEqual(Path(path).name, 'media.zh_1.srt')
         self.assertEqual(len(list(self.folder.glob('*.srt'))), 2)
 
     def test_cancel_during_batch_publishes_nothing(self):
@@ -230,6 +242,8 @@ class BatchInference(unittest.TestCase):
         with patch.dict(sys.modules, modules), patch('batch_policy.probe_resources', side_effect=AssertionError('native probe')):
             for enabled in (False, True):
                 path = self.run_job(batch_acceleration=enabled, word_timestamps=True)
+                self.assertRegex(Path(path).name, r'^media\.zh(?:_\d+)?\.srt$')
+                self.assertEqual(self.worker.last_output_language, 'zh')
                 text = Path(path).read_text(encoding='utf-8')
                 self.assertIn('00:00:55,250 --> 00:00:56,750', text)
             self.run_job(batch_acceleration=True, batch_size='auto', word_timestamps=True)

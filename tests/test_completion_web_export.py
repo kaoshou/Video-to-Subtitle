@@ -48,6 +48,18 @@ class CompletionExport(unittest.TestCase):
             self.export()
         self.assertFalse((self.root / '示範課程-web').exists())
 
+    def test_detected_language_survives_numbered_output_and_one_click_export(self):
+        from web_export_dialog import export_completed_video
+        from web_export import load_package
+        tagged = self.subtitle.with_name('示範課程.ja_1.srt')
+        self.subtitle.rename(tagged)
+        result = export_completed_video(self.video, tagged, '', app_version='test',
+            progress=lambda *args: None, cancelled=lambda: False)
+        request = load_package(result.folder).request
+        self.assertEqual(request.default_subtitle, 'ja')
+        self.assertEqual([t.language for t in request.subtitles], ['ja'])
+        self.assertTrue((result.folder / 'media.ja.srt').is_file())
+
     def test_compatibility_warning_preserves_the_full_subtitle_without_prompting(self):
         self.subtitle.write_text('1\n00:00:00,000 --> 00:00:05,000\n保留完整時間軸\n', encoding='utf-8')
         result = self.export()

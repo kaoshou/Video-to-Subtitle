@@ -107,7 +107,7 @@ class Packages(unittest.TestCase):
         self.assertEqual(loaded.request.subtitles[0].language, 'und')
         raw = (result.folder / 'subtitles-data.js').read_text(encoding='utf-8')
         payload = json.loads(raw.split(' = ',1)[1].rstrip(';\n'))
-        self.assertEqual(payload['tracks'][0]['label'], '預設字幕')
+        self.assertEqual(payload['tracks'][0]['label'], '未標示語言')
 
     def test_warning_requires_confirmation(self):
         api = self.api()
