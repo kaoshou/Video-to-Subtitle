@@ -93,9 +93,6 @@ def disable(state, stop_mode='cancel'):
 def open_job_result(state, job_id, *, opener=None):
     """Local explicit action only; validate the recorded publication and grant."""
     from mcp_state import directory_identity, file_version
-    if opener is None:
-        import webbrowser
-        opener = webbrowser.open
     with ProcessLock(state.path / 'locks', 'policy'):
         policy = state.require_enabled()
         job = state.get('jobs', job_id)
@@ -116,4 +113,13 @@ def open_job_result(state, job_id, *, opener=None):
                 if (directory_identity(directory) != job['result_validation']['directory'] or
                         file_version(index) != job['result_validation']['index']):
                     raise MCPError('INVALID_RESULT', 'Published result changed; inspect it locally before opening.')
-                opener((folder / 'index.html').as_uri())
+                try:
+                    if opener is None:
+                        from ui_open import launch_local_page
+                        outcome = launch_local_page(folder / 'index.html')
+                    else:
+                        outcome = opener((folder / 'index.html').as_uri())
+                    if outcome is False:
+                        raise OSError('預設瀏覽器未接受開啟要求。')
+                except (OSError, ValueError) as error:
+                    raise MCPError('OPEN_FAILED', f'無法開啟播放器網頁：{error}') from error

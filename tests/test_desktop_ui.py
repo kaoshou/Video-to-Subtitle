@@ -72,6 +72,31 @@ class DesktopUI(unittest.TestCase):
         self.root.update()
         return self.root
 
+    def test_new_model_default_preserves_saved_choice_and_advanced_hover_is_readable(self):
+        import json
+        import SubtitleTranscriber as desktop
+        load = desktop.App.load_settings
+        app = self.main_app()
+        self.assertEqual(app.get_clean_model_name(), 'large-v3-turbo')
+        app.config_file = str(Path(self.temp.name) / 'saved-settings.json')
+        Path(app.config_file).write_text(json.dumps({'model':'medium'}))
+        load(app)
+        self.assertEqual(app.get_clean_model_name(), 'medium')
+        def luminance(color):
+            rgb = app.winfo_rgb(color)
+            values = [v / 65535 for v in rgb]
+            values = [v / 12.92 if v <= .04045 else ((v + .055) / 1.055) ** 2.4 for v in values]
+            return sum(v * weight for v, weight in zip(values, (.2126, .7152, .0722)))
+        for theme in ('Light', 'Dark'):
+            self.ctk.set_appearance_mode(theme)
+            app.btn_toggle_adv._on_enter()
+            app.update()
+            foreground = app.btn_toggle_adv._text_label.cget('fg')
+            background = app.btn_toggle_adv._canvas.itemcget('inner_parts', 'fill')
+            a, b = sorted((luminance(foreground), luminance(background)))
+            self.assertGreaterEqual((b + .05) / (a + .05), 4.5)
+        self.ctk.set_appearance_mode('Light')
+
     def settle_scaling(self):
         # CTk restores native window-size constraints after one second.
         deadline = time.monotonic() + 1.2

@@ -7,6 +7,7 @@ import sys
 from safe_files import SafeDirectory, atomic_write_text
 
 MAX_SETTINGS_BYTES = 1024 * 1024
+DEFAULT_MODEL = 'large-v3-turbo'
 
 
 def read_settings(path):

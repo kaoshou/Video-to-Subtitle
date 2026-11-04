@@ -28,10 +28,17 @@ SERVER_INSTRUCTIONS = (
     'reported in get_job.result.transcription. Final player export returns transcriptions '
     'for its source tracks: include that information in your completion reply. Never infer '
     'a model from current GUI settings, imported subtitles, or a failed/cancelled job.'
+    ' When the user asks which models are downloaded or wants to choose, call get_status '
+    'and present model_catalog with default_transcription. Only status ready/downloaded '
+    'true means a complete local cache. CPU/CUDA share faster-whisper caches; MLX uses '
+    'a separate cache. Incomplete, unavailable and unknown are distinct from ready or '
+    'missing. Cache readiness does not prove hardware support or successful inference. '
+    'Wait for the user choice, then pass settings.model to start_transcription; do not '
+    'substitute a smaller model. These tools do not download or delete models.'
 )
 
 TOOL_DESCRIPTIONS = MappingProxyType({
-    'get_status': 'Read enabled state, authorized root IDs and job summaries; no media contents.',
+    'get_status': 'Read enabled state, default transcription model/device, downloaded-model catalog for faster-whisper and MLX, authorized roots and job summaries. Read-only offline cache checks, no model loading or downloads.',
     'list_media': 'List media/subtitles and identify OpenCam/EverCam projects by absolute directory/file path or root ID. Each media item reports project_type; general mode needs no folder setup and restricted mode enforces roots.',
     'start_transcription': 'Queue local transcription of an asset using an already downloaded model. Poll the returned job ID.',
     'get_job': 'Poll one accepted job for progress, terminal errors or its completed result.',

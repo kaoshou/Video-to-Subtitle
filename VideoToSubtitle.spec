@@ -7,12 +7,13 @@ from pathlib import Path
 import shutil
 import tempfile
 from PyInstaller.utils.hooks import collect_all
+from third_party import collect_license_datas
 
 windows_bundle = os.environ.get('VTS_WINDOWS_BUNDLE', 'onefile')
 if sys.platform == 'win32' and windows_bundle not in ('onefile', 'onedir'):
     raise ValueError('VTS_WINDOWS_BUNDLE must be onefile or onedir')
 
-datas = []
+datas = [('THIRD_PARTY_NOTICES.md', '.')] + collect_license_datas()
 binaries = []
 hiddenimports = []
 datas += [('pyproject.toml', '.')]

@@ -5,6 +5,7 @@ Direct native engines retain their OS lock for the lifetime of this process:
 dropping a Python engine reference does not prove that MLX caches were freed.
 """
 import multiprocessing
+from app_settings import DEFAULT_MODEL
 
 from mcp_state import MCPError, ProcessLock, State
 
@@ -114,7 +115,7 @@ def _engine_child(connection, cancelled, args, kwargs, engine_factory, state_pat
 
 class ProcessTranscriber:
     """Existing engine contract with one reusable child per GUI batch."""
-    def __init__(self, model_size='small', device='cpu', compute_type='int8', download_root=None,
+    def __init__(self, model_size=DEFAULT_MODEL, device='cpu', compute_type='int8', download_root=None,
                  cpu_threads=4, *, engine_factory=None, state_path=None):
         self.model_size = model_size.split()[0].strip()
         self.device, self.compute_type = device, compute_type

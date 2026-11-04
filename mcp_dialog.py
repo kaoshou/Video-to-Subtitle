@@ -6,7 +6,7 @@ import threading
 import time
 
 from mcp_state import MCPError, State
-from ui_theme import ui_font, wrap_to_width, secondary_button_style, ACCENT, HOVER, MUTED, SURFACE, BACKGROUND, BORDER
+from ui_theme import ui_font, wrap_to_width, secondary_button_style, ACCENT, HOVER, MUTED, SURFACE, BACKGROUND, BORDER, CARD
 
 _CLIENTS = (
     ('codex', 'Codex'), ('claude-code', 'Claude Code'), ('claude-desktop', 'Claude Desktop'),
@@ -30,6 +30,8 @@ class MCPSettingsDialog:
         self.busy = self.closed = False
         self._policy_ready = False
         self._jobs_due = None
+        self._jobs_signature = None
+        self._expanded_jobs = set()
         from ui_windows import DialogWindow, show_dialog
         self.top = DialogWindow(parent)
         self.top.title('AI 工具連接')
@@ -58,6 +60,7 @@ class MCPSettingsDialog:
         wrap_to_width(self.notice)
         self.button(footer, '關閉', self.close).pack(side='right')
         self.tabs = ctk.CTkTabview(self.top, corner_radius=14)
+        self.tabs.configure(command=lambda: setattr(self, '_jobs_due', 0) if self.tabs.get() == '工作狀態' else None)
         self.tabs.pack(fill='both', expand=True, padx=18, pady=4)
         self.pages = {}
         for name in ('開始連接', '工作狀態', '進階管理'):
@@ -210,13 +213,14 @@ class MCPSettingsDialog:
             return False
         return True
 
-    def _submit(self, operation, done):
+    def _submit(self, operation, done, *, quiet=False):
         if self.closed or self.busy:
             if not self.closed:
                 self._notice('正在處理上一個操作，請稍候。')
             return
         self.busy = True
-        self._notice('正在處理…')
+        if not quiet:
+            self._notice('正在處理…')
         def work():
             try:
                 self.events.put((done, operation(), None))
@@ -467,36 +471,68 @@ class MCPSettingsDialog:
     def refresh_jobs(self):
         self._jobs_due = time.monotonic() + 2
         def display(jobs):
+            from mcp_jobs import job_card
+            signature = json.dumps(jobs, sort_keys=True, ensure_ascii=False)
+            if signature == self._jobs_signature:
+                return
+            self._jobs_signature = signature
             for child in self.jobs_frame.winfo_children():
                 child.destroy()
+            if not jobs:
+                self.description(self.jobs_frame, '目前沒有工作。\n回到 AI 對話提供影片路徑，即可開始產生字幕。')
             for job in jobs:
-                row = self.ctk.CTkFrame(self.jobs_frame, fg_color='transparent')
-                row.pack(fill='x', pady=3)
-                if job['state'] not in _TERMINAL:
-                    self.button(row, '取消工作', lambda key=job['id']: self.cancel_job(key)).pack(side='right')
-                elif job['state'] == 'succeeded' and job.get('result', {}).get('index_path'):
-                    self.button(row, '開啟結果', lambda key=job['id']: self.open_result(key)).pack(side='right')
-                details = f"{job['id']}\n{job['state']}"
-                if job.get('stage'):
-                    details += ' · ' + job['stage']
-                if job.get('error'):
-                    details += '\n' + job['error'].get('code', '') + ': ' + job['error'].get('message', '')[:400]
-                if job['state'] == 'succeeded':
-                    result = job.get('result', {})
-                    reports = ([result['transcription']] if result.get('transcription') else result.get('transcriptions', []))
-                    for info in reports:
-                        device = 'MLX' if info['device'] in ('mlx', 'mps') else info['device'].upper()
-                        details += f"\n轉錄模型：{info['model']} · {device} · {info['backend']}"
-                label = self.ctk.CTkLabel(row, text=details, justify='left', anchor='w')
-                label.pack(fill='x', expand=True)
-                wrap_to_width(label)
-            self._notice(f'共有 {len(jobs)} 個工作。關閉設定視窗不會停止已接受的工作。')
-        self._submit(lambda: self.state.records('jobs'), display)
+                card = job_card(job)
+                row = self.ctk.CTkFrame(self.jobs_frame, fg_color=CARD, border_width=1, border_color=BORDER)
+                row.pack(fill='x', pady=(0, 10))
+                header = self.ctk.CTkFrame(row, fg_color='transparent')
+                header.pack(fill='x', padx=14, pady=(12, 2))
+                self.ctk.CTkLabel(header, text=card['status'], fg_color=SURFACE,
+                    corner_radius=10, width=90, height=28).pack(side='right', padx=(8, 0))
+                title = self.ctk.CTkLabel(header, text=card['title'], font=ui_font(size=15, weight='bold'), anchor='w', justify='left', width=1, height=1)
+                title.pack(side='left', fill='x', expand=True)
+                wrap_to_width(title)
+                for text in (card['kind'], card['description'], *card['models']):
+                    label = self.ctk.CTkLabel(row, text=text, anchor='w', justify='left', text_color=MUTED, height=1)
+                    label.pack(fill='x', padx=14, pady=3)
+                    wrap_to_width(label)
+                actions = self.ctk.CTkFrame(row, fg_color='transparent')
+                actions.pack(fill='x', padx=14, pady=(6, 10))
+                if card['can_cancel']:
+                    self.button(actions, '取消工作', lambda key=job['id']: self.cancel_job(key)).pack(side='right')
+                if card['can_open']:
+                    self.primary_button(actions, '開啟播放器', lambda key=job['id']: self.open_result(key)).pack(side='right')
+                technical = self.ctk.CTkLabel(row, text=card['technical'], anchor='w', justify='left', text_color=MUTED, height=1)
+                wrap_to_width(technical)
+                def toggle(key=job['id'], label=technical):
+                    if key in self._expanded_jobs:
+                        self._expanded_jobs.remove(key)
+                        label.pack_forget()
+                    else:
+                        self._expanded_jobs.add(key)
+                        label.pack(fill='x', padx=14, pady=(0, 12))
+                self.button(actions, '詳細資訊', toggle).pack(side='left')
+                if job['id'] in self._expanded_jobs:
+                    technical.pack(fill='x', padx=14, pady=(0, 12))
+            active = sum(job['state'] not in _TERMINAL for job in jobs)
+            completed = sum(job['state'] == 'succeeded' for job in jobs)
+            self._notice(f'共 {len(jobs)} 個工作 · {active} 個處理中 · {completed} 個已完成。關閉此視窗不影響工作。')
+        def load():
+            jobs = self.state.records('jobs')
+            for job in jobs:
+                if job.get('asset_id'):
+                    try:
+                        asset = self.state.get('assets', job['asset_id'])
+                    except MCPError:
+                        continue
+                    job['display_name'] = Path(asset['relative']).name
+                    job['project_type'] = asset.get('project', {}).get('type')
+            return jobs
+        self._submit(load, display, quiet=True)
 
     def open_result(self, job_id):
         from mcp_runtime import open_job_result
         self._submit(lambda: open_job_result(self.state, job_id),
-                     lambda value: self._notice('已驗證授權與成果，並要求瀏覽器開啟。'))
+                     lambda value: self._notice('已開啟播放器網頁。'))
 
     def cleanup_work(self):
         from mcp_cleanup import preview_cleanup, apply_cleanup

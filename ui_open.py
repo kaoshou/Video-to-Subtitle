@@ -6,6 +6,18 @@ import webbrowser
 from tkinter import messagebox
 
 
+def launch_local_page(path):
+    """Launch without Tk calls, so background jobs can report errors safely."""
+    target = Path(path).absolute()
+    if not target.is_file():
+        raise FileNotFoundError(f'找不到網頁檔案：{target}')
+    if sys.platform == 'win32':
+        os.startfile(str(target))
+    elif not webbrowser.open_new_tab(target.as_uri()):
+        raise OSError(f'預設瀏覽器未接受網頁：{target}')
+    return True
+
+
 def open_local_page(path, *, parent=None):
     """Use Windows' file association, not the handler for a file:// URL.
 
@@ -13,13 +25,7 @@ def open_local_page(path, *, parent=None):
     and percent signs remain literal parts of the exported filename.
     """
     try:
-        target = Path(path).absolute()
-        if not target.is_file():
-            raise FileNotFoundError(f'找不到網頁檔案：{target}')
-        if sys.platform == 'win32':
-            os.startfile(str(target))
-        elif not webbrowser.open_new_tab(target.as_uri()):
-            raise OSError(f'預設瀏覽器未接受網頁：{target}')
+        launch_local_page(path)
     except (OSError, ValueError, TypeError) as error:
         messagebox.showerror('無法開啟網頁',
                              f'{error}\n\n請確認網頁檔案仍存在，且已設定預設網頁瀏覽器。',

@@ -8,6 +8,7 @@ from tqdm.auto import tqdm
 import json
 import logging
 import stat
+from app_settings import DEFAULT_MODEL
 from subtitle_review import collect_segment_review
 from dataclasses import dataclass
 
@@ -696,7 +697,7 @@ def download_model_with_progress(model_size, download_root=None, device="cpu", l
 
 
 class SubtitleTranscriber:
-    def __init__(self, model_size="small", device="cpu", compute_type="int8", download_root=None, cpu_threads=4):
+    def __init__(self, model_size=DEFAULT_MODEL, device="cpu", compute_type="int8", download_root=None, cpu_threads=4):
         self.model_size = model_size.split()[0].strip()
         self.device = device
         self.compute_type = compute_type
@@ -1079,7 +1080,7 @@ class SubtitleTranscriber:
                 log_callback(f"啟用提示詞優化: {initial_prompt}")
             
             if hotwords:
-                log_callback(f"啟用熱詞補強: {hotwords}")
+                log_callback(f"啟用專有名詞提示: {hotwords}")
                 
             log_callback(f"精準時間軸: {'開啟' if word_timestamps else '關閉'}")
             log_callback(f"VAD 靜音過濾: {'開啟' if vad_filter else '關閉'}")

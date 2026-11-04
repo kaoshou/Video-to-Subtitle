@@ -173,6 +173,7 @@ class ServiceTests(ServiceFixture):
         self.assertEqual(raised.exception.code, 'ROOT_NOT_ALLOWED')
 
     def test_batch_settings_auto_default_legacy_manual_and_conflict(self):
+        self.assertEqual(self.service._settings({})['model'], 'large-v3-turbo')
         self.assertEqual(self.service._settings({})['batch_mode'], 'auto')
         self.assertTrue(self.service._settings({})['batch_acceleration'])
         self.assertFalse(self.service._settings({'batch_acceleration':False})['batch_acceleration'])
@@ -182,6 +183,70 @@ class ServiceTests(ServiceFixture):
             self.service._settings({'batch_mode':'auto','batch_size':8})
         self.assertEqual(error.exception.code, 'INVALID_ARGUMENT')
         self.assertIn('batch_size', str(error.exception))
+
+    def test_explicit_and_saved_models_override_new_install_default(self):
+        self.state.configure(True, [self.media], model='medium')
+        self.assertEqual(self.service._settings({})['model'], 'medium')
+        self.assertEqual(self.service._settings({'model':'large-v3'})['model'], 'large-v3')
+
+    def test_status_lists_downloaded_models_for_each_backend_without_loading_or_downloading(self):
+        cache = self.root / 'cache'
+        snapshot = cache / 'models--Systran--faster-whisper-medium' / 'snapshots' / 'test'
+        snapshot.mkdir(parents=True)
+        for name in ('config.json', 'tokenizer.json', 'vocabulary.json'):
+            (snapshot / name).write_text('{}')
+        with (snapshot / 'model.bin').open('wb') as stream:
+            stream.truncate(6 * 1024 * 1024)
+        refs = snapshot.parent.parent / 'refs'
+        refs.mkdir()
+        (refs / 'main').write_text('test')
+        partial = cache / 'models--Systran--faster-whisper-small' / 'refs'
+        partial.mkdir(parents=True)
+        (partial / 'main').write_text('partial')
+        self.state.configure(True, [self.media], model='medium', device='cuda', cache_dir=str(cache))
+        before = (snapshot / 'model.bin').stat()
+        with patch('transcriber.download_model_with_progress', side_effect=AssertionError('must remain offline')):
+            result = self.service.call('get_status', {})
+        self.assertEqual(result['default_transcription'],
+            {'model':'medium', 'device':'cuda', 'backend':'faster-whisper'})
+        self.assertTrue(result['model_ready'])
+        self.assertEqual(len(result['model_catalog']), 6)
+        models = {row['model']: row for row in result['model_catalog']}
+        self.assertEqual(models['medium']['backends']['faster-whisper'], {'status':'ready', 'downloaded':True})
+        self.assertEqual(models['medium']['backends']['mlx-whisper'], {'status':'missing', 'downloaded':False})
+        self.assertEqual(models['small']['backends']['faster-whisper']['status'], 'incomplete')
+        self.assertFalse(models['tiny']['backends']['faster-whisper']['downloaded'])
+        self.assertNotIn(str(self.root), json.dumps(result))
+        after = (snapshot / 'model.bin').stat()
+        self.assertEqual((before.st_ino, before.st_size, before.st_mtime_ns),
+                         (after.st_ino, after.st_size, after.st_mtime_ns))
+
+    def test_direct_model_folder_does_not_claim_every_size_is_downloaded(self):
+        direct = self.root / 'direct-model'
+        direct.mkdir()
+        for name in ('config.json', 'tokenizer.json', 'vocabulary.json'):
+            (direct / name).write_text('{}')
+        with (direct / 'model.bin').open('wb') as stream:
+            stream.truncate(6 * 1024 * 1024)
+        self.state.configure(True, [self.media], model='medium', device='cpu', cache_dir=str(direct))
+        rows = self.service.call('get_status', {})['model_catalog']
+        ready = [r['model'] for r in rows if r['backends']['faster-whisper']['downloaded']]
+        self.assertEqual(ready, ['medium'])
+        unknown = next(r for r in rows if r['model'] == 'tiny')['backends']['faster-whisper']
+        self.assertEqual(unknown, {'status':'unknown', 'downloaded':None})
+
+    def test_model_catalog_keeps_access_errors_distinct_from_missing_and_disabled_does_not_scan(self):
+        from types import SimpleNamespace
+        with patch('transcriber.inspect_model_cache', return_value=SimpleNamespace(state='unavailable')) as inspect:
+            result = self.service.call('get_status', {})
+            self.assertEqual(result['model_error'], 'MODEL_ACCESS_ERROR')
+            self.assertTrue(all(b['status'] == 'unavailable' and b['downloaded'] is None
+                for r in result['model_catalog'] for b in r['backends'].values()))
+            self.state.disable()
+            inspect.reset_mock()
+            disabled = self.service.call('get_status', {})
+            inspect.assert_not_called()
+            self.assertNotIn('model_catalog', disabled)
 
     def test_actual_transcription_model_is_reported_persisted_and_carried_to_export(self):
         class Fake:

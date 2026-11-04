@@ -18,6 +18,7 @@ import threading
 
 from mcp_state import MCPError, ProcessLock, State, _private_directory, file_version, directory_identity
 from mcp_translation import batches, render_srt, validate_batch
+from app_settings import DEFAULT_MODEL
 from mcp_projects import inspect_project, project_for_asset, build_project
 from safe_files import SafeDirectory, StagedDirectory
 from web_export import export_package, parse_subtitles
@@ -265,8 +266,16 @@ class Service:
                   'jobs': [{'job_id': j['id'], 'state': j['state']} for j in self.state.records('jobs')]}
         if policy['enabled']:
             try:
-                _ready(self._settings({}))
-                result['model_ready'] = True
+                from mcp_models import backend_for, model_catalog
+                settings = self._settings({})
+                backend = backend_for(settings['device'])
+                result['default_transcription'] = {'model': settings['model'], 'device': settings['device'], 'backend': backend}
+                result['model_catalog'] = model_catalog(settings)
+                selected = next(r for r in result['model_catalog'] if r['model'] == settings['model'])['backends'][backend]
+                result['model_ready'] = selected['status'] == 'ready'
+                if not result['model_ready']:
+                    result['model_error'] = ('MODEL_ACCESS_ERROR' if selected['status'] in ('unavailable', 'unknown')
+                                             else 'MODEL_DOWNLOAD_REQUIRED')
             except MCPError as error:
                 result.update(model_ready=False, model_error=error.code)
         return result
@@ -507,7 +516,7 @@ class Service:
 
     def _settings(self, settings):
         policy = self.state.policy().get('options', {})
-        result = {'model': policy.get('model', 'small'), 'device': policy.get('device', 'cpu'), **settings}
+        result = {'model': policy.get('model', DEFAULT_MODEL), 'device': policy.get('device', 'cpu'), **settings}
         result.setdefault('batch_acceleration', True)
         _validate({k: v for k, v in result.items() if k in _SETTINGS}, _schema(_SETTINGS))
         result.setdefault('batch_mode', 'manual' if 'batch_size' in result else 'auto')

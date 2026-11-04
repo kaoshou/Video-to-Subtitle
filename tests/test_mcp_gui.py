@@ -131,10 +131,23 @@ class MCPGuiTests(unittest.TestCase):
         self.assertIn('不是加密', dialog.privacy_notice.cget('text'))
         dialog.refresh_jobs()
         self.settle()
-        texts = [str(child.cget('text')) for row in dialog.jobs_frame.winfo_children()
-                 for child in row.winfo_children() if isinstance(child, (dialog.ctk.CTkLabel, dialog.ctk.CTkButton))]
-        self.assertTrue(any('INVALID_SUBTITLE' in text and 'subtitle' in text for text in texts), texts)
-        self.assertIn('開啟結果', texts)
+        dialog.tabs.set('工作狀態')
+        self.root.update()
+        def widgets(parent):
+            for child in parent.winfo_children():
+                if isinstance(child, (dialog.ctk.CTkLabel, dialog.ctk.CTkButton)):
+                    yield child
+                yield from widgets(child)
+        visible = [w for w in widgets(dialog.jobs_frame) if w.winfo_ismapped()]
+        texts = [str(w.cget('text')) for w in visible]
+        self.assertTrue(any('字幕格式無法讀取' in text for text in texts), texts)
+        self.assertFalse(any('INVALID_SUBTITLE' in text for text in texts))
+        self.assertIn('開啟播放器', texts)
+        for widget in visible:
+            if isinstance(widget, dialog.ctk.CTkButton) and widget.cget('text') == '詳細資訊':
+                widget.invoke()
+        self.root.update()
+        self.assertTrue(any('INVALID_SUBTITLE' in w.cget('text') for w in widgets(dialog.jobs_frame) if w.winfo_ismapped()))
 
     def test_cleanup_confirmation_names_unfinished_translations_and_requires_consent(self):
         self.state.put('drafts', 'pending', {'id': 'pending', 'text': 'unfinished'})
@@ -416,13 +429,52 @@ class MCPGuiTests(unittest.TestCase):
         texts = []
         while time.monotonic() < deadline:
             self.root.update()
-            texts = [widget.cget('text') for row in dialog.jobs_frame.winfo_children()
-                     for widget in row.winfo_children() if isinstance(widget, dialog.ctk.CTkLabel)]
-            if any('succeeded' in text for text in texts):
+            def labels(parent):
+                for widget in parent.winfo_children():
+                    if isinstance(widget, dialog.ctk.CTkLabel) and widget.winfo_manager():
+                        yield widget.cget('text')
+                    yield from labels(widget)
+            texts = list(labels(dialog.jobs_frame))
+            if any('已完成' in text for text in texts):
                 break
             time.sleep(.01)
-        self.assertTrue(any('succeeded' in text for text in texts), texts)
-        self.assertTrue(any('轉錄模型：medium · CUDA · faster-whisper' in text for text in texts), texts)
+        self.assertTrue(any('已完成' in text for text in texts), texts)
+        self.assertTrue(any('轉錄模型：medium · CUDA' in text for text in texts), texts)
+        self.assertFalse(any('watched-job' in text or 'succeeded' in text for text in texts), texts)
+
+    def test_job_cards_name_sources_and_preserve_expanded_details_on_refresh(self):
+        asset = 'job-source'
+        self.state.put('assets', asset, {'id':asset, 'relative':'課程/' + '課程名稱' * 12 + '.mp4',
+                                        'project':{'type':'evercam'}})
+        self.state.put('jobs', 'opaque-id', {'id':'opaque-id', 'asset_id':asset,
+            'kind':'export', 'state':'succeeded', 'stage':'complete',
+            'result':{'index_path':str(self.path / 'index.html'), 'player_type':'evercam'}})
+        dialog = self.open()
+        dialog.tabs.set('工作狀態')
+        dialog.refresh_jobs()
+        self.settle()
+        self.root.update()
+        def descendants(parent):
+            for widget in parent.winfo_children():
+                yield widget
+                yield from descendants(widget)
+        labels = [w for w in descendants(dialog.jobs_frame) if isinstance(w, dialog.ctk.CTkLabel)]
+        texts = [w.cget('text') for w in labels if w.winfo_ismapped()]
+        self.assertTrue(any('課程名稱' in t for t in texts), texts)
+        title = next(w for w in labels if '課程名稱' in w.cget('text'))
+        self.assertLessEqual(title.winfo_rootx() + title.winfo_width(), dialog.top.winfo_rootx() + dialog.top.winfo_width())
+        self.assertIn('建立網頁播放器 · EverCam', texts)
+        self.assertFalse(any('opaque-id' in t for t in texts))
+        button = next(w for w in descendants(dialog.jobs_frame)
+                      if isinstance(w, dialog.ctk.CTkButton) and w.cget('text') == '詳細資訊')
+        button.invoke()
+        self.root.update()
+        detail = next(w for w in labels if '工作代碼：opaque-id' in w.cget('text'))
+        self.assertTrue(detail.winfo_ismapped())
+        dialog.refresh_jobs()
+        self.settle()
+        self.assertTrue(detail.winfo_exists())
+        self.assertTrue(detail.winfo_ismapped())
 
     def test_main_close_waits_for_owned_batch_to_finish_cooperatively(self):
         import SubtitleTranscriber as desktop

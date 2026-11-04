@@ -152,6 +152,12 @@ def run_smoke(launcher=None, backend=None):
                         if time.monotonic() >= deadline:
                             raise TimeoutError('Backend readiness')
                         time.sleep(.05)
+                inventory = bridge.call('get_status', {})
+                assert inventory['default_transcription']['model'] == 'large-v3-turbo', inventory
+                assert len(inventory['model_catalog']) == 6
+                assert all(not backend['downloaded'] for row in inventory['model_catalog']
+                           for backend in row['backends'].values())
+                assert not (parent / 'no-models').exists(), 'Read-only inventory created a model cache'
                 items = bridge.call('list_media', {'root_id': policy['roots'][0]['id']})['items']
                 ids = {item['name']: item['asset_id'] for item in items}
                 source = bridge.call('import_subtitle', {'media_id': ids['lesson.mp4'],

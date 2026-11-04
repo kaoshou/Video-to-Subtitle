@@ -2,6 +2,7 @@
 """Build first; the GUI spec embeds this standalone, console-enabled payload."""
 import sys
 from PyInstaller.utils.hooks import copy_metadata
+from third_party import collect_license_datas
 
 excluded = [
     'mcp_service', 'mcp_inference', 'mcp_runtime', 'mcp_dialog', 'mcp_clients',
@@ -10,7 +11,7 @@ excluded = [
     'faster_whisper', 'ctranslate2', 'torch', 'mlx', 'mlx_whisper', 'mlx_metal',
     'av', 'PIL', 'numpy', 'scipy', 'numba', 'sounddevice', 'opencc',
 ]
-a = Analysis(['mcp_launcher.py'], pathex=[], binaries=[], datas=copy_metadata('mcp'),
+a = Analysis(['mcp_launcher.py'], pathex=[], binaries=[], datas=copy_metadata('mcp') + collect_license_datas(),
              hiddenimports=[], hookspath=[], hooksconfig={}, runtime_hooks=[],
              excludes=excluded, noarchive=False, optimize=0)
 pyz = PYZ(a.pure)

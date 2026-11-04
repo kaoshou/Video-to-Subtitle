@@ -9,6 +9,20 @@ from test_mcp_service import ServiceFixture, SRT
 
 
 class AuthorizationFixTests(ServiceFixture):
+    def test_default_opener_uses_the_published_windows_filename_not_a_file_url(self):
+        source = self.imported()
+        accepted = self.service.call('export_player', {'asset_id':self.assets()['lesson.mp4'],
+            'track_ids':[source['track_id']], 'request_id':'windows-open'})
+        job = self.wait_job(accepted['job_id'])
+        import ui_open
+        from mcp_runtime import open_job_result
+        opened = []
+        with patch.object(ui_open.sys, 'platform', 'win32'), \
+             patch.object(ui_open.os, 'startfile', side_effect=opened.append, create=True), \
+             patch.object(ui_open.webbrowser, 'open', side_effect=AssertionError('wrong browser URL handler')):
+            open_job_result(self.state, accepted['job_id'])
+        self.assertEqual(opened, [job['result']['index_path']])
+
     def test_export_attests_pinned_stage_without_reopening_delete_leased_folder(self):
         # Windows refuses a new non-delete-shared open while the exclusive
         # publisher still holds its DELETE-capable handle. Keep that lease.

@@ -14,7 +14,7 @@ from pathlib import Path
 from web_export_dialog import WebExportDialog, completion_video, ExportJob, export_completed_video
 from web_export_model import SubtitleSource
 from safe_files import atomic_write_text
-from app_settings import resolve_settings_path, read_settings, write_settings
+from app_settings import DEFAULT_MODEL, resolve_settings_path, read_settings, write_settings
 from ui_theme import (install_theme, ui_font, wrap_to_width, secondary_button_style, HoverHint, attach_placeholder, BACKGROUND, CARD,
                       SURFACE, BORDER, TEXT, MUTED, ACCENT, HOVER, FONT_FAMILY)
 from ui_drop import dropped_paths, register_file_drop
@@ -2834,7 +2834,7 @@ class App(BaseClass):
         self.cancel_flag = False
         self.file_list = [] # 儲存多個檔案路徑
         self.available_models = ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"]
-        self.model_var = ctk.StringVar(value="medium")
+        self.model_var = ctk.StringVar(value=DEFAULT_MODEL)
         self.device_var = ctk.StringVar(value="cpu")
         self.format_var = ctk.StringVar(value="srt")
         self.zh_tw_var = ctk.BooleanVar(value=False) 
@@ -3216,7 +3216,7 @@ class App(BaseClass):
 
         # 進階設定折疊按鈕 (移除 Emoji)
         self.btn_toggle_adv = ctk.CTkButton(self.settings_frame, text="顯示進階設定", 
-                                           fg_color="transparent", border_width=1, text_color=("gray10", "#DCE4EE"),
+                                           **secondary_button_style(),
                                            command=self.toggle_advanced_settings, height=26)
         self.btn_toggle_adv.grid(row=5, column=0, columnspan=4, sticky="w", padx=15, pady=(2, 8))
 
@@ -3243,7 +3243,7 @@ class App(BaseClass):
                                            font=ui_font(size=12), checkbox_width=18, checkbox_height=18)
         self.chk_spacing.grid(row=0, column=1, padx=(4, 4), pady=(6, 3), sticky="w")
         
-        self.chk_case_corr = ctk.CTkCheckBox(self.adv_settings_frame, text="熱詞大小寫自動校正", variable=self.case_correction_var,
+        self.chk_case_corr = ctk.CTkCheckBox(self.adv_settings_frame, text="專有名詞大小寫自動校正", variable=self.case_correction_var,
                                              font=ui_font(size=12), checkbox_width=18, checkbox_height=18)
         self.chk_case_corr.grid(row=1, column=0, padx=(12, 4), pady=3, sticky="w")
         
@@ -3403,7 +3403,7 @@ class App(BaseClass):
         """從選單文字中取得乾淨的模型名稱 (例如從 'large-v3-turbo [已下載]' 取出 'large-v3-turbo')"""
         val = raw_val if raw_val is not None else self.model_var.get()
         if not val:
-            return "medium"
+            return DEFAULT_MODEL
         return val.split()[0].strip()
 
     def refresh_model_menu(self, preferred_model=None):
@@ -3437,7 +3437,7 @@ class App(BaseClass):
             if matched_item:
                 self.model_var.set(matched_item)
             elif new_values:
-                self.model_var.set(new_values[0])
+                self.model_var.set(next((value for value in new_values if value.split()[0] == DEFAULT_MODEL), new_values[0]))
                 
         self.update_download_button_state()
 
@@ -4061,9 +4061,9 @@ class App(BaseClass):
             "   • 特定領域演講/課程：例如「這是一場關於機器學習與 Python 資料科學的線上教學。」\n"
             "   • 訪談對話風格：例如「以下是主持人與來賓關於全球科技趨勢的深度訪談。」\n"
             "   • 多語種或專有名詞情境：引導模型建立正確的詞彙理解方向。\n\n"
-            "3. 與「熱詞補強 (Hotwords)」的差異：\n"
+            "3. 與「專有名詞 (Hotwords)」的差異：\n"
             "   • 前導提示詞：適合「完整語意句子」，奠定整篇語境與文風風格。\n"
-            "   • 熱詞補強：適合「以逗號分隔的特定單詞/人名/術語」，精準提升該詞彙的命中率。\n"
+            "   • 專有名詞：適合「以逗號分隔的特定單詞/人名/術語」，協助模型辨識這些詞彙。\n"
             "   • 兩者可同時搭配使用，達到最佳的轉錄精準度！\n\n"
             "4. 注意事項：\n"
             "   • 請保持精簡扼要（建議 1~3 句話以內），避免填寫過長造成注意力分散。\n"
@@ -4074,7 +4074,7 @@ class App(BaseClass):
 
     def show_hotwords_help(self):
         help_msg = (
-            "【熱詞補強 (Hotwords) 使用說明】\n\n"
+            "【專有名詞 (Hotwords) 使用說明】\n\n"
             "這個功能可以幫助模型更精準地辨識專用術語、人名或品牌名。\n\n"
             "1. 如何輸入：在欄位中輸入詞彙，並使用「半型逗號 (,)」或「全型逗號 (，)」隔開。\n"
             "   例如：Python, TensorFlow, 鄭郁翰\n\n"
@@ -4083,13 +4083,13 @@ class App(BaseClass):
         )
         # 修正：優先使用關於視窗做為父視窗，若無則使用主視窗
         parent = self.about_window if (hasattr(self, 'about_window') and self.about_window is not None and self.about_window.winfo_exists()) else self
-        self.after(100, lambda: messagebox.showinfo("功能說明: 熱詞補強", help_msg, parent=parent))
+        self.after(100, lambda: messagebox.showinfo("功能說明: 專有名詞", help_msg, parent=parent))
 
     def load_hotwords_from_file(self):
         """從文字檔匯入熱詞"""
         file_path = filedialog.askopenfilename(
             filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")],
-            title="選擇熱詞清單檔 (每行一個詞或以逗號分隔)"
+            title="選擇專有名詞清單檔 (每行一個詞或以逗號分隔)"
         )
         if not file_path:
             return
@@ -4117,11 +4117,11 @@ class App(BaseClass):
             
             result_str = ", ".join(new_list)
             self.hotwords_var.set(result_str)
-            self.log(f"成功從檔案匯入 {len(words)} 個熱詞。")
-            self.show_temp_status(f"已匯入 {len(words)} 個熱詞")
+            self.log(f"成功從檔案匯入 {len(words)} 個專有名詞。")
+            self.show_temp_status(f"已匯入 {len(words)} 個專有名詞")
             
         except Exception as e:
-            messagebox.showerror("匯入失敗", f"讀取熱詞檔案時發生錯誤：\n{e}")
+            messagebox.showerror("匯入失敗", f"讀取專有名詞檔案時發生錯誤：\n{e}")
 
     def check_for_updates(self, manual=False):
         """檢查 GitHub 上是否有新版本
@@ -4296,33 +4296,38 @@ class App(BaseClass):
         ctk.CTkLabel(os_frame, text="本軟體使用以下開源專案：", font=ui_font(size=12)).pack(pady=(0, 10))
 
         # List of libraries
-        libs = [
-            ("faster-whisper", "MIT License", "https://github.com/SYSTRAN/faster-whisper"),
-            ("CTranslate2", "MIT License", "https://github.com/OpenNMT/CTranslate2"),
-            ("mlx-whisper", "MIT License", "https://github.com/ml-explore/mlx-examples/tree/main/whisper"),
-            ("CustomTkinter", "MIT License", "https://github.com/TomSchimansky/CustomTkinter"),
-            ("tkinterdnd2", "MIT License", "https://github.com/pmgagne/tkinterdnd2"),
-            ("PyAV (av)", "BSD-2-Clause License", "https://github.com/PyAV-Org/PyAV"),
-            ("Pillow", "HPND License", "https://github.com/python-pillow/Pillow"),
-            ("sounddevice", "MIT License", "https://github.com/spatialaudio/python-sounddevice"),
-            ("OpenCC", "Apache-2.0 License", "https://github.com/BYVoid/OpenCC"),
-            ("tomli", "MIT License", "https://github.com/hukkin/tomli"),
-            ("huggingface-hub", "Apache-2.0 License", "https://github.com/huggingface/huggingface_hub"),
-            ("evercam-subtitle-player", "", "https://github.com/kaoshou/evercam-subtitle-player")
-        ]
+        from third_party import COMPONENTS
+        libs = COMPONENTS
 
         for name, license_, url in libs:
             item_frame = ctk.CTkFrame(os_frame, fg_color="transparent")
             item_frame.pack(fill="x", pady=2)
             title_text = f"• {name} ({license_})" if license_ else f"• {name}"
-            ctk.CTkLabel(item_frame, text=title_text, font=ui_font(weight="bold")).pack(anchor="w", padx=20)
+            label = ctk.CTkLabel(item_frame, text=title_text, font=ui_font(weight="bold"),
+                                anchor='w', justify='left', width=1, height=1)
+            label.pack(fill='x', padx=20)
+            wrap_to_width(label)
             create_link(item_frame, "查看專案與授權 ↗", url).pack(anchor="w", padx=40)
+        ctk.CTkButton(os_frame, text='完整第三方授權說明', command=self.show_third_party_notices,
+                      **secondary_button_style()).pack(pady=12)
 
         # Close Button
         ctk.CTkButton(about_window, text="關閉", command=about_window.destroy, width=100).pack(pady=10)
         
         # 後台渲染完成後一次性置中並平滑呈現 (杜絕閃爍)
         center_and_smooth_show(self.about_window, self, 500, 600, is_modal=True)
+
+    def show_third_party_notices(self):
+        parent = self.about_window if getattr(self, 'about_window', None) is not None else self
+        top = create_smooth_toplevel(parent)
+        top.title('第三方元件與授權聲明')
+        text = ctk.CTkTextbox(top, wrap='word', font=ui_font(size=13))
+        text.pack(fill='both', expand=True, padx=16, pady=16)
+        root = Path(getattr(sys, '_MEIPASS', Path(__file__).parent))
+        text.insert('1.0', (root / 'THIRD_PARTY_NOTICES.md').read_text(encoding='utf-8'))
+        text.configure(state='disabled')
+        ctk.CTkButton(top, text='關閉', command=top.destroy, **secondary_button_style()).pack(pady=(0, 12))
+        center_and_smooth_show(top, parent, 720, 600, is_modal=False)
 
     def log(self, msg):
         def _update():
