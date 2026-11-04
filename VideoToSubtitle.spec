@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 import tempfile
 from PyInstaller.utils.hooks import collect_all
+sys.path.insert(0, str(SPECPATH))
 from third_party import collect_license_datas
 
 windows_bundle = os.environ.get('VTS_WINDOWS_BUNDLE', 'onefile')

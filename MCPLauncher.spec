@@ -2,6 +2,9 @@
 """Build first; the GUI spec embeds this standalone, console-enabled payload."""
 import sys
 from PyInstaller.utils.hooks import copy_metadata
+# Console-script entry points do not put the checkout on sys.path. SPECPATH
+# is supplied by PyInstaller and identifies this trusted spec's directory.
+sys.path.insert(0, str(SPECPATH))
 from third_party import collect_license_datas
 
 excluded = [
