@@ -120,6 +120,22 @@ class DesktopUI(unittest.TestCase):
                 app.load_settings()
             self.assertEqual(app.batch_size_var.get(), 'auto')
 
+    def test_saved_manual_batch_is_displayed_when_app_constructs_widgets(self):
+        import SubtitleTranscriber as desktop
+        from unittest.mock import patch
+        self.cleanup_root()
+        config = Path(self.temp.name) / 'config.json'
+        desktop.write_settings(config, {'batch_size': 8, 'batch_acceleration': True})
+        with patch.object(desktop, 'resolve_settings_path', return_value=config), \
+                patch.object(desktop.App, 'check_for_updates'), \
+                patch('batch_policy.probe_resources', side_effect=AssertionError('startup resource probe')):
+            self.root = desktop.App()
+            self.root.update()
+        self.assertEqual(self.root.batch_size_var.get(), '8')
+        self.assertEqual(self.root.selected_batch_size(), 8)
+        self.assertEqual(self.root.combo_batch_size.get(), '8')
+        self.assertTrue(self.root.batch_acceleration_var.get())
+
     def test_batch_size_requires_enable_and_supported_backend(self):
         app = self.main_app()
         self.assertTrue(app.batch_acceleration_var.get())

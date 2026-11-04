@@ -3355,7 +3355,8 @@ class App(BaseClass):
                                         font=ui_font(size=12), checkbox_width=18, checkbox_height=18)
         self.chk_batch.grid(row=0, column=0, sticky="w")
         ctk.CTkLabel(self.batch_frame, text="批次大小", font=ui_font(size=12)).grid(row=0, column=1, padx=(8, 6))
-        self.batch_size_display_var = ctk.StringVar(value='自動（建議）')
+        self.batch_size_display_var = ctk.StringVar(value=
+            '自動（建議）' if self.batch_size_var.get() == 'auto' else self.batch_size_var.get())
         self.batch_size_var.trace_add('write', lambda *_: self.batch_size_display_var.set(
             '自動（建議）' if self.batch_size_var.get() == 'auto' else self.batch_size_var.get()))
         self.combo_batch_size = ctk.CTkOptionMenu(self.batch_frame, variable=self.batch_size_display_var,
