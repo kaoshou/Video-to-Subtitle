@@ -237,7 +237,9 @@ class TransportTests(unittest.TestCase):
         deadline = time.monotonic() + 5
         while True:
             try:
-                client.call('get_status', {})
+                # Probe transport readiness without coupling every broker test
+                # to the host's model-cache state or native ML dependencies.
+                client.handshake()
                 return broker, client
             except Exception:
                 if time.monotonic() > deadline:
@@ -366,9 +368,17 @@ class TransportTests(unittest.TestCase):
         raw.send_bytes(_bytes({'token': token, 'op': 'call', 'name': 'start_transcription',
                                'arguments': {'asset_id': asset, 'request_id': 'lost-client'}}))
         raw.close()  # disconnect without reading admission acknowledgement
-        self.assertTrue(entered.wait(4))
+        # A freshly provisioned Windows runner may briefly delay the first
+        # worker thread while Defender scans imported native dependencies.
+        # The contract is eventual admission after the client disconnects,
+        # not a four-second performance deadline.
+        self.assertTrue(entered.wait(12))
         second = BrokerClient(self.state, autostart=False)
-        jobs = second.call('get_status', {})['jobs']
+        # Inspect the durable admission record directly; get_status also probes
+        # the local model cache and is outside this disconnect/cancellation
+        # transport contract.
+        jobs = [{'job_id': job['id'], 'state': job['state']}
+                for job in self.state.records('jobs')]
         self.assertEqual(len(jobs), 1)
         job_id = jobs[0]['job_id']
         self.assertEqual(second.call('get_job', {'job_id': job_id})['state'], 'running')
