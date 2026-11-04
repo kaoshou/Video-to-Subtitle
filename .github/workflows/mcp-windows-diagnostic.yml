@@ -1,0 +1,57 @@
+name: Windows MCP diagnostic (test branch only)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    if: github.ref != 'refs/heads/main'
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install "mcp>=1.30,<2" tomlkit "av>=11,<17" pillow
+      - name: Trace isolated source smoke and export failures
+        shell: python
+        run: |
+          import contextlib, faulthandler, importlib.util, os, pathlib, sys, tempfile, unittest
+          from unittest.mock import patch
+          faulthandler.dump_traceback_later(60, repeat=True)
+          root = pathlib.Path.cwd()
+          sys.path[:0] = [str(root), str(root / 'tests')]
+          spec = importlib.util.spec_from_file_location('smoke_mcp', root / 'scripts/smoke_mcp.py')
+          smoke = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(smoke)
+          with tempfile.TemporaryDirectory() as temporary:
+              wrapper = pathlib.Path(temporary) / 'traced_backend.py'
+              wrapper.write_text('import faulthandler,runpy,sys\n'
+                  'faulthandler.enable()\nfaulthandler.dump_traceback_later(10,repeat=True)\n'
+                  f'sys.path.insert(0,{str(root)!r})\n'
+                  f'runpy.run_path({str(root / "app_entry.py")!r},run_name="__main__")\n')
+              try:
+                  with patch('mcp_runtime.backend_command', return_value=[sys.executable, str(wrapper)]):
+                      print(smoke.run_smoke(), flush=True)
+              except Exception:
+                  import traceback
+                  traceback.print_exc()
+          import mcp_state
+          original = mcp_state._errors
+          @contextlib.contextmanager
+          def traced_errors(code='unsafe_path'):
+              try:
+                  with original(code):
+                      yield
+              except mcp_state.MCPError as error:
+                  if error.__cause__ is not None:
+                      import traceback
+                      traceback.print_exception(error)
+                  raise
+          with patch('mcp_state._errors', traced_errors):
+              suite = unittest.defaultTestLoader.loadTestsFromNames([
+                  'test_mcp_translation.TranslationTests.test_real_import_two_language_finalize_and_player_export_preserve_timing',
+                  'test_mcp_final_fixes.AuthorizationFixTests.test_export_commit_serializes_revoke_and_cancel_at_real_publish'])
+              result = unittest.TextTestRunner(verbosity=2).run(suite)
+          sys.exit(not result.wasSuccessful())
