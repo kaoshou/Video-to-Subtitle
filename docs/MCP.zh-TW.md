@@ -69,7 +69,19 @@ AI 工具只能使用已授權根目錄、相對位置與伺服器產生的識�
 
 啟用期間，背景服務在沒有工作與處理中的連線、閒置五分鐘後退出；停用後會在已接受工作完成且連線處理結束時正常退出。模型子程序先結束才釋放共用運算鎖，避免 GUI 與 MCP 同時佔用模型。工作之間可能重新載入已下載模型，不代表再次下載。
 
-CPU、NVIDIA CUDA 與 Apple Silicon MLX 沿用既有核心與硬體限制。GUI 的 CPU／CUDA 批次大小預設 4，可手動調整 2／4／8／16／32；MLX 使用原生路徑，不套用這些批次大小。效能依設備與模型而異，沒有保證加速倍數。
+CPU、NVIDIA CUDA 與 Apple Silicon MLX 沿用既有核心與硬體限制。GUI／MCP 的 CPU／CUDA 預設啟用批次與自動大小；既有 GUI 數字設定保留。MLX 使用原生路徑，不套用這些批次大小。效能依設備與模型而異，沒有保證加速倍數。
+
+`start_transcription.settings` 保留整數 `batch_size`（2～32），另提供 `batch_mode`：
+
+| 設定 | 行為 |
+| --- | --- |
+| 未提供 mode 與 size | `batch_mode: "auto"`；模型載入後、實際執行時估算，不在排隊時探測。 |
+| 只提供 `batch_size: 8` 等既有整數 | 視為 manual，沿用既有呼叫方式且不讀資源。 |
+| `batch_mode: "manual"` | 未給 size 時使用 4；可手動選 2～32，32 屬進階選項。 |
+| `batch_mode: "auto"` 加 `batch_size` | 回報 `INVALID_ARGUMENT`；移除 size 或改為 manual。 |
+| `batch_acceleration: false` | 使用標準路徑，略過自動資源探測。MLX/MPS 亦略過。 |
+
+自動與 GUI 共用核心：依可用而非總 RAM／VRAM、模型、精度與實體核心保守估算，CPU 最高 8、CUDA 最高 16；資料不明保守選 2，嚴重 RAM 壓力可改用標準。完整預留空間與估算表見[使用指南](USER_GUIDE.zh-TW.md#批次加速試用)。這些數值未經跨硬體基準量測，不保證最快或避免所有 OOM；手動不改精度。OOM 與品質回退沿用安全重試，`get_job.result.batch_decision`（有提供時）回傳 `requested_mode`、`effective_size`（null 表示標準／原生）與有限 `reason` 代碼；自動規劃另附已知安全字串 `rationale` 說明可用資料／壓力／估算原因。回退時更新實際大小與 reason，rationale 保留原自動規劃依據；排隊紀錄保留的是要求的選擇。
 
 若主視窗在首次啟用 MCP 前已載入直接運算的模型，請正常關閉並重新開啟，再啟用；這是釋放程序內原生快取的要求，不會刪除模型。其他工作持有運算鎖時，請等待完成或正常關閉持有模型的 GUI。
 

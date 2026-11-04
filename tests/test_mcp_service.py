@@ -121,6 +121,48 @@ class ServiceTests(ServiceFixture):
             self.service.call('read_transcript', {'source_id': source['source_id']})
         self.assertEqual(raised.exception.code, 'ROOT_NOT_ALLOWED')
 
+    def test_batch_settings_auto_default_legacy_manual_and_conflict(self):
+        self.assertEqual(self.service._settings({})['batch_mode'], 'auto')
+        self.assertTrue(self.service._settings({})['batch_acceleration'])
+        self.assertFalse(self.service._settings({'batch_acceleration':False})['batch_acceleration'])
+        self.assertEqual(self.service._settings({'batch_size':8})['batch_mode'], 'manual')
+        self.assertEqual(self.service._settings({'batch_mode':'manual'})['batch_size'], 4)
+        with self.assertRaises(MCPError) as error:
+            self.service._settings({'batch_mode':'auto','batch_size':8})
+        self.assertEqual(error.exception.code, 'INVALID_ARGUMENT')
+        self.assertIn('batch_size', str(error.exception))
+
+    def test_queued_auto_choice_and_effective_decision_are_persisted(self):
+        entered, release = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+        class Fake:
+            def __init__(fake, **kwargs): pass
+            def load_model(fake, **kwargs): pass
+            def run(fake, path, **kwargs):
+                self.assertEqual(kwargs['batch_size'], 'auto')
+                self.assertTrue(kwargs['batch_acceleration'])
+                self.assertNotIn('batch_mode', kwargs)
+                entered.set()
+                release.wait(5)
+                fake.last_batch_decision = {'requested_mode':'auto', 'effective_size':8, 'reason':'automatic',
+                    'rationale':'Conservative cuda memory/core estimate: 8; not benchmarked'}
+                output = Path(path).with_suffix('.srt')
+                output.write_text(SRT)
+                return str(output)
+        self.service.close()
+        self.service = self.api.Service(self.state, transcribe_factory=Fake)
+        accepted = self.service.call('start_transcription', {'asset_id':self.assets()['lesson.mp4'], 'request_id':'auto-plan'})
+        self.assertTrue(entered.wait(3))
+        queued = self.state.get('jobs', accepted['job_id'])['arguments']['settings']
+        self.assertEqual(queued['batch_mode'], 'auto')
+        self.assertNotIn('batch_size', queued)
+        release.set()
+        job = self.wait_job(accepted['job_id'])
+        self.assertEqual(job['state'], 'succeeded')
+        self.assertEqual(job['result']['batch_decision'], {'requested_mode':'auto','effective_size':8,'reason':'automatic',
+            'rationale':'Conservative cuda memory/core estimate: 8; not benchmarked'})
+        self.assertEqual(self.state.get('jobs', accepted['job_id'])['result']['batch_decision'], job['result']['batch_decision'])
+
     def test_missing_model_fails_admission_without_queue_or_download(self):
         self.state.configure(True, [self.media], cache_dir=str(self.root / 'absent-model'))
         with self.assertRaises(MCPError) as raised:

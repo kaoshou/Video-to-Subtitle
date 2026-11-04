@@ -71,7 +71,8 @@ def _engine_child(connection, cancelled, args, kwargs, engine_factory):
             options['cancel_check_callback'] = cancelled.is_set
             try:
                 result = getattr(engine, method)(*positional, **options)
-                connection.send(('result', result))
+                from batch_policy import decision_summary
+                connection.send(('result', result, decision_summary(getattr(engine, 'last_batch_decision', None))))
             except Exception as error:
                 connection.send(('error', type(error).__name__, str(error),
                                  {name: getattr(error, name, None) for name in ('model_size', 'cache_dir')}))
@@ -94,6 +95,7 @@ class ProcessTranscriber:
         self.device, self.compute_type = device, compute_type
         self.download_root, self.cpu_threads = download_root, cpu_threads
         self.model = None
+        self.last_batch_decision = None
         self._factory = engine_factory
         self._process = self._connection = self._cancelled = None
 
@@ -145,6 +147,8 @@ class ProcessTranscriber:
             if callback_error is not None:
                 raise callback_error
             if message[0] == 'result':
+                from batch_policy import decision_summary
+                self.last_batch_decision = decision_summary(message[2])
                 return message[1]
             _, kind, text, attributes = message
             if kind == 'InterruptedError':

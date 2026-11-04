@@ -43,6 +43,7 @@ _SETTINGS = {
     'model': {'type': 'string', 'enum': ['tiny', 'base', 'small', 'medium', 'large-v3', 'large-v3-turbo']},
     'device': {'type': 'string', 'enum': ['cpu', 'cuda', 'mlx', 'mps']},
     'batch_acceleration': {'type': 'boolean'}, 'batch_size': {'type': 'integer', 'minimum': 2, 'maximum': 32},
+    'batch_mode': {'type': 'string', 'enum': ['auto', 'manual']},
     'force_zh_tw': {'type': 'boolean'}, 'word_timestamps': {'type': 'boolean'},
     'initial_prompt': {'type': 'string', 'maxLength': 4000}, 'hotwords': {'type': 'string', 'maxLength': 4000},
     'language': {'type': 'string', 'maxLength': 20},

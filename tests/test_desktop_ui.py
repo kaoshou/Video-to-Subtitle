@@ -95,6 +95,31 @@ class DesktopUI(unittest.TestCase):
         self.assertTrue(any('繁體' in text and 'OpenCC' in text for text in errors), errors)
         self.assertFalse(list(Path(self.temp.name).glob('*.srt')))
 
+    def test_auto_batch_default_display_and_saved_settings_round_trip(self):
+        import SubtitleTranscriber as desktop
+        from unittest.mock import patch
+        self.cleanup_root()
+        with patch.object(desktop.App, 'load_settings'), patch.object(desktop.App, 'check_for_updates'), patch.object(desktop.App, 'save_settings'):
+            self.root = desktop.App()
+        app = self.root
+        app.config_file = str(Path(self.temp.name) / 'config.json')
+        self.assertEqual(app.batch_size_var.get(), 'auto')
+        self.assertEqual(app.combo_batch_size.get(), '自動（建議）')
+        app.save_settings()
+        self.assertEqual(desktop.read_settings(app.config_file)['batch_size'], 'auto')
+        app.batch_size_var.set('8')
+        app.load_settings()
+        self.assertEqual(app.batch_size_var.get(), 'auto')
+        app.batch_size_var.set('8')
+        app.save_settings()
+        app.batch_size_var.set('auto')
+        app.load_settings()
+        self.assertEqual(app.batch_size_var.get(), '8')
+        for invalid in (True, 4.0, '4', None, 'invalid'):
+            with patch.object(desktop, 'read_settings', return_value={'batch_size':invalid}):
+                app.load_settings()
+            self.assertEqual(app.batch_size_var.get(), 'auto')
+
     def test_batch_size_requires_enable_and_supported_backend(self):
         app = self.main_app()
         self.assertTrue(app.batch_acceleration_var.get())

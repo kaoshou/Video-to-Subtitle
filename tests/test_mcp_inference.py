@@ -35,6 +35,8 @@ class ContractEngine:
         pass
 
     def run(self, path, **options):
+        self.last_batch_decision = {'requested_mode':'auto', 'effective_size':8, 'reason':'automatic',
+                                   'rationale':'Conservative cuda memory/core estimate: 8; not benchmarked'}
         options['log_callback'](path)
         return {key: value for key, value in options.items() if not key.endswith('_callback')}
 
@@ -167,6 +169,8 @@ class InferenceTests(unittest.TestCase):
         proxy = ProcessTranscriber(engine_factory=ContractEngine)
         self.addCleanup(proxy.close)
         self.assertEqual(proxy.run('lesson', batch_size='auto')['batch_size'], 'auto')
+        self.assertEqual(proxy.last_batch_decision, {'requested_mode':'auto', 'effective_size':8, 'reason':'automatic',
+            'rationale':'Conservative cuda memory/core estimate: 8; not benchmarked'})
 
 
 if __name__ == '__main__':

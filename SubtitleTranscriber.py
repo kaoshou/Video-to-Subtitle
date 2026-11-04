@@ -2914,7 +2914,7 @@ class App(BaseClass):
         self.cpu_threads_var = ctk.StringVar(value="4")
         self.vad_filter_var = ctk.BooleanVar(value=True)
         self.batch_acceleration_var = ctk.BooleanVar(value=True)
-        self.batch_size_var = ctk.StringVar(value="4")
+        self.batch_size_var = ctk.StringVar(value="auto")
         
         self.clean_punc_mapping = {
             "none": "保留標點 (none)",
@@ -3355,8 +3355,12 @@ class App(BaseClass):
                                         font=ui_font(size=12), checkbox_width=18, checkbox_height=18)
         self.chk_batch.grid(row=0, column=0, sticky="w")
         ctk.CTkLabel(self.batch_frame, text="批次大小", font=ui_font(size=12)).grid(row=0, column=1, padx=(8, 6))
-        self.combo_batch_size = ctk.CTkOptionMenu(self.batch_frame, variable=self.batch_size_var,
-                                                values=["2", "4", "8", "16", "32"], width=65, height=28,
+        self.batch_size_display_var = ctk.StringVar(value='自動（建議）')
+        self.batch_size_var.trace_add('write', lambda *_: self.batch_size_display_var.set(
+            '自動（建議）' if self.batch_size_var.get() == 'auto' else self.batch_size_var.get()))
+        self.combo_batch_size = ctk.CTkOptionMenu(self.batch_frame, variable=self.batch_size_display_var,
+                                                command=lambda value: self.batch_size_var.set('auto' if value == '自動（建議）' else value),
+                                                values=["自動（建議）", "2", "4", "8", "16", "32"], width=125, height=28,
                                                 font=ui_font(size=12), state="disabled")
         self.combo_batch_size.grid(row=0, column=2, sticky="e")
         self.batch_hint = ctk.CTkLabel(self.batch_frame, text="", font=ui_font(size=11),
@@ -4013,6 +4017,10 @@ class App(BaseClass):
             import subprocess
             subprocess.Popen(["xdg-open", path])
 
+    def selected_batch_size(self):
+        value = self.batch_size_var.get()
+        return 'auto' if value == 'auto' else int(value)
+
     def update_batch_controls(self):
         """Only editable when enabled and actually supported by this backend."""
         enabled = self.batch_acceleration_var.get()
@@ -4027,7 +4035,7 @@ class App(BaseClass):
         elif not vad:
             hint = 'VAD 已關閉，本次使用標準推論；開啟 VAD 後可使用批次加速。'
         else:
-            hint = '記憶體不足時自動縮小批次或回到標準推論；取消需等待當批運算結束。'
+            hint = '自動於開始辨識時依可用資源決定，實際大小見日誌；記憶體不足會縮小或回到標準推論。'
         self.batch_hint.configure(text=hint)
 
     def load_settings(self):
@@ -4046,8 +4054,8 @@ class App(BaseClass):
             if "zh_tw" in config: self.zh_tw_var.set(config["zh_tw"])
             if "translate_en" in config: self.translate_en_var.set(config["translate_en"])
             self.batch_acceleration_var.set(config.get('batch_acceleration', True) is True)
-            saved_size = str(config.get('batch_size', '4'))
-            self.batch_size_var.set(saved_size if saved_size in ('2', '4', '8', '16', '32') else '4')
+            saved_size = config.get('batch_size', 'auto')
+            self.batch_size_var.set(str(saved_size) if type(saved_size) is int and saved_size in (2,4,8,16,32) else 'auto')
             saved_threads = str(config.get('cpu_threads', '4'))
             self.cpu_threads_var.set(saved_threads if saved_threads in ('1', '2', '4', '8', '16') else '4')
             if "max_chars" in config:
@@ -4087,7 +4095,7 @@ class App(BaseClass):
             "zh_tw": self.zh_tw_var.get(),
             "translate_en": self.translate_en_var.get(),
             "batch_acceleration": self.batch_acceleration_var.get(),
-            "batch_size": int(self.batch_size_var.get()),
+            "batch_size": self.selected_batch_size(),
             "cpu_threads": self.cpu_threads_var.get(),
             "max_chars": self.max_chars_var.get(),
             "hotwords": self.hotwords_var.get(),
@@ -4804,7 +4812,7 @@ class App(BaseClass):
                         case_correction=case_corr,
                         vad_filter=vad_filter,
                         batch_acceleration=self.batch_acceleration_var.get(),
-                        batch_size=int(self.batch_size_var.get())
+                        batch_size=self.selected_batch_size()
                     )
                     
                     if result:

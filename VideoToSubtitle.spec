@@ -39,6 +39,9 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('ctranslate2')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 hiddenimports += ['SubtitleTranscriber', 'tomli', 'evercam_integration', 'opencam_integration', 'opencam_dialog', 'web_export', 'web_export_model', 'web_export_form', 'web_export_dialog']
+hiddenimports += ['batch_policy', 'psutil']
+if sys.platform != 'darwin':
+    hiddenimports += ['pynvml']  # Official nvidia-ml-py binding; backend only.
 try:
     if sys.platform == 'darwin':
         import importlib

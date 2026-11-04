@@ -892,26 +892,33 @@ class SubtitleTranscriber:
                        case_correction=case_correction, vad_filter=vad_filter,
                        _review_evidence=evidence, _stage_callback=stage)
         cancelled = lambda: bool(cancel_check_callback and cancel_check_callback())
+        automatic = type(batch_size) is str and batch_size == 'auto'
+        self.last_batch_decision = {'requested_mode': 'disabled' if not batch_acceleration else 'auto' if automatic else 'manual',
+                                    'effective_size': None, 'reason': 'disabled'}
         if cancelled():
             return None
         if not batch_acceleration:
             return self._run_once(file_path, **options)
-        if isinstance(batch_size, bool) or not isinstance(batch_size, int) or not 2 <= batch_size <= 32:
-            raise ValueError('批次大小必須為 2～32 的整數。')
+        if not automatic and (type(batch_size) is not int or not 2 <= batch_size <= 32):
+            raise ValueError('批次大小必須為 auto 或 2～32 的整數。')
         log = log_callback or (lambda message: None)
         size = batch_size
+        reason = 'automatic' if automatic else 'manual'
         if self.device in ('mlx', 'mps'):
             log('MLX 原生轉錄目前不提供批次大小控制，沿用 Apple MLX 加速。')
             size = None
+            reason = 'native'
         elif not vad_filter:
             log('VAD 已關閉，沿用標準推論，避免長音訊在批次模式下無法切片。')
             size = None
+            reason = 'vad_disabled'
         else:
             try:
                 from faster_whisper import BatchedInferencePipeline
             except ImportError:
                 log('目前轉錄核心不提供批次推論，沿用標準推論。')
                 size = None
+                reason = 'unavailable'
         if force_zh_tw and task == 'transcribe':
             require_traditional_converter()
         if size and not self.model:
@@ -919,12 +926,20 @@ class SubtitleTranscriber:
                             cancel_check_callback=cancel_check_callback)
             if cancelled():
                 return None
+        if size and automatic:
+            from batch_policy import choose_batch, probe_resources
+            decision = choose_batch(self.model_size, self.device, self.compute_type, probe_resources(self.device))
+            size = decision.size
+            self.last_batch_decision['rationale'] = decision.reason
+            log(f'自動批次決策：{size or "標準推論"}；{decision.reason}。')
         key = (id(self.model), self.device, self.compute_type, self.model_size,
                task, word_timestamps, initial_prompt, hotwords)
         if size and key in self._batch_limits:
             previous = self._batch_limits[key]
             size = min(size, previous) if previous else None
             log(f'沿用同一設定先前記憶體不足後的批次上限：{size or "標準推論"}。')
+            reason = 'memory_limit'
+        self.last_batch_decision.update(effective_size=size, reason=reason)
         from inference_optimizations import PreparedAudio
         with PreparedAudio(file_path, log=log, cancel_check=cancelled) as prepared:
             return self._run_with_retries(file_path, options, size, log, progress_callback,
@@ -968,6 +983,7 @@ class SubtitleTranscriber:
                     log(f'批次品質檢查：{error} 捨棄本次暫存，改用標準推論。')
                     options['_stage_callback']('retry', '批次品質檢查後改用標準推論')
                     size = None
+                    self.last_batch_decision.update(effective_size=None, reason='quality')
                     # Quality depends on this input, not a model's memory ceiling.
                     reduced = False
                     continue
@@ -982,6 +998,7 @@ class SubtitleTranscriber:
                     log(f'記憶體不足，放棄本次暫存並從頭重試；改用批次大小 {next_size}。' if next_size
                         else '記憶體不足，放棄本次暫存並從頭改用標準推論。')
                     size = next_size
+                    self.last_batch_decision.update(effective_size=size, reason='oom')
                     options['_stage_callback']('retry', f'記憶體不足，改用批次 {size}' if size else '記憶體不足，改用標準推論')
                     reduced = True
                     continue

@@ -83,7 +83,9 @@ def _child_run(settings, media_path, connection, cancelled):
             output = Path(media_path).with_suffix('.srt')
             if Path(result) != output:
                 raise MCPError('INVALID_SUBTITLE', 'Unexpected transcription output.')
-        connection.send_bytes(json.dumps({'ok': bool(result)}).encode('utf-8'))
+        from batch_policy import decision_summary
+        connection.send_bytes(json.dumps({'ok': bool(result),
+            'batch_decision': decision_summary(getattr(engine, 'last_batch_decision', None))}).encode('utf-8'))
     except MCPError as error:
         connection.send_bytes(json.dumps({'error': error.code}).encode('utf-8'))
     except Exception:
@@ -103,7 +105,9 @@ def _run_engine(engine, settings, media_path, cancelled):
     if cancelled():
         return None
     options = {key: value for key, value in settings.items()
-               if key in _SETTINGS and key not in ('model', 'device', 'language')}
+               if key in _SETTINGS and key not in ('model', 'device', 'language', 'batch_mode')}
+    if settings.get('batch_mode') == 'auto':
+        options['batch_size'] = 'auto'
     return engine.run(str(media_path), output_format='srt', cancel_check_callback=cancelled, **options)
 
 
@@ -395,7 +399,13 @@ class Service:
     def _settings(self, settings):
         policy = self.state.policy().get('options', {})
         result = {'model': policy.get('model', 'small'), 'device': policy.get('device', 'cpu'), **settings}
+        result.setdefault('batch_acceleration', True)
         _validate({k: v for k, v in result.items() if k in _SETTINGS}, _schema(_SETTINGS))
+        result.setdefault('batch_mode', 'manual' if 'batch_size' in result else 'auto')
+        if result['batch_mode'] == 'auto' and 'batch_size' in result:
+            raise MCPError('INVALID_ARGUMENT', 'batch_mode auto cannot include batch_size; omit batch_size or choose manual.')
+        if result['batch_mode'] == 'manual':
+            result.setdefault('batch_size', 4)
         cache = policy.get('cache_dir') or policy.get('model_cache_dir') or policy.get('cache')
         if cache:
             result['cache_dir'] = cache
@@ -545,7 +555,7 @@ class Service:
             self._checkpoint(job)
             self._update_job(job['id'], state='running', stage=job['kind'])
             if job['kind'] == 'transcription':
-                self._transcribe(job, media)
+                batch_decision = self._transcribe(job, media)
                 self._checkpoint(job)
                 if self._asset_hash(asset, job['generation']) != version:
                     raise MCPError('SOURCE_CHANGED', 'Media changed during transcription.')
@@ -556,6 +566,8 @@ class Service:
                 self._update_job(job['id'], state='publishing')
                 result = self._save_source(job['asset_id'], job['asset_id'], version, cues,
                                            job['arguments']['settings']['language'])
+                if batch_decision is not None:
+                    result['batch_decision'] = batch_decision
             else:
                 result = self._export(job, asset, media, workspace, version)
             # Publication is the commit point; a late cancel preserves success.
@@ -567,14 +579,16 @@ class Service:
 
     def _transcribe(self, job, media):
         settings = job['arguments']['settings']
+        from batch_policy import decision_summary
         if self._factory is not None:
-            result = _run_engine(self._factory(**_engine_settings(settings)), settings, media,
+            engine = self._factory(**_engine_settings(settings))
+            result = _run_engine(engine, settings, media,
                                  lambda: self._cancelled(job))
             if not result:
                 raise MCPError('CANCELLED', 'Transcription cancelled.')
             if Path(result) != media.with_suffix('.srt'):
                 raise MCPError('INVALID_SUBTITLE', 'Unexpected transcription output.')
-            return
+            return decision_summary(getattr(engine, 'last_batch_decision', None))
         context = multiprocessing.get_context('spawn')
         read, write = context.Pipe(duplex=False)
         cancel = context.Event()
@@ -602,6 +616,7 @@ class Service:
                 raise failure
             if not isinstance(message, dict) or not message.get('ok'):
                 raise MCPError((message or {}).get('error', 'TRANSCRIPTION_FAILED'), 'Transcription did not complete.')
+            return decision_summary(message.get('batch_decision'))
         finally:
             if process.is_alive():
                 cancel.set()

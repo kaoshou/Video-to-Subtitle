@@ -67,6 +67,97 @@ class BatchInference(unittest.TestCase):
                 if fmt == 'json':
                     self.assertEqual(json.loads(text)[0]['start'], 55)
 
+    def test_auto_plans_after_model_load_and_reprobes_each_file(self):
+        from batch_policy import ResourceSnapshot
+        self.worker.model_size, self.worker.compute_type = 'small', 'float16'
+        self.worker.model = None
+        def load(*args, **kwargs):
+            self.worker.model = SimpleNamespace(transcribe=lambda *a, **k: (iter([segment()]), self.info))
+        def probe(device):
+            self.assertIsNotNone(self.worker.model)
+            return ResourceSnapshot(16*1073741824,32*1073741824,8,5*1073741824,8*1073741824)
+        with patch.object(self.worker, 'load_model', side_effect=load), patch('batch_policy.probe_resources', side_effect=probe) as read:
+            for _ in range(2):
+                self.run_job(batch_acceleration=True, batch_size='auto')
+            self.assertEqual(read.call_count, 2)
+        self.assertEqual([c[0] for c in self.calls], [8,8])
+        self.assertEqual(self.worker.last_batch_decision, {'requested_mode':'auto','effective_size':8,
+            'reason':'automatic', 'rationale':'Conservative cuda memory/core estimate: 8; not benchmarked'})
+
+    def test_auto_metadata_explains_missing_resources_and_measured_ram_pressure(self):
+        from batch_policy import ResourceSnapshot
+        for resources, size, reason in [
+                (ResourceSnapshot(None,None,None), 2, 'Missing/invalid RAM or physical cores; conservative estimate 2'),
+                (ResourceSnapshot(1073741824,8*1073741824,8), None, 'Measured RAM pressure; standard inference')]:
+            with patch('batch_policy.probe_resources', return_value=resources):
+                self.run_job(batch_acceleration=True, batch_size='auto')
+            self.assertEqual(self.worker.last_batch_decision['effective_size'], size)
+            self.assertEqual(self.worker.last_batch_decision['rationale'], reason)
+
+    def test_auto_oom_retries_and_ceiling_without_duplicate_cues(self):
+        from batch_policy import ResourceSnapshot
+        self.worker.model_size, self.worker.compute_type = 'small', 'float16'
+        self.recognize = lambda size: (_ for _ in ()).throw(MemoryError('allocation'))
+        with patch('batch_policy.probe_resources', return_value=ResourceSnapshot(16*1073741824,32*1073741824,8,5*1073741824,8*1073741824)):
+            path = self.run_job(batch_acceleration=True, batch_size='auto')
+            self.run_job(batch_acceleration=True, batch_size='auto')
+        self.assertEqual([c[0] for c in self.calls], [8,4,2,'standard','standard'])
+        self.assertEqual(Path(path).read_text().count('標準結果'), 1)
+        self.assertIsNone(self.worker.last_batch_decision['effective_size'])
+        self.assertEqual(self.worker.last_batch_decision['reason'], 'memory_limit')
+
+    def test_manual_disabled_and_vad_never_probe(self):
+        with patch('batch_policy.probe_resources', side_effect=AssertionError('unexpected probe')):
+            self.run_job(batch_acceleration=True, batch_size=8)
+            self.run_job(batch_acceleration=False, batch_size='auto')
+            self.run_job(batch_acceleration=True, batch_size='auto', vad_filter=False)
+        for invalid in (True, 4.0, '4', 'AUTO'):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                self.run_job(batch_acceleration=True, batch_size=invalid)
+
+    def test_mcp_and_gui_core_use_same_auto_policy_and_disabled_bypasses_probe(self):
+        from batch_policy import ResourceSnapshot
+        from mcp_service import _run_engine
+        self.worker.model_size, self.worker.compute_type = 'small', 'float16'
+        settings = {'model':'small','device':'cuda','batch_mode':'auto','batch_acceleration':True}
+        with patch('batch_policy.probe_resources', return_value=ResourceSnapshot(16*1073741824,32*1073741824,8,5*1073741824,8*1073741824)):
+            self.run_job(batch_acceleration=True, batch_size='auto')
+            direct = dict(self.worker.last_batch_decision)
+            with patch.object(self.worker, 'load_model'), contextlib.redirect_stdout(io.StringIO()):
+                _run_engine(self.worker, settings, self.folder / 'media.mp4', lambda:False)
+            self.assertEqual(self.worker.last_batch_decision, direct)
+        settings['batch_acceleration'] = False
+        with patch.object(self.worker, 'load_model'), patch('batch_policy.probe_resources', side_effect=AssertionError('off probe')), contextlib.redirect_stdout(io.StringIO()):
+            _run_engine(self.worker, settings, self.folder / 'media.mp4', lambda:False)
+        self.assertEqual(self.worker.last_batch_decision, {'requested_mode':'disabled','effective_size':None,'reason':'disabled'})
+
+    def test_quality_fallback_is_input_local_for_future_auto_decisions(self):
+        from batch_policy import ResourceSnapshot
+        self.worker.model_size, self.worker.compute_type = 'small', 'float16'
+        low = segment('低信心')
+        low.avg_logprob = -2
+        self.recognize = lambda size: iter([low])
+        with patch('batch_policy.probe_resources', return_value=ResourceSnapshot(16*1073741824,32*1073741824,8,5*1073741824,8*1073741824)):
+            self.run_job(batch_acceleration=True, batch_size='auto')
+            self.assertEqual(self.worker.last_batch_decision['reason'], 'quality')
+            self.recognize = lambda size: iter([segment()])
+            self.run_job(batch_acceleration=True, batch_size='auto')
+        self.assertEqual([call[0] for call in self.calls], [8,'standard',8])
+        self.assertEqual(self.worker.last_batch_decision['effective_size'], 8)
+
+    def test_auto_keeps_force_traditional_nonzero_timing_and_existing_output(self):
+        from batch_policy import ResourceSnapshot
+        self.worker.model_size, self.worker.compute_type = 'small', 'float16'
+        self.recognize = lambda size: iter([segment('这是软件与数据库课程')])
+        existing = self.folder / 'media.srt'
+        existing.write_text('保留原檔', encoding='utf-8')
+        with patch('batch_policy.probe_resources', return_value=ResourceSnapshot(16*1073741824,32*1073741824,8,5*1073741824,8*1073741824)):
+            result = self.run_job(batch_acceleration=True, batch_size='auto', force_zh_tw=True)
+        self.assertEqual(existing.read_text(), '保留原檔')
+        self.assertEqual(Path(result).name, 'media_1.srt')
+        self.assertIn('這是軟體與資料庫課程', Path(result).read_text())
+        self.assertIn('00:00:55,000 --> 00:00:57,000', Path(result).read_text())
+
     def test_oom_during_iteration_restarts_without_duplicate_or_overwriting_output(self):
         existing = self.folder / 'media.srt'
         existing.write_text('保留原檔', encoding='utf-8')
@@ -136,11 +227,12 @@ class BatchInference(unittest.TestCase):
         modules = {'mlx_whisper': SimpleNamespace(transcribe=native),
                    'mlx.core': SimpleNamespace(array=lambda a: a.copy(), eval=lambda a: None),
                    'faster_whisper.audio': SimpleNamespace(decode_audio=lambda *a, **k: np.zeros(16000 * 120))}
-        with patch.dict(sys.modules, modules):
+        with patch.dict(sys.modules, modules), patch('batch_policy.probe_resources', side_effect=AssertionError('native probe')):
             for enabled in (False, True):
                 path = self.run_job(batch_acceleration=enabled, word_timestamps=True)
                 text = Path(path).read_text(encoding='utf-8')
                 self.assertIn('00:00:55,250 --> 00:00:56,750', text)
+            self.run_job(batch_acceleration=True, batch_size='auto', word_timestamps=True)
         self.assertTrue(options_received[0]['word_timestamps'])
         self.assertNotIn('batch_size', options_received[0])
         self.assertNotIn('batch_size', options_received[1])
