@@ -1,6 +1,9 @@
 name: Windows MCP diagnostic (test branch only)
 on:
   workflow_dispatch:
+  push:
+    branches: [codex/optional-mcp-design]
+    paths: [.github/workflows/mcp-windows-diagnostic.yml]
 permissions:
   contents: read
 jobs:
