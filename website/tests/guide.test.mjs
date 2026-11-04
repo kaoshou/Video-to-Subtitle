@@ -32,7 +32,7 @@ test('guide screenshots use approved local assets and open in the page lightbox'
   assert.doesNotMatch(renderGuide('![拒絕](data:image/svg+xml,bad)').html, /<img/);
 });
 
-test('built guide covers the complete v2.7.7 workflow without stale package instructions', async () => {
+test('built guide covers the current workflow without stale package instructions', async () => {
   const out = await mkdtemp(join(tmpdir(), 'video-subtitle-guide-'));
   try {
     await buildSite({ repositoryRoot: resolve(import.meta.dirname, '../..'), outputRoot: out });
@@ -43,7 +43,7 @@ test('built guide covers the complete v2.7.7 workflow without stale package inst
     assert.match(html, /使用發行版不需安裝 Python、FFmpeg 或 mlx-whisper/);
     assert.doesNotMatch(html, /brew install ffmpeg/);
     assert.match(html, /class="guide-toc"/);
-    assert.match(html, /MLX.*熱詞.*VAD.*單字時間戳/s);
+    assert.match(html, /MLX.*專有名詞.*VAD.*單字時間戳/s);
     assert.match(html, /large-v3-turbo.*不適合.*翻譯/s);
     assert.match(html, /EverCam 網頁轉換.*批次掃描母目錄/s);
     assert.match(html, /media.*srt.*vtt/s);

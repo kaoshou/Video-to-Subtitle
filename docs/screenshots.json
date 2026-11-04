@@ -1,22 +1,22 @@
 {
-  "version": "2.9.0",
-  "source_commit": "4cc1c5e33d00a26b1ceb77ba341ae02cdf84c788",
+  "version": "2.10.0",
+  "source_commit": "780305264034100d5e9d1df65a18d5a6c523d12e",
   "platform": "Linux",
   "method": "Real application under Xvfb; window client areas; no UI compositing",
-  "fixture": "Synthetic lecture slide, silent video, hand-written sample subtitles and review signals",
-  "capture_run": "https://github.com/kaoshou/Video-to-Subtitle/actions/runs/40886695576",
+  "fixture": "Synthetic lecture slide, silent video, hand-written subtitles, review signals and private MCP demonstration jobs",
+  "capture_run": "https://github.com/kaoshou/Video-to-Subtitle/actions/runs/41874373924",
   "captures": [
     {
       "file": "screenshot_main.png",
       "width": 1040,
       "height": 860,
-      "title": "Video to Subtitle (v2.9.0) - 本地語音轉字幕工具"
+      "title": "Video to Subtitle (v2.10.0) - 本地語音轉字幕工具"
     },
     {
       "file": "screenshot_advanced.png",
       "width": 1040,
       "height": 1040,
-      "title": "Video to Subtitle (v2.9.0) - 本地語音轉字幕工具"
+      "title": "Video to Subtitle (v2.10.0) - 本地語音轉字幕工具"
     },
     {
       "file": "screenshot_editor.png",
@@ -29,6 +29,24 @@
       "width": 660,
       "height": 660,
       "title": "模型儲存管理與預先下載"
+    },
+    {
+      "file": "screenshot_mcp_connect.png",
+      "width": 940,
+      "height": 1040,
+      "title": "AI 工具連接"
+    },
+    {
+      "file": "screenshot_mcp_jobs.png",
+      "width": 940,
+      "height": 1040,
+      "title": "AI 工具連接"
+    },
+    {
+      "file": "screenshot_mcp_advanced.png",
+      "width": 940,
+      "height": 1040,
+      "title": "AI 工具連接"
     }
   ]
 }
