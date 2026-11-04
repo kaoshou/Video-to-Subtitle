@@ -47,6 +47,7 @@ jobs:
           npm test --prefix website
           npm run build --prefix website
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: documentation-screenshots
           path: screenshot-artifacts/

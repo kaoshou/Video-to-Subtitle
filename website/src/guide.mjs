@@ -38,7 +38,7 @@ markdown.renderer.rules.table_close = (tokens, index, options, env, renderer) =>
 export function rewriteGuideHref(href) {
   if (href === '../README.md') return 'https://github.com/kaoshou/Video-to-Subtitle#readme';
   if (/^USER_GUIDE\.zh-TW\.md(?:#.*)?$/.test(href)) {
-    const fragment = href.includes('#') ? '#' + href.split('#')[1].replace('批次加速試用', '批次加速-試用') : '';
+    const fragment = href.includes('#') ? '#' + decodeURIComponent(href.split('#')[1]).replace('批次加速試用', '批次加速-試用') : '';
     return routeFor('guide') + fragment;
   }
   if (href === 'MCP.zh-TW.md') return routeFor('mcp');

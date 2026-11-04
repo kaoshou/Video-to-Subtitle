@@ -12,6 +12,7 @@ test('MCP guide renders setup, privacy, model selection and workflow screenshots
   }
   assert.equal(rewriteGuideHref('MCP.zh-TW.md'), '/Video-to-Subtitle/mcp/');
   assert.equal(rewriteGuideHref('USER_GUIDE.zh-TW.md#批次加速試用'), '/Video-to-Subtitle/guide/#批次加速-試用');
+  assert.equal(rewriteGuideHref('USER_GUIDE.zh-TW.md#' + encodeURIComponent('批次加速試用')), '/Video-to-Subtitle/guide/#批次加速-試用');
   assert.throws(() => rewriteGuideHref('../private.json'), /Unresolved/);
 });
 
