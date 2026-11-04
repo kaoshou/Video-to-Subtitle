@@ -24,6 +24,10 @@ SERVER_INSTRUCTIONS = (
     'original result; changed content conflicts. An interrupted or failed request '
     'requires an explicitly chosen new request_id to retry. Never silently omit '
     'requested incomplete languages or claim a local self-test proves a live AI connection.'
+    ' After successful transcription, tell the user the actual model, device and backend '
+    'reported in get_job.result.transcription. Final player export returns transcriptions '
+    'for its source tracks: include that information in your completion reply. Never infer '
+    'a model from current GUI settings, imported subtitles, or a failed/cancelled job.'
 )
 
 TOOL_DESCRIPTIONS = MappingProxyType({

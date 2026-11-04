@@ -183,6 +183,61 @@ class ServiceTests(ServiceFixture):
         self.assertEqual(error.exception.code, 'INVALID_ARGUMENT')
         self.assertIn('batch_size', str(error.exception))
 
+    def test_actual_transcription_model_is_reported_persisted_and_carried_to_export(self):
+        class Fake:
+            def __init__(fake, **kwargs):
+                fake.model_size = 'medium'
+                fake.device = 'cuda'
+                fake.model_type = 'faster-whisper'
+            def load_model(fake, **kwargs): pass
+            def run(fake, path, **kwargs):
+                output = Path(path).with_suffix('.srt')
+                output.write_text(SRT)
+                return str(output)
+        self.service.close()
+        self.service = self.api.Service(self.state, transcribe_factory=Fake)
+        asset = self.assets()['lesson.mp4']
+        accepted = self.service.call('start_transcription', dict(asset_id=asset,
+            settings={'model':'small', 'device':'cpu'}, request_id='report-model'))
+        finished = self.wait_job(accepted['job_id'])
+        self.assertEqual(finished['state'], 'succeeded', finished)
+        expected = {'model':'medium', 'device':'cuda', 'backend':'faster-whisper'}
+        self.assertEqual(finished['result']['transcription'], expected)
+        self.assertEqual(self.state.get('sources', finished['result']['source_id'])['transcription'], expected)
+        exported = self.service.call('export_player', dict(asset_id=asset,
+            track_ids=[finished['result']['track_id']], request_id='report-export'))
+        self.assertEqual(self.wait_job(exported['job_id'])['result']['transcriptions'], [expected])
+        self.service.close()
+        self.service = self.api.Service(self.state)
+        self.assertEqual(self.service.call('get_job', accepted)['result']['transcription'], expected)
+
+    def test_imported_subtitles_do_not_claim_a_transcription_model(self):
+        imported = self.imported()
+        self.assertNotIn('transcription', imported)
+        self.assertNotIn('transcription', self.state.get('sources', imported['source_id']))
+
+    def test_child_ipc_reports_loaded_engine_instead_of_requested_model(self):
+        import sys
+        from types import SimpleNamespace
+        class Engine:
+            model_size = 'large-v3-turbo'
+            device = 'mlx'
+            model_type = 'mlx-whisper'
+            def __init__(self, **kwargs): pass
+            def load_model(self, **kwargs): pass
+            def run(self, path, **kwargs):
+                return str(Path(path).with_suffix('.srt'))
+        messages = []
+        connection = SimpleNamespace(send_bytes=messages.append, close=lambda: None)
+        module = SimpleNamespace(SubtitleTranscriber=Engine)
+        with patch.dict(sys.modules, {'transcriber': module}), patch.object(self.api, '_ready'):
+            self.api._child_run({'model':'small', 'device':'cpu'}, str(self.media / 'lesson.mp4'),
+                                connection, threading.Event())
+        result = json.loads(messages[0])
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['transcription'],
+            {'model':'large-v3-turbo', 'device':'mlx', 'backend':'mlx-whisper'})
+
     def test_queued_auto_choice_and_effective_decision_are_persisted(self):
         entered, release = threading.Event(), threading.Event()
         self.addCleanup(release.set)

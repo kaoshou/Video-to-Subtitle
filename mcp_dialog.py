@@ -481,6 +481,12 @@ class MCPSettingsDialog:
                     details += ' · ' + job['stage']
                 if job.get('error'):
                     details += '\n' + job['error'].get('code', '') + ': ' + job['error'].get('message', '')[:400]
+                if job['state'] == 'succeeded':
+                    result = job.get('result', {})
+                    reports = ([result['transcription']] if result.get('transcription') else result.get('transcriptions', []))
+                    for info in reports:
+                        device = 'MLX' if info['device'] in ('mlx', 'mps') else info['device'].upper()
+                        details += f"\n轉錄模型：{info['model']} · {device} · {info['backend']}"
                 label = self.ctk.CTkLabel(row, text=details, justify='left', anchor='w')
                 label.pack(fill='x', expand=True)
                 wrap_to_width(label)

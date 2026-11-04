@@ -409,7 +409,8 @@ class MCPGuiTests(unittest.TestCase):
         dialog = self.open()
         dialog.refresh_jobs()
         self.settle()
-        self.state.put('jobs', 'watched-job', {'id': 'watched-job', 'state': 'succeeded'})
+        self.state.put('jobs', 'watched-job', {'id': 'watched-job', 'state': 'succeeded',
+            'result': {'transcription': {'model':'medium', 'device':'cuda', 'backend':'faster-whisper'}}})
         dialog._jobs_due = 0
         deadline = time.monotonic() + 2
         texts = []
@@ -421,6 +422,7 @@ class MCPGuiTests(unittest.TestCase):
                 break
             time.sleep(.01)
         self.assertTrue(any('succeeded' in text for text in texts), texts)
+        self.assertTrue(any('轉錄模型：medium · CUDA · faster-whisper' in text for text in texts), texts)
 
     def test_main_close_waits_for_owned_batch_to_finish_cooperatively(self):
         import SubtitleTranscriber as desktop

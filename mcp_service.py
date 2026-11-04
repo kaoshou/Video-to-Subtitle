@@ -89,9 +89,7 @@ def _child_run(settings, media_path, connection, cancelled):
             output = Path(media_path).with_suffix('.srt')
             if Path(result) != output:
                 raise MCPError('INVALID_SUBTITLE', 'Unexpected transcription output.')
-        from batch_policy import decision_summary
-        connection.send_bytes(json.dumps({'ok': bool(result),
-            'batch_decision': decision_summary(getattr(engine, 'last_batch_decision', None))}).encode('utf-8'))
+        connection.send_bytes(json.dumps({'ok': bool(result), **_execution_report(engine, settings)}).encode('utf-8'))
     except MCPError as error:
         connection.send_bytes(json.dumps({'error': error.code}).encode('utf-8'))
     except Exception:
@@ -104,6 +102,17 @@ def _engine_settings(settings):
     return {'model_size': settings['model'], 'device': settings['device'],
             'download_root': settings.get('cache_dir'),
             'compute_type': 'float16' if settings['device'] == 'cuda' else 'int8'}
+
+
+def _execution_report(engine, settings):
+    """Capture the engine used by this job, never the GUI's later selection."""
+    from batch_policy import decision_summary
+    device = getattr(engine, 'device', settings['device'])
+    return {'transcription': {
+        'model': getattr(engine, 'model_size', settings['model']),
+        'device': device,
+        'backend': getattr(engine, 'model_type', 'mlx-whisper' if device in ('mlx', 'mps') else 'faster-whisper')},
+        'batch_decision': decision_summary(getattr(engine, 'last_batch_decision', None))}
 
 
 def _run_engine(engine, settings, media_path, cancelled):
@@ -329,15 +338,20 @@ class Service:
             cue['cue_id'] = secrets.token_hex(16)
         return raw, cues
 
-    def _save_source(self, media_id, origin_id, origin_hash, cues, language, source_text):
+    def _save_source(self, media_id, origin_id, origin_hash, cues, language, source_text, transcription=None):
         id, track_id = secrets.token_hex(16), secrets.token_hex(16)
         source = {'id': id, 'revision': origin_hash, 'media_id': media_id,
                   'origin_id': origin_id, 'origin_hash': origin_hash, 'cues': cues, 'language': language}
+        if transcription is not None:
+            source['transcription'] = transcription
         self.state.put('sources', id, source)
         self.state.put('tracks', track_id, {'id': track_id, 'source_id': id, 'revision': origin_hash,
                                           'media_id': media_id, 'language': language, 'complete': True,
                                           'text': source_text, 'review_status': 'original'})
-        return {'source_id': id, 'revision': origin_hash, 'track_id': track_id, 'cue_count': len(cues)}
+        result = {'source_id': id, 'revision': origin_hash, 'track_id': track_id, 'cue_count': len(cues)}
+        if transcription is not None:
+            result['transcription'] = transcription
+        return result
 
     def _import_subtitle(self, media_id, subtitle_id, language='und'):
         language = self._language(language)
@@ -674,7 +688,7 @@ class Service:
             self._checkpoint(job)
             self._update_job(job['id'], state='running', stage=job['kind'])
             if job['kind'] == 'transcription':
-                batch_decision = self._transcribe(job, media)
+                report = self._transcribe(job, media)
                 self._checkpoint(job)
                 if self._asset_hash(asset, job['generation']) != version:
                     raise MCPError('SOURCE_CHANGED', 'Media changed during transcription.')
@@ -686,9 +700,9 @@ class Service:
                 self._update_job(job['id'], state='publishing')
                 with self._job_commit(job) as current:
                     result = self._save_source(job['asset_id'], job['asset_id'], version, cues,
-                                               job['arguments']['settings']['language'], text)
-                    if batch_decision is not None:
-                        result['batch_decision'] = batch_decision
+                                               job['arguments']['settings']['language'], text, report['transcription'])
+                    if report['batch_decision'] is not None:
+                        result['batch_decision'] = report['batch_decision']
                     current.update(state='succeeded', stage='complete', result=result)
             else:
                 self._export(job, asset, media, workspace, version)
@@ -699,7 +713,6 @@ class Service:
 
     def _transcribe(self, job, media):
         settings = job['arguments']['settings']
-        from batch_policy import decision_summary
         if self._factory is not None:
             engine = self._factory(**_engine_settings(settings))
             result = _run_engine(engine, settings, media,
@@ -708,7 +721,7 @@ class Service:
                 raise MCPError('CANCELLED', 'Transcription cancelled.')
             if Path(result) != media.with_suffix('.srt'):
                 raise MCPError('INVALID_SUBTITLE', 'Unexpected transcription output.')
-            return decision_summary(getattr(engine, 'last_batch_decision', None))
+            return _execution_report(engine, settings)
         context = multiprocessing.get_context('spawn')
         read, write = context.Pipe(duplex=False)
         cancel = context.Event()
@@ -736,7 +749,7 @@ class Service:
                 raise failure
             if not isinstance(message, dict) or not message.get('ok'):
                 raise MCPError((message or {}).get('error', 'TRANSCRIPTION_FAILED'), 'Transcription did not complete.')
-            return decision_summary(message.get('batch_decision'))
+            return {'transcription': message['transcription'], 'batch_decision': message.get('batch_decision')}
         finally:
             if process.is_alive():
                 cancel.set()
@@ -802,8 +815,13 @@ class Service:
                 validate_folder_name(base)
                 with self._job_commit(job) as current:
                     project_for_asset(self.state, asset, job['generation'])
+                    transcriptions = []
                     for track in tracks:
-                        self._source_authorized(self.state.get('sources', track['source_id']), job['generation'])
+                        source = self.state.get('sources', track['source_id'])
+                        self._source_authorized(source, job['generation'])
+                        info = source.get('transcription')
+                        if info is not None and info not in transcriptions:
+                            transcriptions.append(info)
                     # Attest the pinned package before its exclusive rename.
                     # On Windows the publisher retains DELETE access; reopening
                     # without delete sharing would conflict with our own lease.
@@ -824,5 +842,6 @@ class Service:
                     current.update(state='succeeded', stage='complete', result={
                         'folder': str(folder), 'index_path': str(folder / 'index.html'),
                         'player_type': player_type,
+                        'transcriptions': transcriptions,
                         'source_path': str(Path(parent.path) / Path(asset['relative']).name)})
                     current['result_validation'] = validation
