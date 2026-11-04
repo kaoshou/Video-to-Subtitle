@@ -135,17 +135,34 @@ def run_smoke(installer, portable, report):
         command = [str(installer), '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART',
                    '/SP-', '/NOCLOSEAPPLICATIONS', '/NORESTARTAPPLICATIONS',
                    f'/DIR={installed}', '/TASKS=', f'/LOG={report.parent / "install.log"}']
-        subprocess.run(command, check=True, timeout=240)
+        # An inert legacy EXE must never receive the new unknown admin flag.
+        # A partial MCP payload must refuse before replacing any application.
+        internal = installed / '_internal'
+        internal.mkdir(parents=True)
+        legacy = installed / 'VideoToSubtitle.exe'
+        legacy.write_bytes(b'inert legacy fixture: never execute')
+        for leaf in ('vts-mcp-payload.json', 'VideoToSubtitleMCP.exe'):
+            marker = internal / leaf
+            marker.write_bytes(b'inert partial payload fixture')
+            refused = subprocess.run(command, timeout=240, env=env)
+            if refused.returncode == 0 or legacy.read_bytes() != b'inert legacy fixture: never execute':
+                raise AssertionError('Partial MCP installation was treated as safe legacy')
+            marker.unlink()
+        subprocess.run(command, check=True, timeout=240, env=env)
         executable = installed / 'VideoToSubtitle.exe'
         uninstaller = installed / 'unins000.exe'
         try:
             for file in (executable, uninstaller, installed / '_internal/python311.dll',
+                         installed / '_internal/VideoToSubtitleMCP.exe',
+                         installed / '_internal/vts-mcp-payload.json',
                          installed / '_internal/assets/evercam_player/index.html', shortcut):
                 if not file.is_file():
                     raise AssertionError(f'Installed payload missing: {file}')
             subprocess.run([str(executable), '--test-web-export'], check=True, env=env,
                            cwd=root, timeout=180)
             for exe in (portable, executable):
+                subprocess.run([str(exe), '--test-mcp'], check=True,
+                               env=env, cwd=root, timeout=180)
                 subprocess.run([str(exe), '--test-traditional-chinese'], check=True,
                                env=env, cwd=root, timeout=180)
             try:
@@ -188,12 +205,25 @@ def run_smoke(installer, portable, report):
                     samples[label].append(sample)
             if json.loads(config.read_text(encoding='utf-8')) != expected:
                 raise AssertionError('Launching altered user settings')
-            subprocess.run(command, check=True, timeout=240)
+            # Only synthetic policy in the temporary LOCALAPPDATA. Installer
+            # hooks inherit this same environment, never the real user's state.
+            sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+            from mcp_state import State, ProcessLock
+            state = State(local / 'VideoToSubtitle' / 'mcp')
+            state.configure(True, [root], backend_command=[str(executable)])
+            with ProcessLock(state.path / 'locks', 'inference'):
+                refused = subprocess.run(command, timeout=240, env=env)
+                if refused.returncode == 0 or state.policy()['enabled']:
+                    raise AssertionError('Update did not refuse active inference and revoke MCP')
+            subprocess.run(command, check=True, timeout=240, env=env)
+            if state.policy()['enabled']:
+                raise AssertionError('Update re-enabled MCP')
             if json.loads(config.read_text(encoding='utf-8')) != expected:
                 raise AssertionError('Reinstall removed settings')
             launch_window(executable, env)
+            state.configure(True, [root], backend_command=[str(executable)])
             subprocess.run([str(uninstaller), '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'],
-                           check=True, timeout=120)
+                           check=True, timeout=120, env=env)
             deadline = time.monotonic() + 10
             while executable.exists() and time.monotonic() < deadline:
                 time.sleep(0.1)
@@ -203,6 +233,8 @@ def run_smoke(installer, portable, report):
                 raise AssertionError('Uninstall removed settings')
             if model_marker.read_text(encoding='utf-8') != 'preserve model':
                 raise AssertionError('Uninstall removed the model cache')
+            if state.policy()['enabled']:
+                raise AssertionError('Uninstall did not revoke MCP')
             try:
                 with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key):
                     raise AssertionError('Uninstall registration retained')
@@ -213,6 +245,7 @@ def run_smoke(installer, portable, report):
                       'warmup': 'export smoke ran before GUI timing; samples are not disk/AV cold starts',
                       'python_on_app_path': False,
                       'install_reinstall_uninstall_passed': True,
+                      'mcp_frozen_smoke_and_maintenance_passed': True,
                       'traditional_chinese_smoke_passed': True,
                       'missing_opencc_dll_rejected': True,
                       **{label: summarize_startup(values) for label, values in samples.items()}}
@@ -221,7 +254,7 @@ def run_smoke(installer, portable, report):
         finally:
             if uninstaller.is_file() and executable.is_file():
                 subprocess.run([str(uninstaller), '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'],
-                               timeout=120, check=False)
+                               timeout=120, check=False, env=env)
 
 
 if __name__ == '__main__':

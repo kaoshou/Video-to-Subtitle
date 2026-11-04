@@ -1,6 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
 import sys
 import os
+import hashlib
+import json
+from pathlib import Path
+import shutil
+import tempfile
 from PyInstaller.utils.hooks import collect_all
 
 windows_bundle = os.environ.get('VTS_WINDOWS_BUNDLE', 'onefile')
@@ -13,6 +18,18 @@ hiddenimports = []
 datas += [('pyproject.toml', '.')]
 datas += [('assets', 'assets')]
 datas += [('app_icon.ico', '.')]
+# Build the thin payload first. A missing payload is a build error, never a
+# client configuration which happens to point at an absent launcher.
+payload_name = 'VideoToSubtitleMCP.exe' if sys.platform == 'win32' else 'VideoToSubtitleMCP'
+payload = Path(os.environ.get('VTS_MCP_LAUNCHER', str(Path(DISTPATH) / payload_name))).resolve()
+if not payload.is_file() or payload.is_symlink():
+    raise ValueError('Build MCPLauncher.spec first (or set VTS_MCP_LAUNCHER to its standalone output).')
+payload_metadata_dir = Path(tempfile.mkdtemp(prefix='vts-mcp-descriptor-'))
+payload_descriptor = payload_metadata_dir / 'vts-mcp-payload.json'
+payload_descriptor.write_text(json.dumps({'launcher': payload_name,
+    'sha256': hashlib.sha256(payload.read_bytes()).hexdigest(), 'platform': sys.platform}), encoding='utf-8')
+binaries += [(str(payload), '.')]
+datas += [(str(payload_descriptor), '.')]
 tmp_ret = collect_all('customtkinter')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('tkinterdnd2')
@@ -21,7 +38,7 @@ tmp_ret = collect_all('faster_whisper')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('ctranslate2')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-hiddenimports += ['tomli', 'evercam_integration', 'opencam_integration', 'opencam_dialog', 'web_export', 'web_export_model', 'web_export_form', 'web_export_dialog']
+hiddenimports += ['SubtitleTranscriber', 'tomli', 'evercam_integration', 'opencam_integration', 'opencam_dialog', 'web_export', 'web_export_model', 'web_export_form', 'web_export_dialog']
 try:
     if sys.platform == 'darwin':
         import importlib
@@ -110,7 +127,7 @@ except Exception:
 
 
 a = Analysis(
-    ['SubtitleTranscriber.py'],
+    ['app_entry.py'],
     pathex=[],
     binaries=binaries,
     datas=datas,
@@ -122,6 +139,13 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+# This is an opaque, already frozen executable. Prevent binary collection from
+# changing its Mach-O headers/signature or applying UPX after hashing it.
+# Analysis may classify executable data as BINARY, so restore DATA explicitly.
+if sys.platform != 'darwin':
+    a.binaries = [entry for entry in a.binaries if entry[0] != payload_name]
+    a.datas = [entry for entry in a.datas if entry[0] != payload_name]
+    a.datas.append((payload_name, str(payload), 'DATA'))
 pyz = PYZ(a.pure)
 
 if sys.platform == 'darwin':
@@ -160,6 +184,19 @@ if sys.platform == 'darwin':
             'NSHighResolutionCapable': 'True'
         },
     )
+    # BUNDLE may rewrite/sign nested Mach-O bytes. Attest the final standalone
+    # payload, keeping Apple's data/code roles (no regular JSON in Frameworks).
+    contents = Path(app.name) / 'Contents'
+    bundled_launcher = contents / 'Frameworks' / payload_name
+    bundled_descriptor = contents / 'Resources' / payload_descriptor.name
+    if bundled_launcher.is_symlink() or bundled_descriptor.is_symlink():
+        raise ValueError('MCP payload must use regular native bundle code/data files.')
+    bundled_descriptor.write_text(json.dumps({'launcher': payload_name,
+        'sha256': hashlib.sha256(bundled_launcher.read_bytes()).hexdigest(), 'platform': sys.platform}), encoding='utf-8')
+    # Re-seal only the outer resource envelope; keep attested executable bytes.
+    from PyInstaller.utils import osx as osxutils
+    osxutils.sign_binary(app.name, identity=app.codesign_identity,
+                         entitlements_file=app.entitlements_file, deep=False)
 elif sys.platform == 'win32' and windows_bundle == 'onedir':
     exe = EXE(
         pyz,

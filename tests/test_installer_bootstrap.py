@@ -13,7 +13,9 @@ class InstallerBootstrap(unittest.TestCase):
         path = Path(__file__).resolve().parents[1] / 'packaging/windows/VideoToSubtitle.iss'
         sections = configparser.ConfigParser(interpolation=None, delimiters=(':', '='), strict=False)
         sections.optionxform = str
-        sections.read(path, encoding='utf-8')
+        # Pascal [Code] is not INI; this test consumes the declarative [Run]
+        # route while native installer smoke exercises maintenance callbacks.
+        sections.read_string(path.read_text(encoding='utf-8').split('[Code]', 1)[0])
         run_line = next(value for key, value in sections['Run'].items()
                         if key == 'Filename' and 'VideoToSubtitle.exe' in value)
         # Interpret the actual [Run] entry, not merely a source-text marker.

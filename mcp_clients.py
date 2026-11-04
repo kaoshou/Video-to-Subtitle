@@ -529,9 +529,16 @@ def bundled_mcp_payload():
     if not getattr(sys, 'frozen', False):
         return None
     root = _path(Path(getattr(sys, '_MEIPASS', Path(sys.executable).parent)))
+    descriptor_root = root
+    if (sys.platform == 'darwin' and root.name == 'Frameworks'
+            and root.parent.name == 'Contents' and root.parent.parent.suffix == '.app'):
+        # Native macOS bundle roles: data is regular in Resources, executable
+        # code is regular in Frameworks. Never follow the cross-role symlinks
+        # PyInstaller exposes, and never search/fallback after a failed read.
+        descriptor_root = root.parent / 'Resources'
     name = 'VideoToSubtitleMCP.exe' if sys.platform == 'win32' else 'VideoToSubtitleMCP'
     try:
-        with _absolute_directory(root) as directory:
+        with _absolute_directory(descriptor_root) as directory:
             with directory.open_read('vts-mcp-payload.json') as stream:
                 raw = stream.read(4097)
             if len(raw) > 4096:
@@ -541,6 +548,7 @@ def bundled_mcp_payload():
                     not re.fullmatch('[0-9a-f]{64}', descriptor['sha256']) or
                     descriptor['platform'] != sys.platform):
                 raise ValueError('Invalid payload descriptor')
+        with _absolute_directory(root) as directory:
             with directory.open_read(name) as stream:
                 digest = _file_digest(stream)
             if digest != descriptor['sha256']:

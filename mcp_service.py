@@ -15,7 +15,6 @@ import secrets
 import shutil
 import stat
 import threading
-from types import MappingProxyType
 
 from mcp_state import MCPError, ProcessLock, State, _private_directory
 from mcp_translation import batches, render_srt, validate_batch
@@ -24,87 +23,8 @@ from web_export import export_package, parse_subtitles
 from web_export_model import ExportRequest, Metadata, SubtitleSource, canonical_language, validate_folder_name
 
 
-_ID = {'type': 'string', 'minLength': 1, 'maxLength': 128}
-_REQUEST = {'request_id': _ID}
-_MEDIA = frozenset(('.mp4', '.mov', '.mkv', '.webm', '.mp3', '.wav', '.m4a', '.flac', '.ogg'))
-_SUBTITLES = frozenset(('.srt', '.vtt'))
-_TERMINAL = frozenset(('succeeded', 'failed', 'cancelled', 'interrupted'))
-_MUTATING = frozenset(('start_transcription', 'import_subtitle', 'prepare_translation',
-                      'submit_translation_batch', 'finalize_translation', 'export_player'))
-_SETTINGS = {
-    'model': {'type': 'string', 'enum': ['tiny', 'base', 'small', 'medium', 'large-v3', 'large-v3-turbo']},
-    'device': {'type': 'string', 'enum': ['cpu', 'cuda', 'mlx', 'mps']},
-    'batch_acceleration': {'type': 'boolean'}, 'batch_size': {'type': 'integer', 'minimum': 2, 'maximum': 32},
-    'force_zh_tw': {'type': 'boolean'}, 'word_timestamps': {'type': 'boolean'},
-    'initial_prompt': {'type': 'string', 'maxLength': 4000}, 'hotwords': {'type': 'string', 'maxLength': 4000},
-    'language': {'type': 'string', 'maxLength': 20},
-}
-
-
-def _schema(properties, required=()):
-    return {'type': 'object', 'properties': properties, 'required': list(required), 'additionalProperties': False}
-
-
-TOOL_SCHEMAS = MappingProxyType({
-    'get_status': _schema({}),
-    'list_media': _schema({'root_id': _ID, 'relative': {'type': 'string', 'maxLength': 4096},
-                           'cursor': {'type': 'integer', 'minimum': 0, 'maximum': 4096},
-                           'limit': {'type': 'integer', 'minimum': 1, 'maximum': 100}}, ('root_id',)),
-    'start_transcription': _schema({'asset_id': _ID, 'settings': _schema(_SETTINGS), **_REQUEST}, ('asset_id', 'request_id')),
-    'get_job': _schema({'job_id': _ID}, ('job_id',)),
-    'cancel_job': _schema({'job_id': _ID}, ('job_id',)),
-    'import_subtitle': _schema({'media_id': _ID, 'subtitle_id': _ID,
-                                'language': {'type': 'string', 'maxLength': 20}, **_REQUEST},
-                               ('media_id', 'subtitle_id', 'request_id')),
-    'read_transcript': _schema({'source_id': _ID, 'cursor': {'type': 'integer', 'minimum': 0},
-                                'limit': {'type': 'integer', 'minimum': 1, 'maximum': 50},
-                                'search': {'type': 'string', 'maxLength': 200}}, ('source_id',)),
-    'prepare_translation': _schema({'source_id': _ID, 'revision': _ID,
-                                    'language': {'type': 'string', 'maxLength': 20},
-                                    'glossary': {'type': 'string', 'maxLength': 4000},
-                                    'style': {'type': 'string', 'maxLength': 2000}, **_REQUEST},
-                                   ('source_id', 'revision', 'language', 'request_id')),
-    'get_translation_batch': _schema({'draft_id': _ID, 'batch_id': _ID}, ('draft_id', 'batch_id')),
-    'submit_translation_batch': _schema({'draft_id': _ID, 'batch_id': _ID, 'revision': _ID,
-                                         'translations': {'type': 'array', 'minItems': 1, 'maxItems': 50,
-                                                          'items': _schema({'cue_id': _ID,
-                                                                            'text': {'type': 'string', 'maxLength': 8000}},
-                                                                           ('cue_id', 'text'))}, **_REQUEST},
-                                        ('draft_id', 'batch_id', 'revision', 'translations', 'request_id')),
-    'finalize_translation': _schema({'draft_id': _ID, **_REQUEST}, ('draft_id', 'request_id')),
-    'export_player': _schema({'asset_id': _ID, 'track_ids': {'type': 'array', 'minItems': 1, 'maxItems': 32, 'items': _ID},
-                              'title': {'type': 'string', 'minLength': 1, 'maxLength': 200},
-                              'default_subtitle': {'type': 'string', 'maxLength': 20}, **_REQUEST},
-                             ('asset_id', 'track_ids', 'request_id')),
-})
-
-
-def _validate(value, schema):
-    kind = schema.get('type')
-    valid = {'object': isinstance(value, dict), 'string': isinstance(value, str),
-             'integer': type(value) is int, 'boolean': type(value) is bool,
-             'array': isinstance(value, list)}
-    if kind not in valid or not valid[kind]:
-        raise MCPError('INVALID_ARGUMENT', 'Tool arguments do not match the input schema.')
-    if 'enum' in schema and value not in schema['enum']:
-        raise MCPError('INVALID_ARGUMENT', 'Unsupported setting value.')
-    if kind == 'object':
-        properties = schema['properties']
-        if set(value) - set(properties) or set(schema.get('required', ())) - set(value):
-            raise MCPError('INVALID_ARGUMENT', 'Unknown or missing tool argument.')
-        for key, child in value.items():
-            _validate(child, properties[key])
-    elif kind == 'string':
-        if not schema.get('minLength', 0) <= len(value) <= schema.get('maxLength', 8000) or '\x00' in value:
-            raise MCPError('INVALID_ARGUMENT', 'Text exceeds its allowed bounds.')
-    elif kind == 'integer':
-        if not schema.get('minimum', 0) <= value <= schema.get('maximum', 1000000):
-            raise MCPError('INVALID_ARGUMENT', 'Integer exceeds its allowed bounds.')
-    elif kind == 'array':
-        if not schema.get('minItems', 0) <= len(value) <= schema.get('maxItems', 50):
-            raise MCPError('INVALID_ARGUMENT', 'Array exceeds its allowed bounds.')
-        for child in value:
-            _validate(child, schema['items'])
+from mcp_contracts import (TOOL_SCHEMAS, _validate, _schema, _ID, _REQUEST, _SETTINGS, _MEDIA,
+                           _SUBTITLES, _TERMINAL, _MUTATING)
 
 
 def _digest(value):

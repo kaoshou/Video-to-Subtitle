@@ -221,6 +221,10 @@ class TransportTests(unittest.TestCase):
 
     def broker(self, **kwargs):
         from mcp_transport import Broker, BrokerClient
+        # Live-broker fixtures must grant a temporary policy: disabled idle
+        # brokers now quiesce immediately so maintenance does not wait 5 min.
+        if not self.state.policy()['enabled']:
+            self.state.configure(True, [])
         broker = Broker(self.state, idle_timeout=30, **kwargs)
         thread = threading.Thread(target=broker.serve, args=(self.stop,), daemon=True)
         thread.start()
@@ -242,7 +246,8 @@ class TransportTests(unittest.TestCase):
 
     def test_disabled_status_and_structured_denial(self):
         from mcp_state import MCPError
-        broker, client = self.broker()
+        from mcp_transport import BrokerClient
+        client = BrokerClient(self.state)
         self.assertFalse(client.call('get_status', {})['enabled'])
         with self.assertRaises(MCPError) as caught:
             client.call('list_media', {'root_id': 'missing'})
@@ -251,6 +256,7 @@ class TransportTests(unittest.TestCase):
             client.call('configure', {'enabled': True})
         self.assertEqual(caught.exception.code, 'UNKNOWN_TOOL')
         self.assertFalse(self.state.policy()['enabled'])
+        self.assertFalse(self.state.path.exists())
 
     def test_default_disabled_status_does_not_create_runtime_or_launch(self):
         from mcp_transport import BrokerClient
@@ -466,7 +472,7 @@ raise SystemExit(app_entry.main(sys.argv[3:]))
         for _ in range(3):
             raw = _connect(client.address)
             raw.close()
-        self.assertFalse(client.call('get_status', {})['enabled'])
+        self.assertTrue(client.call('get_status', {})['enabled'])
 
     @unittest.skipUnless(os.name == 'nt', 'native Windows live-instance saturation gate')
     def test_windows_listener_saturation_and_disconnect_keep_open_channel_usable(self):
@@ -544,19 +550,26 @@ raise SystemExit(app_entry.main(sys.argv[3:]))
             raw.connect(client.address)
             raw.sendall(b'\x00')
             self.assertEqual(raw.recv(1), b'')
-        self.assertFalse(client.call('get_status', {})['enabled'])
+        self.assertTrue(client.call('get_status', {})['enabled'])
 
     def test_independent_client_cancels_persistent_job(self):
         from mcp_transport import BrokerClient
-        self.state.put('jobs', 'existing', {'id': 'existing', 'state': 'queued', 'kind': 'transcription'})
+        media = Path(self.temp.name) / 'clip.wav'
+        media.write_bytes(b'synthetic media')
+        policy = self.state.configure(True, [Path(self.temp.name)])
+        self.state.put('assets', 'asset', {'id': 'asset', 'root_id': policy['roots'][0]['id'],
+                                         'relative': media.name, 'kind': 'media'})
+        self.state.put('jobs', 'existing', {'id': 'existing', 'state': 'queued', 'kind': 'transcription',
+                                          'asset_id': 'asset'})
         broker, client = self.broker()
-        # Startup interrupts previously unowned work. Cancellation remains metadata-only while off.
+        # Startup interrupts previously unowned work; no fabricated result appears.
         result = BrokerClient(self.state, autostart=False).call('cancel_job', {'job_id': 'existing'})
         self.assertIn(result['state'], ('interrupted', 'cancelled'))
         self.assertNotIn('result', client.call('get_job', {'job_id': 'existing'}))
 
     def test_idle_exit_and_restart_release_endpoint(self):
         from mcp_transport import Broker, BrokerClient
+        self.state.configure(True, [])
         broker = Broker(self.state, idle_timeout=.15)
         thread = threading.Thread(target=broker.serve)
         thread.start()
@@ -581,9 +594,9 @@ async def check():
             names=[t.name for t in (await s.list_tools()).tools]
             assert 'configure' not in names and 'get_status' in names and len(names)==12
             status=await s.call_tool('get_status',{})
-            assert status.structuredContent['enabled'] is False and not status.isError
+            assert status.structuredContent['enabled'] is True and not status.isError
             denied=await s.call_tool('list_media',{'root_id':'missing'})
-            assert denied.isError and denied.structuredContent['error']['code']=='MCP_DISABLED'
+            assert denied.isError and denied.structuredContent['error']['code']=='ROOT_NOT_ALLOWED'
             bad=await s.call_tool('get_status',{'secret':'not-allowed'})
             assert bad.isError and bad.structuredContent['error']['code']=='INVALID_ARGUMENT'
             print(json.dumps({'protocol':initial.protocolVersion,'tools':names}))
@@ -597,7 +610,6 @@ asyncio.run(check())
             self.assertEqual(client.handshake()['broker_id'], broker.identity)
 
     def test_bootstrap_headless_and_self_test_preserve_off_policy(self):
-        broker, client = self.broker()
         script = '''import runpy,sys
 class NoGUI:
  def find_spec(self, fullname, path=None, target=None):
@@ -619,13 +631,13 @@ runpy.run_path(sys.argv[0],run_name='__main__')
 
     @unittest.skipUnless(SDK, 'optional official MCP SDK is unavailable')
     def test_stdio_eof_and_bad_json_never_emit_debug(self):
-        broker, client = self.broker()
         result = subprocess.run([sys.executable, str(ROOT / 'mcp_entry.py'), '--state-dir', str(self.state.path)],
                                 input=b'{bad\n', capture_output=True, timeout=15)
         self.assertEqual(result.returncode, 0, result.stderr)
         for line in result.stdout.splitlines():
             self.assertEqual(json.loads(line)['jsonrpc'], '2.0')
-        self.assertFalse(client.call('get_status', {})['enabled'])
+        self.assertFalse(self.state.policy()['enabled'])
+        self.assertFalse(self.state.path.exists())
 
     @unittest.skipUnless(SDK, 'optional official MCP SDK is unavailable')
     def test_stdio_oversize_and_invalid_utf8_close_bridge(self):

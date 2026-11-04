@@ -21,6 +21,10 @@ on:
       - 'ui_*.py'
       - 'assets/evercam_player/**'
       - 'VideoToSubtitle.spec'
+      - 'MCPLauncher.spec'
+      - 'mcp_*.py'
+      - 'app_entry.py'
+      - 'scripts/smoke_mcp.py'
       - 'app_icon.*'
       - 'pyproject.toml'
       - 'packaging/windows/**'
@@ -72,6 +76,11 @@ jobs:
       if: matrix.os == 'macos-latest'
       run: |
         pip install mlx-whisper
+
+    - name: 安裝可選 MCP 建置依賴並建立獨立啟動器
+      run: |
+        python -m pip install "mcp>=1.30,<2" "tomlkit>=0.13,<1"
+        pyinstaller --noconfirm MCPLauncher.spec
 
     - name: 執行編譯 (使用 .spec 檔)
       run: |
@@ -152,6 +161,20 @@ jobs:
                           'dist/VideoToSubtitle.app/Contents/MacOS/VideoToSubtitle').resolve()
         subprocess.run([str(executable), '--test-web-export'], check=True, timeout=180)
 
+    - name: 驗證獨立 MCP 啟動器與封裝後端（無主機 Python／Node）
+      shell: python
+      run: |
+        from pathlib import Path
+        import subprocess
+        import sys
+        executable = Path('dist/VideoToSubtitle.exe' if sys.platform == 'win32' else
+                          'dist/VideoToSubtitle.app/Contents/MacOS/VideoToSubtitle').resolve()
+        launcher = Path('dist/VideoToSubtitleMCP.exe' if sys.platform == 'win32' else
+                        'dist/VideoToSubtitleMCP').resolve()
+        subprocess.run([sys.executable, 'scripts/smoke_mcp.py', '--launcher', str(launcher),
+                        '--backend', str(executable)], check=True, timeout=180)
+        subprocess.run([str(executable), '--test-mcp'], check=True, timeout=180)
+
     - name: 驗證成品的強制繁體字幕轉換
       shell: python
       run: |
@@ -179,6 +202,7 @@ jobs:
       if: matrix.os == 'windows-latest'
       env:
         VTS_WINDOWS_BUNDLE: onedir
+        VTS_MCP_LAUNCHER: dist/VideoToSubtitleMCP.exe
       run: pyinstaller --noconfirm --distpath dist/windows-install --workpath build/windows-install VideoToSubtitle.spec
 
     - name: 取得已校驗的 Inno Setup 並建立繁中安裝程式

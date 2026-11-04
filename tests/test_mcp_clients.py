@@ -259,6 +259,36 @@ class ClientTests(unittest.TestCase):
             self.assertEqual(manifest['compatibility']['platforms'], [sys.platform])
             self.assertEqual(archive.read('server/' + launcher.name), launcher.read_bytes())
 
+    def test_mac_bundle_uses_regular_resources_descriptor_and_frameworks_launcher(self):
+        contents = self.home / 'VideoToSubtitle.app' / 'Contents'
+        framework = contents / 'Frameworks'
+        resource = contents / 'Resources'
+        framework.mkdir(parents=True)
+        resource.mkdir()
+        launcher = framework / 'VideoToSubtitleMCP'
+        launcher.write_bytes(b'controlled mac payload')
+        descriptor = resource / 'vts-mcp-payload.json'
+        descriptor.write_text(json.dumps({'launcher': launcher.name, 'platform': 'darwin',
+                                         'sha256': hashlib.sha256(launcher.read_bytes()).hexdigest()}))
+        with mock.patch.object(sys, 'platform', 'darwin'), mock.patch.object(sys, 'frozen', True, create=True), \
+                mock.patch.object(sys, '_MEIPASS', str(framework), create=True):
+            payload = self.api().bundled_mcp_payload()
+            self.assertTrue(payload.launcher.samefile(launcher))
+            # A wrong-role fallback must not accept even an identical descriptor.
+            descriptor.rename(framework / descriptor.name)
+            with self.assertRaises(MCPError):
+                self.api().bundled_mcp_payload()
+            descriptor.symlink_to(framework / descriptor.name)
+            with self.assertRaises(MCPError):
+                self.api().bundled_mcp_payload()
+            descriptor.unlink()
+            (framework / descriptor.name).rename(descriptor)
+            moved = resource / launcher.name
+            launcher.rename(moved)
+            launcher.symlink_to(moved)
+            with self.assertRaises(MCPError):
+                self.api().bundled_mcp_payload()
+
     def test_mcpb_rejects_changed_payload_links_and_external_python(self):
         root, launcher, descriptor = self.frozen_payload()
         with mock.patch.object(sys, 'frozen', True, create=True), mock.patch.object(sys, '_MEIPASS', str(root), create=True):

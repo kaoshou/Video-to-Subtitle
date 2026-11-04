@@ -11,7 +11,7 @@ async def serve_stdio(state, command=None):
     from mcp.server.stdio import stdio_server
     from mcp.types import Tool, CallToolResult, TextContent
     from mcp_transport import BrokerClient, MAX_FRAME
-    from mcp_service import TOOL_SCHEMAS
+    from mcp_contracts import TOOL_SCHEMAS, TOOL_DESCRIPTIONS, SERVER_INSTRUCTIONS
     from mcp_state import MCPError
 
     # Capture protocol output once, then route all ordinary/library prints away.
@@ -32,11 +32,12 @@ async def serve_stdio(state, command=None):
             except UnicodeError:
                 raise StopAsyncIteration from None
 
-    server, client = Server('video-to-subtitle'), BrokerClient(state, command)
+    server = Server('video-to-subtitle', instructions=SERVER_INSTRUCTIONS)
+    client = BrokerClient(state, command)
 
     @server.list_tools()
     async def list_tools():
-        return [Tool(name=name, description=name.replace('_', ' '), inputSchema=schema)
+        return [Tool(name=name, description=TOOL_DESCRIPTIONS[name], inputSchema=schema)
                 for name, schema in TOOL_SCHEMAS.items()]
 
     @server.call_tool(validate_input=False)

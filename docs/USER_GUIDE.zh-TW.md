@@ -271,6 +271,12 @@ SRT／VTT 編輯器會顯示「待校對 N / 總段數」。清單以 `!` 標示
 
 若離線時誤選未下載模型，程式會顯示網路／模型載入說明並恢復介面，不應直接關閉程式。改選已下載模型即可繼續。
 
+## AI 工具連接（可選 MCP）
+
+主畫面開始／取消按鈕同一列的「AI 工具連接」可讓支援本機 MCP 的 AI 客戶端操作明確授權的資料夾。功能預設關閉；啟用後可本機轉錄、分批翻譯字幕並建立多語播放器，主視窗不必持續開啟。設定需先預覽並同意，本機自我測試成功不代表已驗證外部 AI 客戶端連線。
+
+本工具不要求 API key；翻譯使用所選 AI 客戶端的帳號、額度與費用，字幕可能送往雲端。使用前請閱讀[完整 MCP 指南：啟用、隱私、停用、修復與客戶端限制](https://github.com/kaoshou/Video-to-Subtitle/blob/main/docs/MCP.zh-TW.md)。
+
 ## EverCam 數位課程
 
 主畫面的入口為「網頁播放器」→「EverCam 課程轉換」。
@@ -533,10 +539,14 @@ pip install mlx-whisper
 
 ```bash
 python SubtitleTranscriber.py
+python -m pip install "mcp>=1.30,<2" "tomlkit>=0.13,<1"
+pyinstaller MCPLauncher.spec
 pyinstaller VideoToSubtitle.spec
 ```
 
 成品位於 `dist/VideoToSubtitle.exe` 或 `dist/VideoToSubtitle.app`；macOS 正式 DMG 仍以專案 CI 產物為準。
+
+MCP 是可選執行功能；上述額外套件與先建置薄啟動器的步驟用於包含 MCP 的封裝。一般 GUI 啟動不載入 MCP SDK。來源協定可用 `python scripts/smoke_mcp.py` 測試，封裝版可執行 `--test-mcp`；合成測試不等於真實 AI 客戶端或 GPU 模型驗證。
 
 ## 取得協助
 

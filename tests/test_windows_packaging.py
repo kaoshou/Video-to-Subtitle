@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 import runpy
+import tempfile
 import types
 import unittest
 from unittest.mock import patch
@@ -10,6 +11,10 @@ from unittest.mock import patch
 class WindowsPackaging(unittest.TestCase):
     def spec(self, mode):
         records = {}
+        temporary = tempfile.TemporaryDirectory(prefix='vts-spec-fixture-')
+        self.addCleanup(temporary.cleanup)
+        payload = Path(temporary.name) / 'VideoToSubtitleMCP.exe'
+        payload.write_bytes(b'inert build-boundary payload; never execute')
         hooks = types.ModuleType('PyInstaller.utils.hooks')
         hooks.collect_all = lambda name: ([(name + '-data', name)],
                                          [(name + '-dll', name)], [name])
@@ -29,9 +34,9 @@ class WindowsPackaging(unittest.TestCase):
         with patch.dict('sys.modules', {'PyInstaller': types.ModuleType('PyInstaller'),
                         'PyInstaller.utils': types.ModuleType('PyInstaller.utils'),
                         'PyInstaller.utils.hooks': hooks}), patch('sys.platform', 'win32'), \
-                patch.dict(os.environ, {'VTS_WINDOWS_BUNDLE': mode}):
+                patch.dict(os.environ, {'VTS_WINDOWS_BUNDLE': mode, 'VTS_MCP_LAUNCHER': str(payload)}):
             runpy.run_path(str(Path(__file__).resolve().parents[1] / 'VideoToSubtitle.spec'),
-                           init_globals={'Analysis': analysis, 'PYZ': build('PYZ'),
+                           init_globals={'DISTPATH': temporary.name, 'Analysis': analysis, 'PYZ': build('PYZ'),
                                          'EXE': build('EXE'), 'COLLECT': build('COLLECT')})
         return records
 

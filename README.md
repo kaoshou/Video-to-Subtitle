@@ -68,6 +68,8 @@ CPU／CUDA 預設啟用「批次加速（試用）」：先以 VAD 找出同一�
 
 ## 模型與設定
 
+可選的「AI 工具連接」透過 MCP 讓本機 AI 客戶端在指定資料夾轉錄、分批翻譯字幕並建立多語播放器，預設關閉。本工具不收取 API key；字幕可能由 AI 客戶端送往雲端，帳號費用與額度依服務而定。[啟用、權限與驗證限制](docs/MCP.zh-TW.md)
+
 Windows 可選 CPU 或相容 NVIDIA CUDA；Apple Silicon Mac 可選 MLX，亦可使用 CPU。模型涵蓋 `tiny`、`base`、`small`、`medium`、`large-v3`、`large-v3-turbo`，速度與品質依內容及設備而異。
 
 ![進階轉換設定與批次大小](screenshot_advanced.png)

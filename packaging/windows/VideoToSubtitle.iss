@@ -12,6 +12,9 @@
 #if !FileExists(SourceDir + "\_internal\python311.dll")
   #error Missing onedir Python runtime; do not package the portable EXE
 #endif
+#if !FileExists(SourceDir + "\_internal\VideoToSubtitleMCP.exe") || !FileExists(SourceDir + "\_internal\vts-mcp-payload.json")
+  #error Missing trusted standalone MCP payload; build MCPLauncher.spec before VideoToSubtitle.spec
+#endif
 
 [Setup]
 AppId=VideoToSubtitle
@@ -59,3 +62,45 @@ Name: "{userdesktop}\Video to Subtitle"; Filename: "{app}\VideoToSubtitle.exe"; 
 Filename: "{app}\VideoToSubtitle.exe"; Parameters: "--from-installer"; WorkingDir: "{app}"; Description: "啟動 Video to Subtitle"; Flags: nowait postinstall skipifsilent unchecked
 
 ; Intentionally no UninstallDelete: settings and model caches are user data.
+
+[Code]
+function RevokeMCPForMaintenance(): Boolean;
+var
+  ExitCode: Integer;
+  HasDescriptor, HasLauncher: Boolean;
+begin
+  Result := True;
+  HasDescriptor := FileExists(ExpandConstant('{app}\_internal\vts-mcp-payload.json'));
+  HasLauncher := FileExists(ExpandConstant('{app}\_internal\VideoToSubtitleMCP.exe'));
+  if HasDescriptor <> HasLauncher then
+  begin
+    Result := False;
+    Exit;
+  end;
+  { Pre-MCP versions do not recognize the admin flag and would open the GUI. }
+  if not HasDescriptor then
+    Exit;
+  if not FileExists(ExpandConstant('{app}\VideoToSubtitle.exe')) then
+  begin
+    Result := False;
+    Exit;
+  end;
+  Result := Exec(ExpandConstant('{app}\VideoToSubtitle.exe'), '--mcp-maintenance',
+    ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ExitCode);
+  if Result then
+    Result := ExitCode = 0;
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  Result := '';
+  if not RevokeMCPForMaintenance() then
+    Result := '無法安全更新：請等待工作完成或正常關閉正在使用模型的程式；若 MCP 安裝檔不完整，請先修復。成功撤銷後 MCP 會保持停用，更新後可在「AI工具連接」重新啟用。';
+end;
+
+function InitializeUninstall(): Boolean;
+begin
+  Result := RevokeMCPForMaintenance();
+  if not Result then
+    MsgBox('無法安全解除安裝：請等待工作完成或正常關閉正在使用模型的程式；若 MCP 安裝檔不完整，請先修復。成功撤銷後 MCP 會保持停用，不會強制結束工作。', mbError, MB_OK);
+end;

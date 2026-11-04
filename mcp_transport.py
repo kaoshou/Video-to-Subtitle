@@ -21,7 +21,7 @@ import time
 
 from mcp_state import (MCPError, ProcessLock, State, _private_directory,
                        _read_json, _write_json, _encode)
-from mcp_service import Service, TOOL_SCHEMAS, _validate
+from mcp_contracts import TOOL_SCHEMAS, _validate
 
 MAX_FRAME = 1024 * 1024
 FRAME_TIMEOUT = 2.0
@@ -29,6 +29,12 @@ CALL_TIMEOUT = 60.0
 START_TIMEOUT = 12.0
 PROBE_TIMEOUT = 20.0
 MAX_CLIENTS = 16
+
+
+def Service(*args, **kwargs):
+    """Compatibility factory; backend imports occur only when a broker serves."""
+    from mcp_service import Service as BackendService
+    return BackendService(*args, **kwargs)
 
 
 def _json(data):
@@ -371,8 +377,9 @@ class Broker:
 
             while not stop_event.is_set():
                 with guard:
-                    idle = not clients and time.monotonic() - last_activity[0] >= self.idle_timeout
-                if idle and not service.busy:
+                    quiescent = not clients
+                    idle = quiescent and time.monotonic() - last_activity[0] >= self.idle_timeout
+                if quiescent and not service.busy and (idle or not self.state.policy()['enabled']):
                     break
                 try:
                     if os.name == 'nt':
@@ -407,8 +414,17 @@ class Broker:
 
 def backend_command(state, command=None):
     """Absolute local-admin argv prefix, followed by --mcp-broker at spawn."""
+    from_policy = command is None
     if command is None:
         command = state.policy().get('options', {}).get('backend_command')
+    if from_policy and getattr(sys, 'frozen', False):
+        # A standalone bridge has no backend of its own. Never recursively
+        # launch it, or discover a replacement through PATH/cwd.
+        if (command is None or not isinstance(command, (list, tuple)) or not command
+                or not isinstance(command[0], str) or not Path(command[0]).is_file()
+                or Path(command[0]).name in ('VideoToSubtitleMCP', 'VideoToSubtitleMCP.exe')):
+            raise MCPError('BACKEND_REPAIR_REQUIRED',
+                           'Open Video to Subtitle and repair/re-enable MCP; the configured backend is missing.')
     if command is None:
         command = ([sys.executable] if getattr(sys, 'frozen', False) else
                    [sys.executable, str(Path(__file__).resolve().with_name('app_entry.py'))])
