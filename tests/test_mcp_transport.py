@@ -611,7 +611,7 @@ async def check():
             initial=await s.initialize()
             await s.send_ping()
             names=[t.name for t in (await s.list_tools()).tools]
-            assert 'configure' not in names and 'get_status' in names and 'list_translation_drafts' in names and len(names)==13
+            assert 'configure' not in names and {'get_status','list_translation_drafts','preview_transcription','list_work','read_review'} <= set(names)
             status=await s.call_tool('get_status',{})
             assert status.structuredContent['enabled'] is True and not status.isError
             denied=await s.call_tool('list_media',{'root_id':'missing'})
@@ -625,7 +625,7 @@ asyncio.run(check())
             result = subprocess.run([sys.executable, '-c', script, str(ROOT / 'app_entry.py'), str(self.state.path)],
                                     capture_output=True, text=True, timeout=25, cwd=self.temp.name)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(len(json.loads(result.stdout)['tools']), 13)
+            self.assertTrue({'preview_transcription', 'list_work', 'read_review'} <= set(json.loads(result.stdout)['tools']))
             self.assertEqual(client.handshake()['broker_id'], broker.identity)
 
     @unittest.skipUnless(SDK, 'optional official MCP SDK is unavailable')

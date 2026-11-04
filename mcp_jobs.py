@@ -2,6 +2,8 @@
 from pathlib import Path
 import math
 from mcp_progress import valid_progress
+from mcp_outcomes import REVIEW_REASONS
+from web_export_form import language_label
 
 STATES = {'queued':'等待處理', 'preparing':'準備中', 'running':'處理中',
           'validating':'檢查成果', 'publishing':'儲存成果', 'cancelling':'取消中',
@@ -63,7 +65,35 @@ def job_card(job):
     if type(elapsed) in (float, int) and math.isfinite(elapsed) and elapsed >= 0:
         minutes, seconds = divmod(round(elapsed), 60)
         timing_text = f'處理耗時：{minutes} 分 {seconds:02} 秒' if minutes else f'處理耗時：{seconds} 秒'
+    summary_lines = []
+    if state == 'succeeded':
+        languages = result.get('languages') or ([result['language']] if result.get('language') else [])
+        if languages:
+            summary_lines.append('字幕語言：' + '、'.join(language_label(code) for code in languages))
+        if result.get('cue_counts'):
+            summary_lines.append('字幕段數：' + ' · '.join(f'{language_label(code)} {count} 段'
+                                 for code, count in result['cue_counts'].items()))
+        reviews = result.get('review_by_language') or ({result.get('language', 'und'): result['review']} if result.get('review') else {})
+        reviews = dict(reviews)
+        for code in result.get('unchecked_languages', []):
+            reviews.setdefault(code, {'review_count': None})
+        for code, review in reviews.items():
+            count = review.get('review_count')
+            if count is None:
+                summary_lines.append(language_label(code) + '：未檢查，不代表沒有問題。')
+                continue
+            line = f'{language_label(code)}：{count} 段校對提醒'
+            reasons = review.get('reason_counts', {})
+            if reasons:
+                line += '（' + '、'.join(f'{REVIEW_REASONS.get(reason, reason)} {number}'
+                                        for reason, number in reasons.items()) + '）'
+            summary_lines.append(line + '。')
+        if any(r.get('review_status') == 'ai_translation_needs_review' for r in reviews.values()):
+            summary_lines.append('AI 翻譯仍需人工審閱；零提醒不代表翻譯正確。')
+        if result.get('folder'):
+            summary_lines.append('儲存位置：' + result['folder'])
     return {'title':title, 'kind':kind + (' · ' + project if project else ''),
+            'summary_lines': summary_lines,
             'progress_fraction': fraction, 'progress_text': progress_text, 'timing_text': timing_text,
             'status':STATES.get(state, '狀態待確認'), 'description':description,
             'models':model_lines, 'technical':technical,

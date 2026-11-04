@@ -491,7 +491,7 @@ class MCPSettingsDialog:
                 title = self.ctk.CTkLabel(header, text=card['title'], font=ui_font(size=15, weight='bold'), anchor='w', justify='left', width=1, height=1)
                 title.pack(side='left', fill='x', expand=True)
                 wrap_to_width(title)
-                for text in (card['kind'], card['description'], *card['models'], card['progress_text'], card['timing_text']):
+                for text in (card['kind'], card['description'], *card['models'], *card['summary_lines'], card['progress_text'], card['timing_text']):
                     if not text:
                         continue
                     label = self.ctk.CTkLabel(row, text=text, anchor='w', justify='left', text_color=MUTED, height=1)

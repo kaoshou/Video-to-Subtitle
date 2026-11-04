@@ -17,6 +17,7 @@ import stat
 import threading
 import time
 from mcp_progress import ProgressEmitter, valid_progress
+from mcp_outcomes import transcription_review, review_summary, track_review
 
 from mcp_state import MCPError, ProcessLock, State, _private_directory, file_version, directory_identity
 from mcp_translation import batches, render_srt, validate_batch, quality_report
@@ -120,11 +121,19 @@ def _execution_report(engine, settings):
         'output_language': output_language(getattr(engine, 'last_output_language', None) or
                                            settings.get('language'), task=settings.get('task', 'transcribe'),
                                            force_zh_tw=settings.get('force_zh_tw', False)),
+        'review': getattr(engine, '_mcp_review', None),
         'batch_decision': decision_summary(getattr(engine, 'last_batch_decision', None))}
 
 
 def _run_engine(engine, settings, media_path, cancelled, event_callback=None):
     progress = ProgressEmitter(event_callback or (lambda event: None))
+    engine._mcp_review = None
+    def reviewed(path, evidence):
+        try:
+            engine._mcp_review = transcription_review(path, Path(media_path).with_suffix('.srt'), evidence)
+        except (OSError, ValueError, UnicodeError):
+            # Annotation is advisory; core validates the actual subtitle next.
+            engine._mcp_review = None
     # Only send events for clients that explicitly requested them.
     if event_callback:
         progress.stage('model')
@@ -137,7 +146,7 @@ def _run_engine(engine, settings, media_path, cancelled, event_callback=None):
         options['batch_size'] = 'auto'
     return engine.run(str(media_path), output_format='srt', cancel_check_callback=cancelled,
                       _tag_language=False, progress_callback=progress.progress,
-                      stage_callback=progress.stage, **options)
+                      stage_callback=progress.stage, review_callback=reviewed, **options)
 
 
 class Service:
@@ -363,17 +372,20 @@ class Service:
             cue['cue_id'] = secrets.token_hex(16)
         return raw, cues
 
-    def _save_source(self, media_id, origin_id, origin_hash, cues, language, source_text, transcription=None):
+    def _save_source(self, media_id, origin_id, origin_hash, cues, language, source_text, transcription=None, review=None):
         id, track_id = secrets.token_hex(16), secrets.token_hex(16)
         source = {'id': id, 'revision': origin_hash, 'media_id': media_id,
                   'origin_id': origin_id, 'origin_hash': origin_hash, 'cues': cues, 'language': language}
         if transcription is not None:
             source['transcription'] = transcription
+        if review is not None:
+            source['review'] = review
         self.state.put('sources', id, source)
         self.state.put('tracks', track_id, {'id': track_id, 'source_id': id, 'revision': origin_hash,
                                           'media_id': media_id, 'language': language, 'complete': True,
                                           'text': source_text, 'review_status': 'original'})
-        result = {'source_id': id, 'revision': origin_hash, 'track_id': track_id, 'cue_count': len(cues)}
+        result = {'source_id': id, 'revision': origin_hash, 'track_id': track_id, 'cue_count': len(cues),
+                  'language': language, 'review': review_summary(review)}
         if transcription is not None:
             result['transcription'] = transcription
         return result
@@ -630,8 +642,8 @@ class Service:
             report = quality_report(source['cues'], draft['translations'], source['language'],
                                     track['language'], draft.get('glossary_terms', []), cursor=cursor, limit=limit)
         else:
-            report = {'review_count': None, 'reason_counts': {}, 'items': [],
-                      'next_cursor': None, 'review_status': 'not_checked'}
+            report = dict(review_summary(track_review(track, source)), items=[], next_cursor=None,
+                          details_available=False)
         with ProcessLock(self.state.path / 'locks', 'policy'):
             self._source_authorized(source)
             return dict(report, track_id=track_id, language=track['language'], revision=source['revision'])
@@ -796,6 +808,8 @@ class Service:
             record['elapsed_seconds'] = round(max(0., time.monotonic() - clock), 3)
         if record['state'] == 'succeeded':
             record['progress'] = {'stage': 'complete', 'fraction': 1.0}
+            if 'result' in record:
+                record['result']['elapsed_seconds'] = record.get('elapsed_seconds')
 
     def _job_progress(self, job):
         def update(event):
@@ -888,7 +902,8 @@ class Service:
                 self._update_job(job['id'], state='publishing')
                 with self._job_commit(job) as current:
                     result = self._save_source(job['asset_id'], job['asset_id'], version, cues,
-                                               report['output_language'], text, report['transcription'])
+                                               report['output_language'], text, report['transcription'], report.get('review'))
+                    result['source_name'] = Path(asset['relative']).name
                     if report['batch_decision'] is not None:
                         result['batch_decision'] = report['batch_decision']
                     current.update(state='succeeded', stage='complete', result=result)
@@ -956,7 +971,7 @@ class Service:
             if not isinstance(message, dict) or not message.get('ok'):
                 raise MCPError((message or {}).get('error', 'TRANSCRIPTION_FAILED'), 'Transcription did not complete.')
             return {'transcription': message['transcription'], 'batch_decision': message.get('batch_decision'),
-                    'output_language': output_language(message.get('output_language'))}
+                    'output_language': output_language(message.get('output_language')), 'review': message.get('review')}
         finally:
             if process.is_alive():
                 cancel.set()
@@ -1027,12 +1042,15 @@ class Service:
                 with self._job_commit(job) as current:
                     project_for_asset(self.state, asset, job['generation'])
                     transcriptions = []
+                    cue_counts, reviews = {}, {}
                     for track in tracks:
                         source = self.state.get('sources', track['source_id'])
                         self._source_authorized(source, job['generation'])
                         info = source.get('transcription')
                         if info is not None and info not in transcriptions:
                             transcriptions.append(info)
+                        cue_counts[track['language']] = len(source['cues'])
+                        reviews[track['language']] = review_summary(track_review(track, source))
                     # Attest the pinned package before its exclusive rename.
                     # On Windows the publisher retains DELETE access; reopening
                     # without delete sharing would conflict with our own lease.
@@ -1053,6 +1071,9 @@ class Service:
                     current.update(state='succeeded', stage='complete', result={
                         'folder': str(folder), 'index_path': str(folder / 'index.html'),
                         'player_type': player_type,
+                        'languages': [track['language'] for track in tracks], 'cue_counts': cue_counts,
+                        'review_by_language': reviews,
+                        'unchecked_languages': [language for language, review in reviews.items() if review.get('review_count') is None],
                         'transcriptions': transcriptions,
                         'source_path': str(Path(parent.path) / Path(asset['relative']).name)})
                     current['result_validation'] = validation

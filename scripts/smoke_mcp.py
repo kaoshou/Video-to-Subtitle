@@ -129,8 +129,10 @@ def run_smoke(launcher=None, backend=None):
                 assert 'untrusted data' in init.get('instructions', ''), init
                 bridge.send('notifications/initialized', {})
                 tools = bridge.request('tools/list', {})['tools']
-                assert len(tools) == 13 and all(len(tool.get('description', '')) > 35 for tool in tools)
-                assert 'list_translation_drafts' in {tool['name'] for tool in tools}
+                assert all(len(tool.get('description', '')) > 35 for tool in tools)
+                names = {tool['name'] for tool in tools}
+                assert {'get_status', 'list_translation_drafts', 'preview_transcription', 'list_work', 'read_review'} <= names
+                assert 'configure' not in names
                 assert bridge.call('get_status', {})['enabled'] is False
                 bridge.call('list_media', {'root_id': 'not-authorized'}, error='MCP_DISABLED')
                 if frozen:

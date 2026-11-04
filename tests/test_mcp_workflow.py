@@ -182,3 +182,106 @@ class RecoveryTests(ServiceFixture):
         result = self.service.call('list_work', {'asset_id': asset})
         job = next(i for i in result['items'] if i['kind'] == 'job')
         self.assertEqual(job['next_action'], 'restart_with_new_request_id')
+
+
+class OutcomeTests(ServiceFixture):
+    def test_transcription_outcome_has_actual_model_language_duration_and_review(self):
+        class Engine:
+            model_size = 'large-v3-turbo'
+            device = 'cpu'
+            model_type = 'faster-whisper'
+            last_output_language = 'en'
+            def __init__(self, **kwargs): pass
+            def load_model(self, **kwargs): pass
+            def run(self, path, **kwargs):
+                output = Path(path).with_suffix('.srt'); output.write_text(SRT)
+                kwargs['review_callback'](str(output), [])
+                return str(output)
+        self.service.close(); self.service = self.api.Service(self.state, transcribe_factory=Engine)
+        asset = self.assets()['lesson.mp4']
+        accepted = self.service.call('start_transcription', {'asset_id': asset, 'request_id': 'outcome'})
+        finished = self.wait_job(accepted['job_id'])
+        self.assertEqual(finished['state'], 'succeeded', finished)
+        result = finished['result']
+        self.assertEqual(result['language'], 'en')
+        self.assertEqual(result['cue_count'], 2)
+        self.assertEqual(result['review']['review_count'], 2)  # original synthetic SRT overlaps
+        self.assertEqual(result['review']['reason_counts']['時間軸重疊'], 2)
+        self.assertGreaterEqual(result['elapsed_seconds'], 0)
+        self.assertEqual(result['transcription']['model'], 'large-v3-turbo')
+        self.assertIn('source_name', result)
+        stored = self.state.get('sources', result['source_id'])
+        self.assertEqual(stored['review'], result['review'])
+        exported = self.service.call('export_player', {'asset_id': asset, 'track_ids': [result['track_id']],
+                                                      'request_id': 'export-outcome'})
+        outcome = self.wait_job(exported['job_id'])['result']
+        self.assertEqual(outcome['languages'], ['en'])
+        self.assertEqual(outcome['cue_counts']['en'], 2)
+        self.assertEqual(outcome['review_by_language']['en']['review_count'], 2)
+        self.assertGreaterEqual(outcome['elapsed_seconds'], 0)
+
+    def test_imported_subtitles_keep_unknown_review_and_do_not_claim_models(self):
+        source = self.imported()
+        exported = self.service.call('export_player', {'asset_id': self.assets()['lesson.mp4'],
+            'track_ids': [source['track_id']], 'request_id': 'import-summary'})
+        result = self.wait_job(exported['job_id'])['result']
+        self.assertEqual(result['unchecked_languages'], ['en'])
+        self.assertEqual(result['transcriptions'], [])
+        self.assertIsNone(result['review_by_language']['en']['review_count'])
+
+    def test_card_explains_review_reasons_and_result_location(self):
+        from mcp_jobs import job_card
+        card = job_card({'id': 'summary', 'kind': 'export', 'state': 'succeeded', 'stage': 'complete',
+            'result': {'index_path': '/course/lesson-web/index.html', 'folder': '/course/lesson-web',
+                'languages': ['en', 'ja'], 'cue_counts': {'en': 20, 'ja': 20},
+                'review_by_language': {'ja': {'review_count': 2, 'reason_counts': {'glossary_mismatch': 2}}},
+                'unchecked_languages': ['en']}})
+        text = '\n'.join(card['summary_lines'])
+        self.assertIn('日文', text)
+        self.assertIn('專有名詞', text)
+        self.assertIn('/course/lesson-web', text)
+        self.assertIn('未檢查', text)
+        self.assertTrue(card['can_open'])
+
+    def test_confidence_summary_maps_to_final_subtitle_without_reading_another_path(self):
+        from mcp_outcomes import transcription_review
+        output = self.media / 'generated.srt'
+        output.write_text('1\n00:00:01,000 --> 00:00:03,000\n字幕\n')
+        report = transcription_review(output, output, [
+            {'start': 1, 'end': 3, 'text': '字幕', 'reasons': ['辨識信心偏低']}])
+        self.assertEqual(report['review_count'], 1)
+        self.assertEqual(report['reason_counts'], {'辨識信心偏低': 1})
+        self.assertIsNone(transcription_review(output, self.media / 'different.srt', []))
+
+    def test_multilingual_export_retains_quality_counts_and_original_timestamps(self):
+        source = self.imported()
+        draft = self.service.call('prepare_translation', {'source_id': source['source_id'],
+            'revision': source['revision'], 'language': 'ja', 'request_id': 'summary-draft'})
+        batch = self.service.call('get_translation_batch', {'draft_id': draft['draft_id'],
+            'batch_id': draft['batches'][0]['batch_id']})
+        self.service.call('submit_translation_batch', {'draft_id': draft['draft_id'], 'batch_id': batch['batch_id'],
+            'revision': draft['revision'], 'translations': [{'cue_id': cue['cue_id'], 'text': '翻訳' * 70}
+                for cue in batch['cues']], 'request_id': 'summary-batch'})
+        track = self.service.call('finalize_translation', {'draft_id': draft['draft_id'], 'request_id': 'summary-final'})
+        accepted = self.service.call('export_player', {'asset_id': self.assets()['lesson.mp4'],
+            'track_ids': [source['track_id'], track['track_id']], 'request_id': 'summary-export'})
+        result = self.wait_job(accepted['job_id'])['result']
+        self.assertEqual(result['review_by_language']['ja']['review_count'], 2)
+        self.assertEqual(result['review_by_language']['ja']['reason_counts']['long_text'], 2)
+        self.assertEqual(result['unchecked_languages'], ['en'])
+        self.assertIn('00:00:00,123 --> 00:00:00,456', (Path(result['folder']) / 'media.ja.srt').read_text())
+
+    def test_old_translation_never_inherits_original_language_quality_report(self):
+        source = self.imported()
+        saved = self.state.get('sources', source['source_id'])
+        saved['review'] = {'review_count': 0, 'reason_counts': {}, 'review_status': 'transcription_needs_review'}
+        self.state.put('sources', saved['id'], saved)
+        track = self.state.get('tracks', source['track_id'])
+        track.update(id='old-translated', language='ja', review_status='ai_translation_needs_review')
+        self.state.put('tracks', track['id'], track)
+        report = self.service.call('read_review', {'track_id': track['id']})
+        self.assertIsNone(report['review_count'])
+        accepted = self.service.call('export_player', {'asset_id': self.assets()['lesson.mp4'],
+            'track_ids': [track['id']], 'request_id': 'legacy-quality'})
+        result = self.wait_job(accepted['job_id'])['result']
+        self.assertEqual(result['unchecked_languages'], ['ja'])

@@ -495,6 +495,31 @@ class MCPGuiTests(unittest.TestCase):
                 time.sleep(.01)
             self.assertTrue(destroy.called)
 
+    def test_workflow_cards_show_real_progress_and_readable_quality_summary(self):
+        self.state.put('jobs', 'active', {'id': 'active', 'kind': 'transcription', 'state': 'running',
+            'stage': 'recognition', 'progress': {'stage': 'recognition', 'fraction': .5}})
+        self.state.put('jobs', 'done', {'id': 'done', 'kind': 'export', 'state': 'succeeded',
+            'stage': 'complete', 'elapsed_seconds': 71.9,
+            'result': {'folder': str(self.path / 'course-web'), 'languages': ['ja'],
+                       'cue_counts': {'ja': 20}, 'review_by_language': {'ja': {
+                           'review_count': 2, 'reason_counts': {'glossary_mismatch': 2},
+                           'review_status': 'ai_translation_needs_review'}}}})
+        dialog = self.open()
+        dialog.tabs.set('工作狀態'); dialog.refresh_jobs(); self.settle(); self.root.update()
+        def descendants(parent):
+            for widget in parent.winfo_children():
+                yield widget
+                yield from descendants(widget)
+        widgets = list(descendants(dialog.jobs_frame))
+        texts = [w.cget('text') for w in widgets if isinstance(w, dialog.ctk.CTkLabel)]
+        self.assertTrue(any('50%' in text for text in texts), texts)
+        self.assertTrue(any('專有名詞' in text and '2' in text for text in texts), texts)
+        self.assertTrue(any('1 分 12 秒' in text for text in texts), texts)
+        bars = [w for w in widgets if isinstance(w, dialog.ctk.CTkProgressBar)]
+        self.assertEqual(len(bars), 1)
+        self.assertAlmostEqual(bars[0].get(), .5)
+        self.assertFalse(self.errors, repr(self.errors))
+
 
 if __name__ == '__main__':
     unittest.main()
