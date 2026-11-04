@@ -50,6 +50,21 @@ class StateTests(unittest.TestCase):
             self.state.get('jobs', 'missing')
         self.assertEqual(caught.exception.code, 'NOT_FOUND')
 
+    def test_absent_policy_and_unknown_record_reads_do_not_create_io_locks(self):
+        from mcp_state import _private_directory
+        with _private_directory(self.state.path, create=True):
+            pass
+        self.assertFalse(self.state.policy()['enabled'])
+        self.state.disable()
+        self.assertEqual(list(self.state.path.iterdir()), [])
+        self.state.put('jobs', 'existing', {'ok': True})
+        before = sorted(path.name for path in (self.state.path / 'locks').iterdir())
+        for index in range(3):
+            with self.assertRaises(MCPError) as error:
+                self.state.get('jobs', 'unknown-' + str(index))
+            self.assertEqual(error.exception.code, 'NOT_FOUND')
+        self.assertEqual(sorted(path.name for path in (self.state.path / 'locks').iterdir()), before)
+
     def test_configure_persists_stable_root_ids_and_options(self):
         first = self.state.configure(True, [self.root], model='small', device='cpu')
         second = self.state.configure(True, [self.root])
@@ -300,6 +315,63 @@ class StateTests(unittest.TestCase):
             output, errors = process.communicate(timeout=20)
             self.assertEqual(process.returncode, 0, errors)
         self.assertEqual(self.state.get('jobs', 'counter'), {'count': 36})
+
+    def test_private_json_readers_serialize_with_atomic_publishers(self):
+        # Windows replacement can report access denied while our own pinned
+        # reader is open. Coordinate reads, not global access-error retries.
+        import mcp_state
+        for operation in ('get', 'records', 'policy'):
+            with self.subTest(operation=operation):
+                self.enable()
+                self.state.put('jobs', 'shared', {'count': 0})
+                entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+                results, failures = [], []
+                original = mcp_state._read_json
+                def held_read(directory, name, limit):
+                    if threading.current_thread().name == 'private-reader':
+                        entered.set()
+                        if not release.wait(3):
+                            raise AssertionError('reader was not released')
+                    return original(directory, name, limit)
+                def read():
+                    try:
+                        results.append(self.state.get('jobs', 'shared') if operation == 'get' else
+                                       self.state.records('jobs') if operation == 'records' else self.state.policy())
+                    except BaseException as error:
+                        failures.append(error)
+                def write():
+                    try:
+                        if operation == 'policy':
+                            self.state.disable()
+                        else:
+                            self.state.put('jobs', 'shared', {'count': 1})
+                    except BaseException as error:
+                        failures.append(error)
+                    finally:
+                        finished.set()
+                with mock.patch('mcp_state._read_json', side_effect=held_read):
+                    reader = threading.Thread(target=read, name='private-reader')
+                    writer = threading.Thread(target=write)
+                    reader.start()
+                    try:
+                        self.assertTrue(entered.wait(2))
+                        writer.start()
+                        self.assertFalse(finished.wait(.15), 'writer replaced a file during a protected read')
+                    finally:
+                        release.set()
+                        reader.join(4)
+                        if writer.ident is not None:
+                            writer.join(4)
+                self.assertFalse(reader.is_alive() or writer.is_alive())
+                self.assertEqual(failures, [])
+                self.assertTrue(finished.is_set())
+                if operation == 'policy':
+                    self.assertTrue(results[0]['enabled'])
+                    self.assertFalse(self.state.policy()['enabled'])
+                else:
+                    before = results[0] if operation == 'get' else results[0][0]
+                    self.assertEqual(before, {'count': 0})
+                    self.assertEqual(self.state.get('jobs', 'shared'), {'count': 1})
 
     def test_index_record_put_and_mutation_do_not_deadlock(self):
         for operation in ('put', 'mutation'):

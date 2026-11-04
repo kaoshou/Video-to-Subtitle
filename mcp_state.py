@@ -448,7 +448,10 @@ class State:
         with _errors('invalid_policy'):
             try:
                 with _private_directory(self.path) as directory:
-                    policy = _read_json(directory, 'policy.json', MAX_POLICY_BYTES)
+                    if directory.info('policy.json') is None:
+                        return {'enabled': False, 'roots': [], 'generation': 0}
+                    with ProcessLock(self.path / 'locks', 'json-policy'):
+                        policy = _read_json(directory, 'policy.json', MAX_POLICY_BYTES)
             except FileNotFoundError:
                 return {'enabled': False, 'roots': [], 'generation': 0}
             if (type(policy.get('enabled')) is not bool or type(policy.get('generation')) is not int or
@@ -508,7 +511,7 @@ class State:
                 if admission is not None:
                     policy['drain_generation'] = admission
                     policy['admission_floor'] = old.get('admission_floor', admission)
-            with _private_directory(self.path, create=True) as directory:
+            with ProcessLock(self.path / 'locks', 'json-policy'), _private_directory(self.path, create=True) as directory:
                 _write_json(directory, 'policy.json', _encode(policy, MAX_POLICY_BYTES))
             return policy
 
@@ -528,7 +531,7 @@ class State:
             policy = {**old, 'roots': [r for r in old['roots'] if r['path'] in paths],
                       'generation': old['generation'] + 1,
                       'admission_floor': old.get('admission_floor', old['generation'])}
-            with _private_directory(self.path) as directory:
+            with ProcessLock(self.path / 'locks', 'json-policy'), _private_directory(self.path) as directory:
                 _write_json(directory, 'policy.json', _encode(policy, MAX_POLICY_BYTES))
             return policy
 
@@ -553,7 +556,7 @@ class State:
                 if admission is not None:
                     policy['drain_generation'] = admission
                     policy['admission_floor'] = old.get('admission_floor', admission)
-            with _private_directory(self.path, create=True) as directory:
+            with ProcessLock(self.path / 'locks', 'json-policy'), _private_directory(self.path, create=True) as directory:
                 _write_json(directory, 'policy.json', _encode(policy, MAX_POLICY_BYTES))
             return policy
 
@@ -606,7 +609,13 @@ class State:
             try:
                 with _private_directory(self.path) as directory, directory.child(kind) as records:
                     _check_private(records)
-                    return _read_json(records, id + '.json', MAX_RECORD_BYTES)
+                    if records.info(id + '.json') is None:
+                        raise FileNotFoundError(id + '.json')
+                    # Leaf I/O leases are separate from mutation locks, so a
+                    # mutation may read its own record without reentrant locks.
+                    # Keep Windows readers closed before atomic replacement.
+                    with ProcessLock(self.path / 'locks', 'json-' + kind + '-' + id):
+                        return _read_json(records, id + '.json', MAX_RECORD_BYTES)
             except FileNotFoundError as error:
                 raise MCPError('not_found', 'The local record does not exist.') from error
 
@@ -625,7 +634,8 @@ class State:
                     _check_private(records)
                     if records.info(id + '.json') is None and len(_record_names(records)) >= MAX_RECORDS:
                         raise MCPError('storage_limit', 'The record namespace is full.')
-                    _write_json(records, id + '.json', encoded)
+                    with ProcessLock(self.path / 'locks', 'json-' + kind + '-' + id):
+                        _write_json(records, id + '.json', encoded)
 
     def put(self, kind, id, data):
         _kind(kind)
@@ -659,7 +669,8 @@ class State:
                     result = []
                     total = 0
                     for name in sorted(names):
-                        value = _read_json(records, name, MAX_RECORD_BYTES)
+                        with ProcessLock(self.path / 'locks', 'json-' + kind + '-' + name[:-5]):
+                            value = _read_json(records, name, MAX_RECORD_BYTES)
                         total += len(_encode(value, MAX_RECORD_BYTES))
                         if total > 32 * 1024 * 1024:
                             raise MCPError('storage_limit', 'Record listing exceeds its size limit.')
