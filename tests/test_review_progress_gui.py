@@ -51,6 +51,41 @@ class ReviewProgressGUI(unittest.TestCase):
             self.root.update()
             time.sleep(.01)
 
+    def test_search_hint_is_visible_without_becoming_search_text(self):
+        # CTk hides its built-in placeholder when textvariable is supplied.
+        editor = self.editor()
+        editor.btn_clear_search.focus_set()
+        self.settle_review()
+        hints = [w for w in editor.search_entry.winfo_children()
+                 if isinstance(w, self.desktop.ctk.CTkLabel) and w.winfo_ismapped()]
+        self.assertTrue(hints)
+        self.assertEqual(editor.search_var.get(), '')
+        editor.search_var.set('老師')
+        self.settle_review()
+        self.assertFalse(hints[0].winfo_ismapped())
+        self.assertEqual(len(editor.tree.get_children()), 1)
+
+    def test_long_preview_subtitle_wraps_inside_narrow_canvas(self):
+        editor = self.editor()
+        player = editor.video_player
+        original = [dict(item) for item in editor.items]
+        text = '透過逐字稿搜尋，可以快速找到課程中的重點，讓學生更容易複習與理解教材。'
+        for width in (240, 360, 640):
+            with self.subTest(width=width):
+                player.canvas.delete('all')
+                player.current_subtitle_text = text
+                player._draw_subtitle_overlay(width, 260)
+                items = player.canvas.find_all()
+                self.assertTrue(items)
+                rendered = [item for item in items if player.canvas.type(item) == 'text']
+                self.assertEqual(player.canvas.itemcget(rendered[0], 'text'), text)
+                x1, y1, x2, y2 = player.canvas.bbox('all')
+                self.assertGreaterEqual(x1, 0)
+                self.assertGreaterEqual(y1, 0)
+                self.assertLessEqual(x2, width)
+                self.assertLessEqual(y2, 260)
+        self.assertEqual(editor.items, original)
+
     def test_editor_controls_wrap_inside_narrow_pane_at_scaled_sizes(self):
         editor = self.editor()
         ctk = self.desktop.ctk

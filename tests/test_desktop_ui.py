@@ -243,7 +243,7 @@ class DesktopUI(unittest.TestCase):
             self.assertGreaterEqual(widget.winfo_rooty(), canvas.winfo_rooty())
             self.assertLessEqual(widget.winfo_rooty() + widget.winfo_height(),
                                  canvas.winfo_rooty() + canvas.winfo_height())
-        self.assert_buttons_visible(app, ['開始產生字幕', '取消 (Cancel)'])
+        self.assert_buttons_visible(app, ['開始產生字幕', '取消'])
 
     def test_selected_cpu_threads_reach_model_initialization(self):
         from unittest.mock import patch
@@ -322,7 +322,7 @@ class DesktopUI(unittest.TestCase):
         self.root.update()
         picker = next(widget for widget in app.winfo_children()
                       if isinstance(widget, self.ctk.CTkToplevel) and widget.title() == '網頁播放器')
-        button = next(widget for widget in picker.winfo_children()
+        button = next(widget for widget in self.widgets(picker)
                       if isinstance(widget, self.ctk.CTkButton) and widget.cget('text') == 'OpenCam 置入字幕')
         button.invoke()
         self.root.update()
@@ -704,7 +704,7 @@ class DesktopUI(unittest.TestCase):
                 self.assertEqual(app.file_name_labels[str(video)].cget('text'), video.name)
                 self.assertEqual(app.file_path_labels[str(video)].cget('text'), str(video.parent))
                 self.assert_buttons_visible(app, ['加入檔案...', '清除清單',
-                    '網頁播放器', '開始產生字幕', '取消 (Cancel)'])
+                    '網頁播放器', '開始產生字幕', '取消'])
                 app.settings_frame._parent_canvas.yview_moveto(1)
                 self.root.update()
                 app.btn_toggle_adv.invoke()
@@ -817,7 +817,7 @@ class DesktopUI(unittest.TestCase):
                 self.assertFalse(app.adv_settings_frame.winfo_manager())
                 self.assertAlmostEqual(canvas.yview()[0], 0, delta=0.02)
                 self.assertEqual(app.max_chars_var.get(), '47')
-                self.assert_buttons_visible(app, ['開始產生字幕', '取消 (Cancel)'])
+                self.assert_buttons_visible(app, ['開始產生字幕', '取消'])
         self.assertFalse(self.errors, repr(self.errors))
 
     def test_advanced_first_option_is_visible_at_minimum_window_height(self):
@@ -833,7 +833,7 @@ class DesktopUI(unittest.TestCase):
         self.assertGreaterEqual(first.winfo_rooty(), canvas.winfo_rooty())
         self.assertLessEqual(first.winfo_rooty() + first.winfo_height(),
                              canvas.winfo_rooty() + canvas.winfo_height())
-        self.assert_buttons_visible(app, ['開始產生字幕', '取消 (Cancel)'])
+        self.assert_buttons_visible(app, ['開始產生字幕', '取消'])
         self.assertFalse(self.errors, repr(self.errors))
 
     def test_model_manager_done_button_is_full_height_at_supported_scales(self):
@@ -882,7 +882,7 @@ class DesktopUI(unittest.TestCase):
             if isinstance(button, self.ctk.CTkButton) and button.cget('text') in ('完成 (Close)', '取消下載'):
                 self.assertGreaterEqual(button.winfo_height(), button.winfo_reqheight() - 2)
         scrolls = [w for w in self.widgets(window) if isinstance(w, self.ctk.CTkScrollableFrame)]
-        self.assertTrue(scrolls)
+        self.assertEqual(len(scrolls), 1, '模型清單與設定共用單一捲動區域')
         for scroll in scrolls:
             scroll._parent_canvas.yview_moveto(1)
         self.root.update()
@@ -903,6 +903,31 @@ class DesktopUI(unittest.TestCase):
         self.assertGreaterEqual(last_model_button.winfo_height(), last_model_button.winfo_reqheight() - 2)
         self.assertGreaterEqual(last_model_button.winfo_width(), last_model_button.winfo_reqwidth() - 2)
         self.assertFalse(self.errors, repr(self.errors))
+
+    def test_model_manager_rejects_resize_that_hides_actions(self):
+        app = self.main_app()
+        app.show_storage_settings()
+        window = app.storage_window
+        self.settle_scaling()
+        window.geometry('300x200')
+        self.root.update()
+        self.assert_buttons_visible(window, ['完成 (Close)', '取消下載'])
+        names = [w for w in self.widgets(window) if isinstance(w, self.ctk.CTkLabel)
+                 and w.cget('text') in app.available_models]
+        self.assertTrue(names)
+        for name in names:
+            self.assertGreaterEqual(name.winfo_width(), name.winfo_reqwidth() - 2)
+        scroll = next(w for w in self.widgets(window)
+                      if isinstance(w, self.ctk.CTkScrollableFrame))
+        scroll._parent_canvas.yview_moveto(1)
+        self.root.update()
+        action = next(w for w in reversed(list(self.widgets(scroll)))
+                      if isinstance(w, self.ctk.CTkButton))
+        self.assertGreaterEqual(action.winfo_width(), action.winfo_reqwidth() - 2)
+        self.assertLessEqual(action.winfo_rootx() + action.winfo_width(),
+                             window.winfo_rootx() + window.winfo_width())
+        self.assertLessEqual(action.winfo_rooty() + action.winfo_height(),
+                             scroll._parent_canvas.winfo_rooty() + scroll._parent_canvas.winfo_height())
 
     def assert_buttons_visible(self, top, texts):
         buttons = {w.cget('text'): w for w in self.widgets(top)
@@ -1059,7 +1084,7 @@ class DesktopUI(unittest.TestCase):
                 self.ctk.set_window_scaling(scale)
                 self.root.geometry('760x800')
                 self.root.update()
-                self.assert_buttons_visible(self.root, ['開始產生字幕', '取消 (Cancel)', '網頁播放器'])
+                self.assert_buttons_visible(self.root, ['開始產生字幕', '取消', '網頁播放器'])
                 for widget in (self.root.chk_word_ts, self.root.chk_spacing, self.root.chk_case_corr, self.root.chk_vad, self.root.entry_max_chars):
                     self.assertGreaterEqual(widget.winfo_width(), widget.winfo_reqwidth() - 2)
                     self.assertLessEqual(widget.winfo_rootx() + widget.winfo_width(), self.root.winfo_rootx() + self.root.winfo_width())

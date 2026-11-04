@@ -257,18 +257,22 @@ class MCPGuiTests(unittest.TestCase):
         for mode in ('Light', 'Dark'):
             ctk.set_appearance_mode(mode)
             self.root.update()
-            for button in dialog.actions:
-                self.assertTrue(button.winfo_ismapped())
-                self.assertGreaterEqual(button.winfo_rootx(), dialog.top.winfo_rootx())
-                self.assertLessEqual(button.winfo_rootx() + button.winfo_width(),
-                                     dialog.top.winfo_rootx() + dialog.top.winfo_width())
-                self.assertLessEqual(button.winfo_rooty() + button.winfo_height(),
-                                     dialog.top.winfo_rooty() + dialog.top.winfo_height())
+            for tab in dialog.pages:
+                dialog.tabs.set(tab)
+                self.root.update()
+                visible = [button for button in dialog.actions if button.winfo_ismapped()]
+                self.assertTrue(visible)
+                for button in visible:
+                    self.assertGreaterEqual(button.winfo_rootx(), dialog.top.winfo_rootx())
+                    self.assertLessEqual(button.winfo_rootx() + button.winfo_width(),
+                                         dialog.top.winfo_rootx() + dialog.top.winfo_width())
             self.assertIsNone(dialog.top.grab_current())
         ctk.set_appearance_mode('Light')
 
     def test_actions_are_keyboard_reachable_and_return_invokes_manual(self):
         dialog = self.open()
+        dialog.tabs.set('進階管理')
+        self.root.update()
         button = next(button for button in dialog.actions if button.cget('text') == '手動設定')
         self.assertTrue(int(button._canvas.cget('takefocus')))
         button._canvas.focus_force()
@@ -276,6 +280,35 @@ class MCPGuiTests(unittest.TestCase):
         button._canvas.event_generate('<Return>')
         self.settle()
         self.assertIn('--mcp', dialog.output.get('1.0', 'end'))
+
+    def test_setup_has_one_scroll_level_and_code_uses_separate_window(self):
+        dialog = self.open()
+        self.assertIsNone(dialog.output)
+        for page in dialog.pages.values():
+            def inspect(widget):
+                for child in widget.winfo_children():
+                    self.assertNotIsInstance(child, (dialog.ctk.CTkScrollableFrame, dialog.ctk.CTkTextbox))
+                    inspect(child)
+            inspect(page)
+        dialog._output('controlled setting', show=True)
+        self.root.update()
+        self.assertEqual(dialog.output.winfo_toplevel(), dialog.details_window)
+        self.assertIsNone(dialog.top.grab_current())
+        with patch.object(dialog.top, 'clipboard_clear'), patch.object(dialog.top, 'clipboard_append') as copy:
+            dialog.copy_output()
+            copy.assert_called_once_with('controlled setting')
+
+    def test_selected_tool_exposes_only_its_details_and_correct_action(self):
+        dialog = self.open()
+        for key, label in (('codex', '設定此工具…'), ('claude-desktop', '匯出 Claude 安裝檔…'),
+                           ('windsurf', '顯示手動設定'), ('generic', '顯示手動設定')):
+            dialog.client.set(key)
+            self.root.update()
+            self.assertEqual(dialog.client_action.cget('text'), label)
+            self.assertEqual([client for client, row in dialog.client_rows.items() if row['label'].winfo_ismapped()], [key])
+        with patch.object(dialog, 'show_manual') as manual:
+            dialog.connect_selected()
+            manual.assert_called_once()
 
     def test_interrupted_jobs_cannot_be_returned_to_cancelling(self):
         self.state.put('jobs', 'interrupted-job', {'id': 'interrupted-job', 'state': 'interrupted'})

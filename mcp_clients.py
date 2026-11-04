@@ -41,6 +41,46 @@ _MAC_APPS = {'codex': 'Codex.app', 'claude-desktop': 'Claude.app', 'cursor': 'Cu
 _CLI_NAMES = {'codex': 'codex', 'claude-code': 'claude', 'gemini-cli': 'gemini',
               'cursor': 'cursor', 'vscode': 'code', 'windsurf': 'windsurf',
               'antigravity': 'antigravity', 'opencode': 'opencode', 'copilot': 'copilot'}
+_WINDOWS_APPS = {
+    'codex': ('Codex/Codex.exe', 'OpenAI/Codex/Codex.exe'),
+    'antigravity': ('Antigravity/Antigravity.exe',),
+    'vscode': ('Microsoft VS Code/Code.exe',),
+    'cursor': ('cursor/Cursor.exe',),
+    'windsurf': ('Windsurf/Windsurf.exe',),
+    'claude-desktop': ('Claude/Claude.exe',),
+}
+
+
+def _windows_package_names(family, query=None):
+    """Current-user package metadata, without PowerShell or WindowsApps scanning.
+
+    GetPackagesByPackageFamily is a read-only Win32 API. Bound both allocations
+    and retries: an update racing discovery simply yields no evidence this time.
+    """
+    import ctypes
+    from ctypes import wintypes
+    if query is None:
+        if os.name != 'nt':
+            return []
+        try:
+            query = ctypes.WinDLL('kernel32', use_last_error=True).GetPackagesByPackageFamily
+            query.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(wintypes.UINT),
+                              ctypes.POINTER(wintypes.LPWSTR), ctypes.POINTER(wintypes.UINT),
+                              wintypes.LPWSTR]
+            query.restype = wintypes.LONG
+        except (OSError, AttributeError):
+            return []
+    count, length = wintypes.UINT(), wintypes.UINT()
+    result = query(family, ctypes.byref(count), None, ctypes.byref(length), None)
+    if result != 122 or not 0 < count.value <= 64 or not 0 < length.value <= 32768:
+        return []
+    capacity = count.value
+    names = (wintypes.LPWSTR * capacity)()
+    buffer = ctypes.create_unicode_buffer(length.value)
+    result = query(family, ctypes.byref(count), names, ctypes.byref(length), buffer)
+    if result != 0 or count.value > capacity:
+        return []
+    return [names[index] for index in range(count.value) if names[index]]
 
 
 def _client(client_id):
@@ -115,9 +155,9 @@ def _installation_evidence(client_id, app_roots, executable_roots, system):
     if system == 'Darwin' and client_id in _MAC_APPS:
         candidates.extend((root / _MAC_APPS[client_id], 'app-bundle', True)
                           for root in app_roots)
-    elif system == 'Windows' and client_id == 'vscode':
-        candidates.extend((root / 'Microsoft VS Code' / 'Code.exe', 'application-file', False)
-                          for root in app_roots)
+    elif system == 'Windows':
+        candidates.extend((root / relative, 'application-file', False)
+                          for root in app_roots for relative in _WINDOWS_APPS.get(client_id, ()))
     if client_id in _CLI_NAMES:
         name = _CLI_NAMES[client_id]
         names = (name + '.exe', name + '.cmd') if system == 'Windows' else (name,)
@@ -152,6 +192,8 @@ def discover_clients(*, home=None, environ=None, system=None,
     ``can_apply`` describes the adapter and unambiguous target, not current file
     writability or a successful preview. The GUI must still preview and consent.
     """
+    # Explicit fixture/custom roots never inspect the current user's registry.
+    native_packages = home is None and environ is None and application_roots is None
     home = _path(Path.home() if home is None else home)
     env = dict(os.environ if environ is None else environ)
     system = platform.system() if system is None else system
@@ -168,7 +210,8 @@ def discover_clients(*, home=None, environ=None, system=None,
         if system == 'Darwin':
             application_roots = (Path('/Applications'), home / 'Applications')
         elif system == 'Windows':
-            application_roots = [override('LOCALAPPDATA', home / 'AppData' / 'Local') / 'Programs']
+            local = override('LOCALAPPDATA', home / 'AppData' / 'Local')
+            application_roots = [local / 'Programs', local]
             application_roots.extend(Path(env[key]) for key in ('ProgramFiles', 'ProgramFiles(x86)')
                                      if env.get(key) and Path(env[key]).is_absolute())
         else:
@@ -213,6 +256,10 @@ def discover_clients(*, home=None, environ=None, system=None,
             except OSError:
                 pass
         installation_evidence = _installation_evidence(client_id, app_roots, executable_roots, system)
+        if system == 'Windows' and native_packages and client_id == 'codex':
+            for family in ('OpenAI.Codex_2p2nqsd0c76g0', 'OpenAI.Codex_8wekyb3d8bbwe'):
+                installation_evidence.extend({'kind': 'registered-package', 'path': name}
+                                             for name in _windows_package_names(family))
         evidence = installation_evidence + configuration_evidence
         reason = ''
         if client_id == 'windsurf':

@@ -442,6 +442,63 @@ class ClientTests(unittest.TestCase):
         self.assertTrue(by_id['claude-code']['installation_detected'])
         self.assertFalse(by_id['claude-code']['configuration_detected'])
 
+    def test_windows_codex_and_antigravity_desktop_without_cli(self):
+        apps = self.home / 'Programs'
+        for directory, executable in (('Codex', 'Codex.exe'), ('Antigravity', 'Antigravity.exe')):
+            (apps / directory).mkdir(parents=True)
+            (apps / directory / executable).write_bytes(b'inert desktop fixture')
+        with mock.patch.object(Path, 'open', side_effect=AssertionError('must not read or execute app')):
+            rows = self.api().discover_clients(home=self.home, environ={}, system='Windows',
+                                               application_roots=[apps], executable_roots=())
+        for row in rows:
+            if row['id'] in ('codex', 'antigravity'):
+                self.assertTrue(row['installation_detected'])
+                self.assertFalse(row['configuration_detected'])
+                self.assertFalse(row['live_verified'])
+
+    def test_windows_package_query_is_bounded_and_handles_update_race(self):
+        import ctypes
+        from ctypes import wintypes
+        def query(family, count, names, length, buffer):
+            ctypes.cast(count, ctypes.POINTER(wintypes.UINT))[0] = 1
+            ctypes.cast(length, ctypes.POINTER(wintypes.UINT))[0] = 100
+            if names is None:
+                return 122
+            buffer.value = 'OpenAI.Codex_1.0_x64__fixture'
+            names[0] = ctypes.cast(buffer, wintypes.LPWSTR)
+            return 0
+        self.assertEqual(self.api()._windows_package_names('family', query),
+                         ['OpenAI.Codex_1.0_x64__fixture'])
+        def too_large(family, count, names, length, buffer):
+            ctypes.cast(count, ctypes.POINTER(wintypes.UINT))[0] = 1000000
+            ctypes.cast(length, ctypes.POINTER(wintypes.UINT))[0] = 1000000
+            return 122
+        self.assertEqual(self.api()._windows_package_names('family', too_large), [])
+        self.assertEqual(self.api()._windows_package_names('family', lambda *args: 5), [])
+        calls = []
+        def racing(*args):
+            calls.append(1)
+            query(*args)
+            return 122
+        self.assertEqual(self.api()._windows_package_names('family', racing), [])
+        self.assertEqual(len(calls), 2)
+
+    def test_native_package_evidence_does_not_imply_configuration_or_live_connection(self):
+        api = self.api()
+        with mock.patch.object(Path, 'home', return_value=self.home), mock.patch.dict(os.environ, {}, clear=True), \
+                mock.patch.object(api, '_windows_package_names', return_value=['OpenAI.Codex_fixture']) as packages:
+            rows = api.discover_clients(system='Windows')
+            codex = next(row for row in rows if row['id'] == 'codex')
+            self.assertTrue(codex['installation_detected'])
+            self.assertFalse(codex['configuration_detected'])
+            self.assertFalse(codex['publisher_verified'])
+            self.assertFalse(codex['live_verified'])
+            self.assertEqual(codex['installation_evidence'][0]['kind'], 'registered-package')
+            self.assertTrue(packages.called)
+            packages.reset_mock()
+            api.discover_clients(home=self.home, environ={}, system='Windows')
+            packages.assert_not_called()
+
     def test_npm_command_links_use_metadata_only_and_broken_links_are_not_installations(self):
         executables = self.home / 'bin'
         executables.mkdir()

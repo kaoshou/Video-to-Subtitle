@@ -856,7 +856,7 @@ class VideoPlayerWidget(ctk.CTkFrame):
         tip_text = "未載入影音檔案\n\n點選上方「選擇影片」載入對應檔案\n點選左側字幕畫面將即時同步跳轉\n播放或快轉時字幕列表將自動定位" if not self.has_video else "載入中..."
         self.canvas.create_text(
             cw // 2, ch // 2, text=tip_text, 
-            fill="#718096", font=("Helvetica", 11), justify="center"
+            fill="#718096", font=(FONT_FAMILY, 11), justify="center", width=max(40, cw - 32)
         )
         
         # 若無影片但有選中字幕，仍於下方置中疊加顯示字幕預覽
@@ -870,7 +870,10 @@ class VideoPlayerWidget(ctk.CTkFrame):
             
         # 動態計算合適的字體大小 (12pt ~ 20pt)
         font_size = max(12, min(18, int(ch * 0.055)))
-        font_spec = ("Microsoft JhengHei UI", font_size, "bold")
+        font_spec = (FONT_FAMILY, font_size, "bold")
+        pad_x = max(10, int(font_size * 0.8))
+        pad_y = max(4, int(font_size * 0.3))
+        text_width = max(20, cw - 2 * pad_x - 12)
         
         cx = cw // 2
         # 若有影片畫面高度，將字幕貼近影片畫面底緣；否則放置於畫布 88% 高度處
@@ -882,15 +885,18 @@ class VideoPlayerWidget(ctk.CTkFrame):
         # 建立臨時文字以測量邊界 Bounding Box
         temp_id = self.canvas.create_text(
             cx, cy, text=self.current_subtitle_text,
-            font=font_spec, justify="center"
+            font=font_spec, justify="center", width=text_width
         )
         bbox = self.canvas.bbox(temp_id)
         self.canvas.delete(temp_id)
         
         if bbox:
             x1, y1, x2, y2 = bbox
-            pad_x = max(10, int(font_size * 0.8))
-            pad_y = max(4, int(font_size * 0.3))
+            # Wrapped lines grow upward near the bottom, not off the canvas.
+            shift = min(0, ch - 4 - pad_y - y2)
+            cy += shift
+            y1 += shift
+            y2 += shift
             # 1. 繪製深黑底塊以確保在任何畫面背景下皆清晰易讀
             self.canvas.create_rectangle(
                 x1 - pad_x, y1 - pad_y, x2 + pad_x, y2 + pad_y,
@@ -899,7 +905,7 @@ class VideoPlayerWidget(ctk.CTkFrame):
             # 2. 繪製亮白粗體文字
             self.canvas.create_text(
                 cx, cy, text=self.current_subtitle_text,
-                fill="#ffffff", font=font_spec, justify="center"
+                fill="#ffffff", font=font_spec, justify="center", width=text_width
             )
 
     def _update_time_label(self):
@@ -1365,6 +1371,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
                 placeholder_text="搜尋文字或時間…", width=190, height=28
             )
             self.search_bar_frame.add(self.search_entry)
+            attach_placeholder(self.search_entry, self.search_var, '搜尋文字或時間…')
             
             self.btn_clear_search = ctk.CTkButton(
                 self.search_bar_frame, text="清除", width=55, height=28,
@@ -1545,7 +1552,7 @@ class SubtitleEditorWindow(ctk.CTkToplevel):
         self.btn_save.pack(side="right", padx=(10, 0))
         
         self.btn_cancel = ctk.CTkButton(
-            footer_actions, text="取消 (Cancel)",
+            footer_actions, text="取消",
             fg_color=("#e2e8f0", "#2d3748"), hover_color=("#cbd5e1", "#4a5568"),
             text_color=("#0f172a", "#f8fafc"), border_width=1, border_color=("#94a3b8", "#475569"),
             width=90, height=34, font=ui_font(size=12),
@@ -2352,7 +2359,7 @@ class EverCamConverterDialog:
         lbl_desc.pack(fill="x", pady=(2, 0))
         wrap_to_width(lbl_desc)
 
-        action_box = ctk.CTkFrame(header_frame, fg_color="transparent")
+        action_box = FlowToolbar(header_frame)
         action_box.pack(fill="x", pady=(12, 0))
 
         btn_add_folder = ctk.CTkButton(
@@ -2361,7 +2368,7 @@ class EverCamConverterDialog:
             height=30, width=130, corner_radius=6,
             command=self.browse_single_course
         )
-        btn_add_folder.pack(side="left", padx=(0, 6))
+        action_box.add(btn_add_folder)
 
         btn_scan_batch = ctk.CTkButton(
             action_box, text="🔍 批次掃描母目錄...",
@@ -2371,7 +2378,7 @@ class EverCamConverterDialog:
             text_color=("gray10", "gray95"),
             command=self.browse_batch_scan
         )
-        btn_scan_batch.pack(side="left", padx=(0, 6))
+        action_box.add(btn_scan_batch)
 
         btn_clear = ctk.CTkButton(
             action_box, text="清空",
@@ -2381,7 +2388,7 @@ class EverCamConverterDialog:
             text_color=("gray10", "#DCE4EE"),
             command=self.clear_courses
         )
-        btn_clear.pack(side="left")
+        action_box.add(btn_clear)
 
         self.drop_hint = ctk.CTkLabel(
             self.top, text="將 EverCam 課程資料夾、影片或字幕拖入下方；也可拖入母目錄批次掃描。",
@@ -2404,7 +2411,7 @@ class EverCamConverterDialog:
         list_container = ctk.CTkFrame(self.top, fg_color="transparent")
         list_container.pack(fill="both", expand=True, padx=20, pady=(0, 10))
 
-        self.scroll_frame = ctk.CTkScrollableFrame(list_container, fg_color="transparent")
+        self.scroll_frame = AutoHideScrollableFrame(list_container, fg_color=BACKGROUND)
         self.scroll_frame.pack(fill="both", expand=True)
 
         self.btn_convert_all = ctk.CTkButton(
@@ -2611,7 +2618,7 @@ class EverCamConverterDialog:
 
             lbl_empty_d = ctk.CTkLabel(
                 empty_frame,
-                text="您可點擊右上角「選擇課程資料夾」或「批次掃描母目錄」\n亦可直接將 EverCam 課程資料夾拖曳進此視窗中進行轉換與字幕整合",
+                text="點選上方「選擇課程資料夾」或「批次掃描母目錄」\n也可將 EverCam 資料夾、影片或字幕拖入此視窗。",
                 font=ui_font(size=13), text_color=MUTED, justify="center"
             )
             lbl_empty_d.pack(fill="x", padx=12, pady=(0, 20))
@@ -3379,14 +3386,10 @@ class App(BaseClass):
                                      font=ui_font(size=14, weight="bold"), height=40)
         self.btn_run.pack(side="left", fill="x", expand=True, padx=(0, 10))
 
-        self.btn_cancel = ctk.CTkButton(self.action_frame, text="取消 (Cancel)", command=self.cancel_task, 
+        self.btn_cancel = ctk.CTkButton(self.action_frame, text="取消", command=self.cancel_task,
                                         **secondary_button_style(), width=120,
                                         font=ui_font(size=14, weight="bold"), height=40, state="disabled")
         self.btn_cancel.pack(side="right")
-
-        self.btn_mcp = ctk.CTkButton(self.action_frame, text="AI 工具連接", command=self.open_mcp_settings,
-                                    **secondary_button_style(), width=110, height=40)
-        self.btn_mcp.pack(side="right", padx=(0, 8))
 
         # Progress Bar Frame (兼顧特效與進度顯示)
         self.progress_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
@@ -3417,7 +3420,7 @@ class App(BaseClass):
         self.controls_frame.grid_columnconfigure(0, weight=1) # Spacer spans
 
         # Left: Appearance Mode
-        self.label_mode = ctk.CTkLabel(self.controls_frame, text="外觀 (Theme):", text_color=MUTED)
+        self.label_mode = ctk.CTkLabel(self.controls_frame, text="外觀", text_color=MUTED)
         self.label_mode.pack(side="left", padx=(0, 5))
         
         self.appearance_mode_optionemenu = ctk.CTkOptionMenu(self.controls_frame, values=["System", "Light", "Dark"],
@@ -3425,13 +3428,18 @@ class App(BaseClass):
         self.appearance_mode_optionemenu.pack(side="left")
 
         # Right: Storage & About Buttons
-        self.btn_about = ctk.CTkButton(self.controls_frame, text="關於本程式 (About)", command=self.show_about, 
+        self.btn_about = ctk.CTkButton(self.controls_frame, text="關於本程式", command=self.show_about,
                                        width=120, fg_color="transparent", border_width=1, text_color=("gray10", "#DCE4EE"))
         self.btn_about.pack(side="right")
 
         self.btn_storage = ctk.CTkButton(self.controls_frame, text="模型儲存管理", command=self.show_storage_settings,
                                         width=120, fg_color="transparent", border_width=1, text_color=("gray10", "#DCE4EE"))
         self.btn_storage.pack(side="right", padx=(0, 10))
+
+        self.btn_mcp = ctk.CTkButton(self.controls_frame, text="AI 工具連接", command=self.open_mcp_settings,
+                                    width=110, fg_color="transparent", border_width=1,
+                                    text_color=("gray10", "#DCE4EE"))
+        self.btn_mcp.pack(side="right", padx=(0, 10))
 
         # --- 4. Status Bar (Row 3 - Bottom) ---
         self.status_frame = ctk.CTkFrame(self, height=24, corner_radius=0, fg_color=BACKGROUND)
@@ -3657,7 +3665,7 @@ class App(BaseClass):
                     self.btn_run.configure(state="normal")
                     self.btn_add.configure(state="normal")
                     self._set_file_clear_state('normal')
-                    self.btn_cancel.configure(state="disabled", text="取消 (Cancel)")
+                    self.btn_cancel.configure(state="disabled", text="取消")
                     self.update_download_button_state()
                 self.after(0, _cleanup)
 
@@ -3683,7 +3691,8 @@ class App(BaseClass):
 
         self.storage_window = create_smooth_toplevel(self)
         self.storage_window.title("模型儲存管理與預先下載")
-        self.storage_window.resizable(False, False)
+        self.storage_window.resizable(True, True)
+        self.storage_window.minsize(600, 360)
         
         # 套用 APP 圖標 (直接套用，消除 200ms 延遲標題列抖動)
         icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_icon.ico")
@@ -3704,7 +3713,7 @@ class App(BaseClass):
         # manager caps the native height at high display scaling.
         body = ctk.CTkFrame(self.storage_window, fg_color="transparent")
         body.pack(fill="both", expand=True)
-        content = ctk.CTkScrollableFrame(body, fg_color="transparent")
+        content = AutoHideScrollableFrame(body, fg_color=BACKGROUND)
         content.pack(fill="both", expand=True)
         
         # 1. 標題與說明
@@ -3727,7 +3736,7 @@ class App(BaseClass):
         lbl_disk_free = ctk.CTkLabel(path_header, text="磁碟剩餘空間: 檢測中...", font=ui_font(size=11), text_color=MUTED)
         lbl_disk_free.pack(side="right")
         
-        path_display = ctk.CTkTextbox(path_frame, height=45, font=ui_font(size=11))
+        path_display = ctk.CTkEntry(path_frame, height=34, font=ui_font(size=12))
         path_display.pack(fill="x", padx=15, pady=5)
         
         def get_current_root():
@@ -3737,7 +3746,7 @@ class App(BaseClass):
         def update_path_and_disk():
             target_p = get_current_root()
             path_display.configure(state="normal")
-            path_display.delete("0.0", "end")
+            path_display.delete(0, "end")
             path_display.insert("end", os.path.abspath(target_p))
             path_display.configure(state="disabled")
             
@@ -3762,8 +3771,8 @@ class App(BaseClass):
             update_path_and_disk()
             refresh_models_list()
 
-        ctk.CTkButton(btn_path_frame, text="更改路徑...", command=on_change, width=100, height=28).pack(side="left", padx=(0, 10))
-        ctk.CTkButton(btn_path_frame, text="開啟資料夾", command=self.open_model_path, width=100, height=28, fg_color="gray").pack(side="left")
+        ctk.CTkButton(btn_path_frame, text="更改路徑...", command=on_change, width=100, height=32, **secondary_button_style()).pack(side="left", padx=(0, 10))
+        ctk.CTkButton(btn_path_frame, text="開啟資料夾", command=self.open_model_path, width=100, height=32, **secondary_button_style()).pack(side="left")
 
         # 3. 模型下載狀態清單
         list_frame = ctk.CTkFrame(content)
@@ -3771,7 +3780,7 @@ class App(BaseClass):
         
         ctk.CTkLabel(list_frame, text="本地模型清單 (點擊可立即預先下載)", font=ui_font(weight="bold")).pack(anchor="w", padx=15, pady=(10, 5))
 
-        models_scroll = ctk.CTkScrollableFrame(list_frame, height=210)
+        models_scroll = ctk.CTkFrame(list_frame, height=1, fg_color="transparent")
         models_scroll.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
         # 4. 底部下載進度區域
@@ -3785,7 +3794,7 @@ class App(BaseClass):
         dl_bar.pack(fill="x", pady=(0, 4))
         dl_bar.set(0)
         
-        btn_dl_cancel = ctk.CTkButton(dl_progress_frame, text="取消下載", width=90, height=26, fg_color="gray", state="disabled")
+        btn_dl_cancel = ctk.CTkButton(dl_progress_frame, text="取消下載", width=90, height=32, state="disabled", **secondary_button_style())
         btn_dl_cancel.pack(side="right")
         
         def cancel_download():
@@ -3810,19 +3819,21 @@ class App(BaseClass):
             download_root = self.model_path_var.get().strip() or None
 
             for m in self.available_models:
-                row = ctk.CTkFrame(models_scroll, fg_color=("gray95", "gray20"))
+                row = ctk.CTkFrame(models_scroll, fg_color=SURFACE)
                 row.pack(fill="x", pady=3, padx=5)
+                row.grid_columnconfigure(0, weight=1)
 
                 info = MODEL_INFO.get(m, {})
                 desc = info.get("desc", m)
                 approx_mb = info.get("approx_size_mb", 0)
                 size_str = f"約 {approx_mb} MB" if approx_mb < 1000 else f"約 {approx_mb / 1000:.1f} GB"
 
-                lbl_name = ctk.CTkLabel(row, text=f"{m:15s}", font=ui_font(weight="bold", family="Consolas", size=13), width=130, anchor="w")
-                lbl_name.pack(side="left", padx=(10, 5), pady=6)
+                lbl_name = ctk.CTkLabel(row, text=m, font=ui_font(weight="bold", size=13), anchor="w")
+                lbl_name.grid(row=0, column=0, sticky="ew", padx=12, pady=(6, 0))
 
                 lbl_desc = ctk.CTkLabel(row, text=f"{desc}", font=ui_font(size=12), text_color=MUTED, anchor="w")
-                lbl_desc.pack(side="left", fill="x", expand=True, padx=5, pady=6)
+                lbl_desc.grid(row=1, column=0, sticky="ew", padx=12, pady=(0, 6))
+                wrap_to_width(lbl_desc)
 
                 # 檢查該模型是否目前正處於下載中 (主畫面預先下載、轉錄下載或本對話框下載)
                 is_actively_downloading = (
@@ -3834,11 +3845,11 @@ class App(BaseClass):
                     status_text = "下載中..."
                     status_color = ("#e67e22", "#f39c12")
                     lbl_st = ctk.CTkLabel(row, text=status_text, font=ui_font(size=12, weight="bold"), text_color=status_color, width=70)
-                    lbl_st.pack(side="left", padx=5, pady=6)
+                    lbl_st.grid(row=0, column=1, rowspan=2, padx=5, pady=6)
                     model_status_labels[m] = lbl_st
 
                     btn_act = ctk.CTkButton(row, text="下載中...", width=80, height=26, font=ui_font(size=11), fg_color="gray", state="disabled")
-                    btn_act.pack(side="right", padx=(5, 2), pady=6)
+                    btn_act.grid(row=0, column=2, rowspan=2, padx=8, pady=6)
                     model_action_btns[m] = btn_act
                     continue
 
@@ -3849,7 +3860,7 @@ class App(BaseClass):
                                "unavailable": "無法讀取"}[inspection.state]
                 status_color = ("#1f8b4c", "#2ecc71") if is_dl else "gray"
                 lbl_st = ctk.CTkLabel(row, text=status_text, font=ui_font(size=12, weight="bold"), text_color=status_color, width=70)
-                lbl_st.pack(side="left", padx=5, pady=6)
+                lbl_st.grid(row=0, column=1, rowspan=2, padx=5, pady=6)
                 model_status_labels[m] = lbl_st
 
                 if is_dl:
@@ -3858,14 +3869,14 @@ class App(BaseClass):
                         fg_color="transparent", border_width=1, text_color=("gray20", "#DCE4EE")
                     )
                     btn_del.configure(command=lambda mod=m: delete_model_cache(mod))
-                    btn_del.pack(side="right", padx=(2, 10), pady=6)
+                    btn_del.grid(row=0, column=3, rowspan=2, padx=(2, 10), pady=6)
 
                 btn_text = ("重新下載" if is_dl else "檢查存取" if inspection.state == "unavailable"
                             else "繼續下載" if inspection.state == "incomplete" else "立即下載")
                 btn_color = "gray" if is_dl else ("#1f538d", "#14375e")
                 btn_act = ctk.CTkButton(row, text=btn_text, width=80, height=26, font=ui_font(size=11), fg_color=btn_color)
                 btn_act.configure(command=lambda mod=m: start_download_model(mod))
-                btn_act.pack(side="right", padx=(5, 2), pady=6)
+                btn_act.grid(row=0, column=2, rowspan=2, padx=8, pady=6)
                 model_action_btns[m] = btn_act
 
         def delete_model_cache(target_model):
@@ -4318,11 +4329,12 @@ class App(BaseClass):
             return link
 
         # Main Scrollable Frame
-        scroll_frame = ctk.CTkScrollableFrame(about_window, fg_color="transparent")
+        scroll_frame = AutoHideScrollableFrame(about_window, fg_color=BACKGROUND)
         scroll_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
         # Title
-        ctk.CTkLabel(scroll_frame, text="Video to Subtitle (本地語音轉字幕工具)", font=ui_font(size=20, weight="bold")).pack(pady=(10, 5))
+        ctk.CTkLabel(scroll_frame, text="Video to Subtitle", font=ui_font(size=24, weight="bold")).pack(pady=(10, 0))
+        ctk.CTkLabel(scroll_frame, text="本地語音轉字幕 · 校對與分享", text_color=MUTED).pack(pady=(0, 6))
         
         version_frame = ctk.CTkFrame(scroll_frame, fg_color="transparent")
         version_frame.pack(pady=(0, 20))
@@ -4338,18 +4350,18 @@ class App(BaseClass):
         dev_frame = ctk.CTkFrame(scroll_frame)
         dev_frame.pack(fill="x", pady=10)
         
-        ctk.CTkLabel(dev_frame, text="開發人員資訊 (Developer)", font=ui_font(weight="bold")).pack(pady=5)
+        ctk.CTkLabel(dev_frame, text="開發與聯絡", font=ui_font(weight="bold")).pack(pady=5)
         ctk.CTkLabel(dev_frame, text="鄭郁翰 (Yu-Han Cheng)").pack()
         ctk.CTkLabel(dev_frame, text="E-mail: kaoshou@gmail.com").pack()
         
         # GitHub Link
-        create_link(dev_frame, "GitHub: https://github.com/kaoshou/Video-to-Subtitle/", "https://github.com/kaoshou/Video-to-Subtitle/").pack(pady=5)
+        create_link(dev_frame, "GitHub 專案與使用說明 ↗", "https://github.com/kaoshou/Video-to-Subtitle/").pack(pady=5)
 
         # --- Open Source Section ---
         os_frame = ctk.CTkFrame(scroll_frame)
         os_frame.pack(fill="x", pady=10)
         
-        ctk.CTkLabel(os_frame, text="開源專案宣告 (Open Source Acknowledgements)", font=ui_font(weight="bold")).pack(pady=(10, 5))
+        ctk.CTkLabel(os_frame, text="開源專案與授權", font=ui_font(weight="bold")).pack(pady=(10, 5))
         ctk.CTkLabel(os_frame, text="本軟體使用以下開源專案：", font=ui_font(size=12)).pack(pady=(0, 10))
 
         # List of libraries
@@ -4373,7 +4385,7 @@ class App(BaseClass):
             item_frame.pack(fill="x", pady=2)
             title_text = f"• {name} ({license_})" if license_ else f"• {name}"
             ctk.CTkLabel(item_frame, text=title_text, font=ui_font(weight="bold")).pack(anchor="w", padx=20)
-            create_link(item_frame, url, url).pack(anchor="w", padx=40)
+            create_link(item_frame, "查看專案與授權 ↗", url).pack(anchor="w", padx=40)
 
         # Close Button
         ctk.CTkButton(about_window, text="關閉", command=about_window.destroy, width=100).pack(pady=10)
@@ -4546,7 +4558,7 @@ class App(BaseClass):
         self._set_file_clear_state('disabled')
         if hasattr(self, 'btn_download_model'):
             self.btn_download_model.configure(state="disabled")
-        self.btn_cancel.configure(state="normal", text="取消 (Cancel)")
+        self.btn_cancel.configure(state="normal", text="取消")
         
         self.save_settings() # 開始轉錄前先儲存設定
         
@@ -4883,7 +4895,7 @@ class App(BaseClass):
             self.after(0, lambda: self.btn_run.configure(state="normal"))
             self.after(0, lambda: self.btn_add.configure(state="normal"))
             self.after(0, lambda: self._set_file_clear_state('normal'))
-            self.after(0, lambda: self.btn_cancel.configure(state="disabled", text="取消 (Cancel)"))
+            self.after(0, lambda: self.btn_cancel.configure(state="disabled", text="取消"))
             self.after(0, self.update_download_button_state)
 
     def toggle_advanced_settings(self):
@@ -4967,10 +4979,20 @@ class App(BaseClass):
                 self.open_opencam_tool()
             else:
                 self.open_evercam_tool()
-        ctk.CTkButton(choice, text='一般影片＋字幕', height=36, width=250, command=lambda: open_mode('standalone')).pack(pady=8)
-        ctk.CTkButton(choice, text='EverCam 課程轉換', height=36, width=250, command=lambda: open_mode('evercam')).pack(pady=8)
-        ctk.CTkButton(choice, text='OpenCam 置入字幕', height=36, width=250, command=lambda: open_mode('opencam')).pack(pady=8)
-        center_and_smooth_show(choice, self, 360, 280)
+        for mode, title, hint in (
+            ('standalone', '一般影片＋字幕', 'MP4 搭配同名字幕，建立含逐字稿搜尋的網頁。'),
+            ('evercam', 'EverCam 課程轉換', '整合原有章節、影片與字幕，更新課程播放器。'),
+            ('opencam', 'OpenCam 置入字幕', '保留影片與章節，備份後加入單語或多語字幕。'),
+        ):
+            card = ctk.CTkFrame(choice, fg_color=CARD, border_width=1, border_color=BORDER)
+            card.pack(fill='x', padx=24, pady=(0, 10))
+            ctk.CTkButton(card, text=title, height=34, anchor='w',
+                          command=lambda selected=mode: open_mode(selected),
+                          **secondary_button_style()).pack(fill='x', padx=12, pady=(10, 2))
+            label = ctk.CTkLabel(card, text=hint, anchor='w', justify='left', text_color=MUTED)
+            label.pack(fill='x', padx=14, pady=(0, 10))
+            wrap_to_width(label)
+        center_and_smooth_show(choice, self, 520, 410)
 
     def export_completion_web(self, dialog, video, subtitle, language, button, status):
         """Keep progress/results in the modal list instead of opening a blocked sibling."""

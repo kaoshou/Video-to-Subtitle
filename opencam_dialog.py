@@ -5,6 +5,7 @@ from ui_open import open_local_page
 
 import opencam_integration as opencam
 from ui_drop import dropped_paths, register_file_drop
+from ui_theme import secondary_button_style
 from ui_theme import BACKGROUND, CARD, BORDER, TEXT, MUTED, ACCENT, HOVER, ui_font, wrap_to_width
 from web_export_dialog import ExportJob
 from web_export_form import ExportFormState, language_code, language_label
@@ -71,6 +72,7 @@ class OpenCamSubtitleDialog:
         import tkinter as tk
         from tkinter import filedialog, messagebox
         import customtkinter as ctk
+        from ui_flow import AutoHideScrollableFrame
         self.ctk, self.tk = ctk, tk
         self.filedialog, self.messagebox = filedialog, messagebox
         self.state = OpenCamFormState()
@@ -103,18 +105,18 @@ class OpenCamSubtitleDialog:
         wrap_to_width(self.notice)
         bar = ctk.CTkFrame(footer, fg_color='transparent')
         bar.pack(fill='x', padx=24, pady=(0, 18))
-        self.preview_button = ctk.CTkButton(bar, text='預覽播放器', height=38, command=self.preview, state='disabled')
+        self.preview_button = ctk.CTkButton(bar, text='預覽播放器', height=38, command=self.preview, state='disabled', **secondary_button_style())
         self.preview_button.pack(side='left')
         self.submit_button = ctk.CTkButton(bar, text='備份並置入字幕', height=40,
                                          fg_color=ACCENT, hover_color=HOVER, command=self.submit, state='disabled')
         self.submit_button.pack(side='right')
         ctk.CTkButton(bar, text='關閉', width=76, height=38, command=self.close,
                      fg_color='transparent', text_color=TEXT).pack(side='right', padx=12)
-        form = ctk.CTkScrollableFrame(self.top, fg_color='transparent')
+        form = AutoHideScrollableFrame(self.top, fg_color=BACKGROUND)
         form.pack(fill='both', expand=True, padx=20, pady=(0, 12))
         source = ctk.CTkFrame(form, fg_color=CARD, corner_radius=14, border_width=1, border_color=BORDER)
         source.pack(fill='x', pady=(0, 12))
-        ctk.CTkLabel(source, text='01   OpenCam 專案', font=ui_font(size=16, weight='bold')).pack(anchor='w', padx=18, pady=(16, 6))
+        ctk.CTkLabel(source, text='Step 1.  OpenCam 專案', font=ui_font(size=16, weight='bold')).pack(anchor='w', padx=18, pady=(16, 6))
         select = ctk.CTkButton(source, text='選擇資料夾…', height=40, command=self.choose_project)
         select.pack(fill='x', padx=18, pady=(0, 10))
         self.controls.append(select)
@@ -124,15 +126,15 @@ class OpenCamSubtitleDialog:
         wrap_to_width(self.project_info)
         card = ctk.CTkFrame(form, fg_color=CARD, corner_radius=14, border_width=1, border_color=BORDER)
         card.pack(fill='x')
-        ctk.CTkLabel(card, text='02   要置入的字幕', font=ui_font(size=16, weight='bold')).pack(anchor='w', padx=18, pady=(16, 6))
+        ctk.CTkLabel(card, text='Step 2.  要置入的字幕', font=ui_font(size=16, weight='bold')).pack(anchor='w', padx=18, pady=(16, 6))
         hint = ctk.CTkLabel(card, text='自動讀取 media.srt／media.zh-TW.srt 等同名字幕，也可手動加入多個語系。\n'
                             '同語系更新、其他語系保留；原預設字幕不變。未標示語系的檔案可在下方修改。',
                             anchor='w', justify='left', text_color=MUTED)
         hint.pack(fill='x', padx=18, pady=(0, 10))
         wrap_to_width(hint)
-        self.tracks_frame = ctk.CTkFrame(card, fg_color='transparent')
+        self.tracks_frame = ctk.CTkFrame(card, height=1, fg_color='transparent')
         self.tracks_frame.pack(fill='x', padx=18)
-        add = ctk.CTkButton(card, text='加入 SRT／VTT 字幕…', height=36, command=self.choose_subtitles)
+        add = ctk.CTkButton(card, text='加入 SRT／VTT 字幕…', height=36, command=self.choose_subtitles, **secondary_button_style())
         add.pack(anchor='w', padx=18, pady=(10, 18))
         self.controls.append(add)
         if folder:

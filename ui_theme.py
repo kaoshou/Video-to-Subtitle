@@ -38,6 +38,10 @@ def install_theme():
     # Selection fields are quieter than primary actions.
     theme['CTkOptionMenu'].update(fg_color=SURFACE, button_color=SURFACE,
                                   button_hover_color=BORDER, text_color=TEXT)
+    theme['CTkSegmentedButton'].update(
+        fg_color=SURFACE, unselected_color=SURFACE,
+        unselected_hover_color=BORDER, selected_color=CARD,
+        selected_hover_color=BORDER, text_color=TEXT)
     theme['CTkFont'].update(family=FONT_FAMILY, size=13)
     _installed = True
 

@@ -6,7 +6,7 @@ import subprocess
 import sys
 import threading
 from ui_open import open_local_page
-from ui_theme import install_theme, ui_font, wrap_to_width
+from ui_theme import BACKGROUND, install_theme, ui_font, wrap_to_width
 from ui_drop import dropped_paths, register_file_drop
 
 from web_export_model import ExportRequest, Metadata, SubtitleSource, canonical_language
@@ -70,6 +70,7 @@ class WebExportDialog:
     def __init__(self, parent, *, app_version, video=None, subtitles=()):
         import tkinter as tk
         import customtkinter as ctk
+        from ui_flow import AutoHideScrollableFrame
         from tkinter import filedialog, messagebox
         install_theme()
         self.ctk, self.tk, self.filedialog, self.messagebox = ctk, tk, filedialog, messagebox
@@ -102,7 +103,7 @@ class WebExportDialog:
         self.state_badge.pack(side='right',anchor='n',pady=4)
         ctk.CTkLabel(header, text='建立字幕網頁', font=ui_font(size=27, weight='bold'), text_color=('#172C46','#E6EDF7')).pack(anchor='w')
         ctk.CTkLabel(header, text='影片選好，字幕就位。', font=ui_font(size=14), text_color=('#65748A','#A5B2C5')).pack(anchor='w', pady=(4,0))
-        self.form = ctk.CTkScrollableFrame(self.top, fg_color='transparent')
+        self.form = AutoHideScrollableFrame(self.top, fg_color=BACKGROUND)
         self.form.pack(fill='both', expand=True, padx=24, pady=8)
         self.form.grid_columnconfigure(1, weight=1)
 
@@ -123,7 +124,7 @@ class WebExportDialog:
             ctk.CTkLabel(host, text=hint, text_color=('#718096','#A5B2C5'), wraplength=620, justify='left').pack(anchor='w', padx=22, pady=(0,12))
             return host
 
-        video_card = card(0, '01   影片來源', '選擇 MP4，自動尋找同資料夾內的同檔名與語系字幕。')
+        video_card = card(0, 'Step 1.  影片來源', '選擇 MP4，自動尋找同資料夾內的同檔名與語系字幕。')
         self.video_button = self.button(video_card, '選擇或拖入 MP4 影片…', self.choose_video)
         self.video_button.configure(height=44, font=ui_font(size=15, weight='bold'), fg_color=('#EAF2FD','#293F5C'), hover_color=('#DCEAFF','#344E70'), text_color=('#2363AD','#C5DEFF'))
         self.video_button.pack(fill='x', padx=22, pady=(0,10))
@@ -131,10 +132,10 @@ class WebExportDialog:
         self.media_info.pack(fill='x', padx=22, pady=(0,18))
         wrap_to_width(self.media_info)
 
-        subtitle_card = card(1, '02   字幕', '自動配對、多語一起加入；同語系優先使用 VTT。')
+        subtitle_card = card(1, 'Step 2.  字幕', '自動配對、多語一起加入；同語系優先使用 VTT。')
         self.candidate_info = ctk.CTkLabel(subtitle_card, text='選好影片後，字幕會自動顯示於此。', wraplength=610, anchor='w', justify='left', text_color=('#65748A','#A5B2C5'))
         self.candidate_info.pack(fill='x', padx=22, pady=(0,6))
-        self.summary_tracks = ctk.CTkFrame(subtitle_card, fg_color='transparent')
+        self.summary_tracks = ctk.CTkFrame(subtitle_card, height=1, fg_color='transparent')
         self.summary_tracks.pack(fill='x', padx=22, pady=(0,16))
         self._updating_title = False
         self.variables['title'].trace_add('write', self.title_changed)
@@ -163,7 +164,7 @@ class WebExportDialog:
         self.button(self.more, '變更儲存位置…', self.choose_parent).grid(row=7,column=1,sticky='w',padx=6,pady=8)
         ctk.CTkLabel(self.more, text='字幕可移除後更換檔案。無語系使用「預設字幕」，亦可改語言或輸入 pt-BR 等代碼。', wraplength=590, text_color=('gray40','gray70')).grid(row=8,column=0,columnspan=3,padx=12,pady=(0,10))
         self.button(self.more, '＋ 加入／更換字幕檔…', self.choose_subtitles).grid(row=9,column=0,columnspan=3,sticky='w',padx=12,pady=(0,6))
-        self.tracks_frame = ctk.CTkFrame(self.more, fg_color='transparent')
+        self.tracks_frame = ctk.CTkFrame(self.more, height=1, fg_color='transparent')
         self.tracks_frame.grid(row=10,column=0,columnspan=3,sticky='ew',padx=6,pady=(0,10))
         self.error_details = ctk.CTkTextbox(self.form, height=140, wrap='word')
         self.error_details.configure(state='disabled')
