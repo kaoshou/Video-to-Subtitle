@@ -394,12 +394,15 @@ class ClientTests(unittest.TestCase):
         executables.mkdir()
         expected = {'codex': 'codex', 'claude-code': 'claude', 'gemini-cli': 'gemini',
                     'opencode': 'opencode', 'copilot': 'copilot'}
+        system = 'Windows' if os.name == 'nt' else 'Linux'
+        if system == 'Windows':
+            expected = {client: name + '.exe' for client, name in expected.items()}
         for name in expected.values():
             executable = executables / name
             executable.write_text('do not execute this controlled fixture')
             executable.chmod(0o755)
         with mock.patch.object(Path, 'open', side_effect=AssertionError('discovery read file contents')):
-            rows = self.api().discover_clients(home=self.home, environ={}, system='Linux',
+            rows = self.api().discover_clients(home=self.home, environ={}, system=system,
                                               application_roots=(), executable_roots=[executables])
         by_id = {row['id']: row for row in rows}
         for client_id, name in expected.items():
@@ -442,16 +445,18 @@ class ClientTests(unittest.TestCase):
     def test_npm_command_links_use_metadata_only_and_broken_links_are_not_installations(self):
         executables = self.home / 'bin'
         executables.mkdir()
+        system = 'Windows' if os.name == 'nt' else 'Linux'
+        codex, claude = ('codex.exe', 'claude.exe') if system == 'Windows' else ('codex', 'claude')
         target = self.home / 'controlled-cli'
         target.write_bytes(b'controlled inert executable fixture')
         target.chmod(0o755)
-        (executables / 'codex').symlink_to(target)
-        (executables / 'claude').symlink_to(self.home / 'missing-cli')
-        rows = self.api().discover_clients(home=self.home, environ={}, system='Linux',
+        (executables / codex).symlink_to(target)
+        (executables / claude).symlink_to(self.home / 'missing-cli')
+        rows = self.api().discover_clients(home=self.home, environ={}, system=system,
                                           application_roots=(), executable_roots=[executables])
         by_id = {row['id']: row for row in rows}
         self.assertEqual(by_id['codex']['installation_evidence'],
-                         [{'kind': 'command-file-link', 'path': str(executables / 'codex')}])
+                         [{'kind': 'command-file-link', 'path': str(executables / codex)}])
         self.assertFalse(by_id['claude-code']['installation_detected'])
         self.assertFalse(by_id['codex']['publisher_verified'])
 

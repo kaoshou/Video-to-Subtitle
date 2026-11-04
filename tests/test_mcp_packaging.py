@@ -138,6 +138,14 @@ else:
                         self.assertEqual(caught.exception.code, 'BACKEND_REPAIR_REQUIRED')
 
     @unittest.skipUnless(importlib.util.find_spec('mcp'), 'optional official MCP SDK is unavailable')
+    def test_stdio_unicode_is_utf8_even_with_cp1252_host_console(self):
+        result = subprocess.run([sys.executable, str(ROOT / 'scripts/smoke_mcp.py')],
+                                cwd=ROOT, env={**os.environ, 'PYTHONIOENCODING': 'cp1252'},
+                                capture_output=True, text=True, encoding='utf-8', timeout=90)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['languages'], ['en', 'ja'])
+
+    @unittest.skipUnless(importlib.util.find_spec('mcp'), 'optional official MCP SDK is unavailable')
     def test_source_stdio_smoke_imports_two_languages_and_exports_player(self):
         result = subprocess.run([sys.executable, str(ROOT / 'scripts/smoke_mcp.py')],
                                 cwd=ROOT, capture_output=True, text=True, timeout=90)

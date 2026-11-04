@@ -16,6 +16,10 @@ async def serve_stdio(state, command=None):
 
     # Capture protocol output once, then route all ordinary/library prints away.
     protocol_stdout = sys.stdout
+    # MCP STDIO is UTF-8 irrespective of the Windows console code page. Passing
+    # our captured stream to the SDK otherwise bypasses its UTF-8 default.
+    if hasattr(protocol_stdout, 'reconfigure'):
+        protocol_stdout.reconfigure(encoding='utf-8', errors='strict', newline='\n')
     sys.stdout = sys.stderr
     class BoundedInput:
         def __aiter__(self):

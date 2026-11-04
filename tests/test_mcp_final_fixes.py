@@ -9,6 +9,26 @@ from test_mcp_service import ServiceFixture, SRT
 
 
 class AuthorizationFixTests(ServiceFixture):
+    def test_export_attests_pinned_stage_without_reopening_delete_leased_folder(self):
+        # Windows refuses a new non-delete-shared open while the exclusive
+        # publisher still holds its DELETE-capable handle. Keep that lease.
+        source = self.imported()
+        original = self.api.SafeDirectory.child
+        def no_reopen(directory, name, *args, **kwargs):
+            if Path(directory.path) == self.media and name == 'lesson-web':
+                raise PermissionError(13, 'published folder still has a delete-capable lease')
+            return original(directory, name, *args, **kwargs)
+        with patch.object(self.api.SafeDirectory, 'child', no_reopen):
+            accepted = self.service.call('export_player', {'asset_id': self.assets()['lesson.mp4'],
+                'track_ids': [source['track_id']], 'request_id': 'leased-export'})
+            self.service._queue.join()
+        job = self.state.get('jobs', accepted['job_id'])
+        self.assertEqual(job['state'], 'succeeded', job)
+        opened = []
+        from mcp_runtime import open_job_result
+        open_job_result(self.state, accepted['job_id'], opener=opened.append)
+        self.assertTrue(opened[0].endswith('/lesson-web/index.html'))
+
     def test_local_open_result_revalidates_root_and_published_identity(self):
         import mcp_runtime
         source = self.imported()

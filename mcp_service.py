@@ -765,6 +765,14 @@ class Service:
                 with self._job_commit(job) as current:
                     for track in tracks:
                         self._source_authorized(self.state.get('sources', track['source_id']), job['generation'])
+                    # Attest the pinned package before its exclusive rename.
+                    # On Windows the publisher retains DELETE access; reopening
+                    # without delete sharing would conflict with our own lease.
+                    # The rename preserves these object identities, and later
+                    # local opening still revalidates them under current policy.
+                    with output.directory.open_read('index.html') as index:
+                        validation = {'directory': directory_identity(output.directory),
+                                      'index': file_version(index)}
                     for collision in range(1, 10001):
                         name = base if collision == 1 else base + '-' + str(collision)
                         try:
@@ -777,6 +785,4 @@ class Service:
                     current.update(state='succeeded', stage='complete', result={
                         'folder': str(folder), 'index_path': str(folder / 'index.html'),
                         'source_path': str(Path(parent.path) / Path(asset['relative']).name)})
-                    with parent.child(name) as published, published.open_read('index.html') as index:
-                        current['result_validation'] = {'directory': directory_identity(published),
-                                                        'index': file_version(index)}
+                    current['result_validation'] = validation

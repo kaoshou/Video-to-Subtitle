@@ -34,6 +34,8 @@ class DesktopUI(unittest.TestCase):
         # later test's worker can trigger collection on a background thread.
         if getattr(self.root, '_mcp_direct_lock', None):
             self.root._mcp_direct_lock.release()
+        if getattr(self.root, '_mcp_direct_residency', None):
+            self.root._mcp_direct_residency.release()
         for dialog in self.exports:
             if dialog.job:
                 dialog.job.cancel()

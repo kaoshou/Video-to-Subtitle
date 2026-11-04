@@ -30,6 +30,8 @@ class ReviewProgressGUI(unittest.TestCase):
     def close(self):
         if getattr(self.root, '_mcp_direct_lock', None):
             self.root._mcp_direct_lock.release()
+        if getattr(self.root, '_mcp_direct_residency', None):
+            self.root._mcp_direct_residency.release()
         for timer in self.root.tk.call('after', 'info'):
             self.root.tk.call('after', 'cancel', timer)
         self.root.destroy()

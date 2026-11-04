@@ -163,7 +163,7 @@ def _private_pipe_handle(address, first):
         checked(adv.GetTokenInformation(token, 1, buffer, size.value, ctypes.byref(size)))
         checked(adv.ConvertSidToStringSidW(pointer.from_buffer(buffer).value, ctypes.byref(sid_text)))
         checked(adv.ConvertStringSecurityDescriptorToSecurityDescriptorW(
-            f'D:P(A;;GA;;;{sid_text.value})', 1, ctypes.byref(descriptor), None))
+            f'O:{sid_text.value}D:P(A;;GA;;;{sid_text.value})', 1, ctypes.byref(descriptor), None))
         attributes = SA(ctypes.sizeof(SA), descriptor, False)
         flags = 3 | 0x40000000 | (0x00080000 if first else 0)  # DUPLEX, OVERLAPPED, FIRST
         # At saturation: active handlers + overflow awaiting broker rejection +

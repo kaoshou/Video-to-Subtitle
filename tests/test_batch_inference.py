@@ -102,7 +102,7 @@ class BatchInference(unittest.TestCase):
             path = self.run_job(batch_acceleration=True, batch_size='auto')
             self.run_job(batch_acceleration=True, batch_size='auto')
         self.assertEqual([c[0] for c in self.calls], [8,4,2,'standard','standard'])
-        self.assertEqual(Path(path).read_text().count('標準結果'), 1)
+        self.assertEqual(Path(path).read_text(encoding='utf-8').count('標準結果'), 1)
         self.assertIsNone(self.worker.last_batch_decision['effective_size'])
         self.assertEqual(self.worker.last_batch_decision['reason'], 'memory_limit')
 
@@ -153,10 +153,10 @@ class BatchInference(unittest.TestCase):
         existing.write_text('保留原檔', encoding='utf-8')
         with patch('batch_policy.probe_resources', return_value=ResourceSnapshot(16*1073741824,32*1073741824,8,5*1073741824,8*1073741824)):
             result = self.run_job(batch_acceleration=True, batch_size='auto', force_zh_tw=True)
-        self.assertEqual(existing.read_text(), '保留原檔')
+        self.assertEqual(existing.read_text(encoding='utf-8'), '保留原檔')
         self.assertEqual(Path(result).name, 'media_1.srt')
-        self.assertIn('這是軟體與資料庫課程', Path(result).read_text())
-        self.assertIn('00:00:55,000 --> 00:00:57,000', Path(result).read_text())
+        self.assertIn('這是軟體與資料庫課程', Path(result).read_text(encoding='utf-8'))
+        self.assertIn('00:00:55,000 --> 00:00:57,000', Path(result).read_text(encoding='utf-8'))
 
     def test_oom_during_iteration_restarts_without_duplicate_or_overwriting_output(self):
         existing = self.folder / 'media.srt'

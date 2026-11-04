@@ -150,6 +150,8 @@ class ModelStorageConcurrency(unittest.TestCase):
                     finally:
                         if getattr(app, '_mcp_direct_lock', None):
                             app._mcp_direct_lock.release()
+                        if getattr(app, '_mcp_direct_residency', None):
+                            app._mcp_direct_residency.release()
                         for timer in app.tk.call('after', 'info'):
                             app.tk.call('after', 'cancel', timer)
                         app.destroy()
