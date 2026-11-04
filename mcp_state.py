@@ -109,11 +109,78 @@ def file_version(stream):
     return [info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns]
 
 
+@contextlib.contextmanager
+def _windows_creation_security():
+    """Explicit TokenUser owner and user-only DACL, before object visibility.
+
+    TokenOwner can be the Administrators group in an elevated process. Never
+    depend on that default, or change the process token / an existing owner.
+    """
+    import ctypes
+    from ctypes import wintypes as w
+    pointer = ctypes.c_void_p
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    adv = ctypes.WinDLL('advapi32', use_last_error=True)
+    class SecurityAttributes(ctypes.Structure):
+        _fields_ = [('length', w.DWORD), ('descriptor', pointer), ('inherit', w.BOOL)]
+    kernel.GetCurrentProcess.restype = w.HANDLE
+    kernel.CloseHandle.argtypes = [w.HANDLE]
+    kernel.LocalFree.argtypes, kernel.LocalFree.restype = [pointer], pointer
+    adv.OpenProcessToken.argtypes = [w.HANDLE, w.DWORD, ctypes.POINTER(w.HANDLE)]
+    adv.GetTokenInformation.argtypes = [w.HANDLE, ctypes.c_int, pointer, w.DWORD, ctypes.POINTER(w.DWORD)]
+    adv.ConvertSidToStringSidW.argtypes = [pointer, ctypes.POINTER(w.LPWSTR)]
+    adv.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = [w.LPCWSTR, w.DWORD, ctypes.POINTER(pointer), pointer]
+    def checked(result):
+        if not result:
+            raise ctypes.WinError(ctypes.get_last_error())
+    token, sid_text, descriptor = w.HANDLE(), w.LPWSTR(), pointer()
+    checked(adv.OpenProcessToken(kernel.GetCurrentProcess(), 8, ctypes.byref(token)))
+    try:
+        size = w.DWORD()
+        adv.GetTokenInformation(token, 1, None, 0, ctypes.byref(size))
+        buffer = ctypes.create_string_buffer(size.value)
+        checked(adv.GetTokenInformation(token, 1, buffer, size.value, ctypes.byref(size)))
+        checked(adv.ConvertSidToStringSidW(pointer.from_buffer(buffer).value, ctypes.byref(sid_text)))
+        checked(adv.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            f'O:{sid_text.value}D:P(A;OICI;FA;;;{sid_text.value})', 1,
+            ctypes.byref(descriptor), None))
+        yield SecurityAttributes(ctypes.sizeof(SecurityAttributes), descriptor, False)
+    finally:
+        if descriptor:
+            kernel.LocalFree(descriptor)
+        if sid_text:
+            kernel.LocalFree(ctypes.cast(sid_text, pointer))
+        kernel.CloseHandle(token)
+
+
+def _windows_private_file(path, *, exclusive=False):
+    """Return a non-delete-shared FD; creation never uses TokenOwner defaults."""
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes as w
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    create = kernel.CreateFileW
+    create.argtypes = [w.LPCWSTR, w.DWORD, w.DWORD, ctypes.c_void_p,
+                       w.DWORD, w.DWORD, w.HANDLE]
+    create.restype = w.HANDLE
+    with _windows_creation_security() as attributes:
+        handle = create(str(path), 0xC0000000, 3, ctypes.byref(attributes),
+                        1 if exclusive else 4, 0x00200000, None)
+        if handle == w.HANDLE(-1).value:
+            raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        return msvcrt.open_osfhandle(handle, os.O_RDWR | os.O_BINARY)
+    except BaseException:
+        kernel.CloseHandle.argtypes = [w.HANDLE]
+        kernel.CloseHandle(handle)
+        raise
+
+
 def _windows_private(path, *, create=False):
     """Check current-user ownership and a user-only DACL; fail on API errors.
 
-    New directories receive a protected, inheritable DACL at creation. No owner
-    is changed and no process/shell is launched.
+    New directories receive an explicit user owner and protected, inheritable
+    DACL at creation. Existing ownership is never changed.
     """
     import ctypes
     from ctypes import wintypes as w
@@ -146,21 +213,9 @@ def _windows_private(path, *, create=False):
         checked(adv.GetTokenInformation(token, 1, buffer, size.value, ctypes.byref(size)))
         current_sid = pointer.from_buffer(buffer).value
         if create:
-            class SecurityAttributes(ctypes.Structure):
-                _fields_ = [('length', w.DWORD), ('descriptor', pointer), ('inherit', w.BOOL)]
-            kernel.CreateDirectoryW.argtypes = [w.LPCWSTR, ctypes.POINTER(SecurityAttributes)]
-            sid_text, private_sd = w.LPWSTR(), pointer()
-            checked(adv.ConvertSidToStringSidW(current_sid, ctypes.byref(sid_text)))
-            try:
-                checked(adv.ConvertStringSecurityDescriptorToSecurityDescriptorW(
-                    f'D:P(A;OICI;FA;;;{sid_text.value})', 1, ctypes.byref(private_sd), None))
-                try:
-                    attributes = SecurityAttributes(ctypes.sizeof(SecurityAttributes), private_sd, False)
-                    checked(kernel.CreateDirectoryW(str(path), ctypes.byref(attributes)))
-                finally:
-                    kernel.LocalFree(private_sd)
-            finally:
-                kernel.LocalFree(ctypes.cast(sid_text, pointer))
+            kernel.CreateDirectoryW.argtypes = [w.LPCWSTR, pointer]
+            with _windows_creation_security() as attributes:
+                checked(kernel.CreateDirectoryW(str(path), ctypes.byref(attributes)))
         owner, dacl, descriptor = pointer(), pointer(), pointer()
         result = adv.GetNamedSecurityInfoW(str(path), 1, 0x5, ctypes.byref(owner), None,
                                            ctypes.byref(dacl), None, ctypes.byref(descriptor))
@@ -279,7 +334,7 @@ def _write_json(directory, name, data):
         with directory.child(staging) as stage:
             flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0)
             fd = (os.open('content', flags, 0o600, dir_fd=stage.fd) if stage.fd is not None else
-                  os.open(stage._path('content'), flags | os.O_BINARY, 0o600))
+                  _windows_private_file(stage._path('content'), exclusive=True))
             try:
                 with os.fdopen(fd, 'wb') as stream:
                     stream.write(data)
@@ -663,23 +718,7 @@ class ProcessLock:
                 else:
                     # Open the leaf itself and deny delete sharing, so the lock
                     # inode cannot be exchanged for a reparse point/new lock.
-                    import ctypes
-                    import msvcrt
-                    from ctypes import wintypes as w
-                    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
-                    create = kernel.CreateFileW
-                    create.argtypes = [w.LPCWSTR, w.DWORD, w.DWORD, ctypes.c_void_p,
-                                       w.DWORD, w.DWORD, w.HANDLE]
-                    create.restype = w.HANDLE
-                    handle = create(directory._path(self.name), 0xC0000000, 3, None, 4, 0x00200000, None)
-                    if handle == w.HANDLE(-1).value:
-                        raise ctypes.WinError(ctypes.get_last_error())
-                    try:
-                        fd = msvcrt.open_osfhandle(handle, os.O_RDWR | os.O_BINARY)
-                    except BaseException:
-                        kernel.CloseHandle.argtypes = [w.HANDLE]
-                        kernel.CloseHandle(handle)
-                        raise
+                    fd = _windows_private_file(directory._path(self.name))
                 if self._process_lifetime:
                     raw_fd = fd
                 # A native engine may survive Python object destruction and

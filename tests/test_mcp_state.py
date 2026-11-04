@@ -385,6 +385,39 @@ class StateTests(unittest.TestCase):
                      self.state.path / 'backups', self.state.path / 'backups' / 'backup_01.json'):
             _windows_private(path)
 
+    @unittest.skipUnless(os.name == 'nt', 'Windows explicit-owner creation integration')
+    def test_windows_new_private_files_and_lock_use_current_user_owner(self):
+        # Elevated Windows tokens may default new objects to the Administrators
+        # group. Directory, atomic content, and lock creation must all explicitly
+        # choose TokenUser without accepting a group-owned existing object.
+        from mcp_state import _private_directory, _windows_private
+        fresh = self.base / 'new-private'
+        with _private_directory(fresh, create=True):
+            pass
+        _windows_private(fresh)
+        self.enable()
+        self.state.put('jobs', 'owned', {'text': 'preserve'})
+        with ProcessLock(self.state.path / 'locks', 'owned'):
+            for path in (self.state.path / 'policy.json',
+                         self.state.path / 'jobs' / 'owned.json',
+                         self.state.path / 'locks' / 'owned.lock'):
+                _windows_private(path)
+        self.assertEqual(self.state.get('jobs', 'owned'), {'text': 'preserve'})
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows unsafe-existing-ACL integration')
+    def test_windows_existing_public_acl_is_rejected_without_repair(self):
+        self.enable()
+        self.state.put('jobs', 'public', {'text': 'unchanged'})
+        path = self.state.path / 'jobs' / 'public.json'
+        original = path.read_bytes()
+        result = subprocess.run(['icacls.exe', str(path), '/grant', '*S-1-1-0:(R)'],
+                                capture_output=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with self.assertRaises(MCPError) as caught:
+            self.state.get('jobs', 'public')
+        self.assertEqual(caught.exception.code, 'PRIVATE_STORAGE')
+        self.assertEqual(path.read_bytes(), original)
+
     def test_options_reject_secrets_unknown_keys_and_bad_backend(self):
         for options in ({'api_key': 'secret'}, {'token': 'secret'}, {'backend_command': 'echo unsafe'},
                         {'backend_command': ['relative-program']}, {'stop_mode': 'kill'}):
