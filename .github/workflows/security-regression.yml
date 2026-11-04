@@ -12,7 +12,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        # These tests cover macOS filesystem/GUI contracts, not MLX inference.
+        # Keep ARM capacity for the native app/Metal smoke in python-app.yml.
+        # The ARM test pool can cancel unassigned jobs after capacity retries.
+        os: [macos-15-intel, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
