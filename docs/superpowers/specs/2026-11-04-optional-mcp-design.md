@@ -12,7 +12,7 @@
 
 - MCP 是選用功能，使用者決定是否開啟，不影響一般轉錄。
 - 操作簡單；除手動設定，提供功能入口、已安裝 AI 工具偵測及一鍵設定。
-- 涵蓋 Codex 本機用戶端、Claude、Google Antigravity、Gemini CLI，以及 Cursor、VS Code／GitHub Copilot、Windsurf、OpenCode 等工具；不可把不同產品當成同一設定格式。未驗證版本提供對應手動設定，不宣稱一鍵連通。
+- 涵蓋 Codex 本機用戶端、Claude、Google Antigravity、Gemini CLI，以及 Cursor、VS Code／GitHub Copilot、Windsurf、OpenCode 等工具；不可把不同產品當成同一設定格式。已核對的官方設定格式可預覽並經確認套用，但不等於客戶端版本已實測或已連通；未知格式／不明設定位置提供手動路線。
 - 目標工作流：AI 呼叫本機工具轉錄 → AI 翻譯多語 → 回填字幕 → 匯出多語網頁播放器。
 - 採獨立背景模式，使用時不必預先開啟字幕工具主視窗。
 
@@ -91,7 +91,7 @@
 | OpenCode | 獨立 `mcp`、`type: local` 與 argv 陣列；不能安全保留 JSONC 時只匯出片段 |
 | 其他／未知版本 | 產生命令、參數與 JSON／TOML 片段供手動連接；不對未知 schema 自動寫入 |
 
-「支援設定」和「真實用戶端驗證通過」在文件分開標示。首版必須驗證 Windows／macOS 的 Codex 與 Claude 路線；Antigravity／Gemini 適配器未通過相對應實測版本時，只提供手動匯出，不宣稱已一鍵連通。
+「支援設定格式」和「真實用戶端驗證通過」在文件分開標示。許多設定沒有可靠版本欄位，偵測不執行客戶端，因此不虛構版本證據；經核對的官方 schema 可在預覽及使用者確認後套用。未知格式、未支援的明確 schema 版本、管理限制或位置不明時只提供手動路線。正式發布前仍須驗證 Windows／macOS 的 Codex 與 Claude 路線；不以格式測試宣稱已一鍵連通。
 
 一般網頁聊天不讀取這些本機設定。ChatGPT 網頁、Gemini 網頁等不列為本機自動設定成功的目標；遠端方案另立設計。
 
