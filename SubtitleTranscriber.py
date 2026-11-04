@@ -2962,10 +2962,26 @@ class App(BaseClass):
             self.cancel_flag = True
             self._stop_stage_tracking()
             self.status_label.configure(text="正在安全中止並退出...")
-            self.after(200, self.destroy)
+            self.after(200, self._finish_safe_close)
         else:
             self._stop_stage_tracking()
             self.destroy()
+
+    def _finish_safe_close(self):
+        # A GUI child must exit and release its inference lock before Tk goes
+        # away. Detached MCP jobs have their own lifetime and are untouched.
+        if self.is_running or getattr(self, '_storage_current_target', None):
+            self.after(200, self._finish_safe_close)
+        else:
+            self.destroy()
+
+    def open_mcp_settings(self):
+        from mcp_dialog import MCPSettingsDialog
+        dialog = getattr(self, '_mcp_settings_dialog', None)
+        if dialog is not None and not dialog.closed:
+            dialog.top.lift()
+            return
+        self._mcp_settings_dialog = MCPSettingsDialog(self)
 
 
     def setup_dnd(self):
@@ -3362,6 +3378,10 @@ class App(BaseClass):
                                         **secondary_button_style(), width=120,
                                         font=ui_font(size=14, weight="bold"), height=40, state="disabled")
         self.btn_cancel.pack(side="right")
+
+        self.btn_mcp = ctk.CTkButton(self.action_frame, text="AI 工具連接", command=self.open_mcp_settings,
+                                    **secondary_button_style(), width=110, height=40)
+        self.btn_mcp.pack(side="right", padx=(0, 8))
 
         # Progress Bar Frame (兼顧特效與進度顯示)
         self.progress_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
@@ -4539,6 +4559,7 @@ class App(BaseClass):
     def process_batch(self, stage_token=None):
         stage_token = self._stage_token if stage_token is None else stage_token
         outcome = 'failed'
+        inference_batch = None
         try:
             model_size = self.get_clean_model_name()
             device = self.device_var.get()
@@ -4589,17 +4610,33 @@ class App(BaseClass):
             
             current_download_root = self.model_path_var.get().strip()
             if not current_download_root: current_download_root = None
+
+            from mcp_inference import InferenceBatch, ProcessTranscriber
+            inference_batch = InferenceBatch(self)
+            # The shared lock is already held during the final policy read.
+            # Direct mode preserves all existing intra-GUI model reuse.
+            if inference_batch.use_proxy:
+                engine_class = ProcessTranscriber
+            else:
+                inference_batch.retain_direct()
+                engine_class = SubtitleTranscriber
+
+            def make_engine(model_size, device, compute_type, **options):
+                previous = self.transcriber
+                if isinstance(previous, ProcessTranscriber):
+                    previous.close()
+                return engine_class(model_size, device, compute_type, **options)
             
             # 建立或更新實例
             if not self.transcriber:
-                self.transcriber = SubtitleTranscriber(model_size, device, compute_type, download_root=current_download_root, cpu_threads=threads_count)
+                self.transcriber = make_engine(model_size, device, compute_type, download_root=current_download_root, cpu_threads=threads_count)
             else:
                  # 若參數變更，重新建立
                 if (self.transcriber.model_size != model_size or 
                     self.transcriber.device != device or 
                     getattr(self.transcriber, 'download_root', None) != current_download_root or
                     self.transcriber.cpu_threads != threads_count):
-                     self.transcriber = SubtitleTranscriber(model_size, device, compute_type, download_root=current_download_root, cpu_threads=threads_count)
+                     self.transcriber = make_engine(model_size, device, compute_type, download_root=current_download_root, cpu_threads=threads_count)
 
             # 定義模型下載專用即時進度回呼
             def on_download_progress(fraction, info_dict):
@@ -4668,7 +4705,7 @@ class App(BaseClass):
                     compute_type = "int8"
                     self.after(0, lambda: self.device_var.set("cpu"))
                     try:
-                        self.transcriber = SubtitleTranscriber(model_size, device, compute_type, download_root=current_download_root, cpu_threads=threads_count)
+                        self.transcriber = make_engine(model_size, device, compute_type, download_root=current_download_root, cpu_threads=threads_count)
                         self.transcriber.load_model(
                             log_callback=self.log,
                             progress_callback=on_download_progress,
@@ -4698,7 +4735,7 @@ class App(BaseClass):
                             self.log(f"正在切換模型儲存路徑至: {local_models_dir}")
                             
                             # 使用新的 download_root 重新初始化
-                            self.transcriber = SubtitleTranscriber(model_size, device, compute_type, download_root=local_models_dir, cpu_threads=threads_count)
+                            self.transcriber = make_engine(model_size, device, compute_type, download_root=local_models_dir, cpu_threads=threads_count)
                             
                             # 再次嘗試載入
                             self.transcriber.load_model(
@@ -4815,6 +4852,8 @@ class App(BaseClass):
             messagebox.showerror(title, f"{error_msg}")
         
         finally:
+            if inference_batch is not None:
+                inference_batch.close()
             if self.cancel_flag:
                 outcome = 'cancelled'
             self.queue_stage(stage_token, 'terminal', outcome)

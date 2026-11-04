@@ -16,6 +16,10 @@ class DesktopUI(unittest.TestCase):
         self.ctk = ctk
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
+        from unittest.mock import patch
+        state_path = patch('mcp_state.default_state_dir', return_value=Path(self.temp.name) / 'mcp-state')
+        state_path.start()
+        self.addCleanup(state_path.stop)
         self.root = ctk.CTk()
         self.exports = []
         self.errors = []
@@ -28,6 +32,8 @@ class DesktopUI(unittest.TestCase):
         # Native Tk owns interpreter resources on its creating thread. Join
         # workers and collect destroyed interpreter cycles here, before a
         # later test's worker can trigger collection on a background thread.
+        if getattr(self.root, '_mcp_direct_lock', None):
+            self.root._mcp_direct_lock.release()
         for dialog in self.exports:
             if dialog.job:
                 dialog.job.cancel()

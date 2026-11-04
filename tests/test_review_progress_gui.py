@@ -15,6 +15,9 @@ class ReviewProgressGUI(unittest.TestCase):
         self.desktop = desktop
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
+        state_path = patch('mcp_state.default_state_dir', return_value=Path(self.temp.name) / 'mcp-state')
+        state_path.start()
+        self.addCleanup(state_path.stop)
         with patch.object(desktop.App, 'load_settings'), patch.object(desktop.App, 'check_for_updates'):
             self.root = desktop.App()
         self.errors = []
@@ -25,6 +28,8 @@ class ReviewProgressGUI(unittest.TestCase):
                              '2\n00:00:03,000 --> 00:00:04,000\n下課\n', encoding='utf-8')
 
     def close(self):
+        if getattr(self.root, '_mcp_direct_lock', None):
+            self.root._mcp_direct_lock.release()
         for timer in self.root.tk.call('after', 'info'):
             self.root.tk.call('after', 'cancel', timer)
         self.root.destroy()

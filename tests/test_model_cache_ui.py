@@ -2,6 +2,8 @@
 from types import SimpleNamespace
 import os
 import gc
+from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
@@ -73,6 +75,13 @@ class ModelCacheUI(unittest.TestCase):
 
 @unittest.skipUnless(os.environ.get('VTS_RUN_GUI_TESTS') == '1', 'requires native GUI session')
 class ModelStorageConcurrency(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix='vts-model-ui-state-')
+        self.addCleanup(temporary.cleanup)
+        state_path = patch('mcp_state.default_state_dir', return_value=Path(temporary.name) / 'mcp-state')
+        state_path.start()
+        self.addCleanup(state_path.stop)
+
     def test_all_download_entrypoints_report_access_error_without_cleanup_prompt(self):
         from test_model_cache import ModelCacheTests
         fixture = ModelCacheTests()
@@ -139,6 +148,8 @@ class ModelStorageConcurrency(unittest.TestCase):
                         self.assertIn('快取已保留', errors[0][1])
                         self.assertTrue((fixture.snapshot / 'model.bin').is_file())
                     finally:
+                        if getattr(app, '_mcp_direct_lock', None):
+                            app._mcp_direct_lock.release()
                         for timer in app.tk.call('after', 'info'):
                             app.tk.call('after', 'cancel', timer)
                         app.destroy()
