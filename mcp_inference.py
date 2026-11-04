@@ -4,7 +4,6 @@ The pipe connects only an owned spawned child, never an external MCP client.
 Direct native engines retain their OS lock for the lifetime of this process:
 dropping a Python engine reference does not prove that MLX caches were freed.
 """
-import atexit
 import multiprocessing
 
 from mcp_state import MCPError, ProcessLock, State
@@ -13,10 +12,22 @@ _DIRECT_LOCKS = []
 _CALLBACKS = ('log_callback', 'progress_callback', 'stage_callback', 'review_callback')
 
 
-@atexit.register
-def _release_direct_locks():
-    for lock in _DIRECT_LOCKS:
-        lock.release()
+def child_residency(state_path, cancelled):
+    """Children take residency only; parents take inference before residency.
+
+    This raw-FD lease deliberately lasts through Python/native teardown to OS
+    exit. No parent lock handoff, cache unload, PID probing or forced kill.
+    """
+    def stopped():
+        parent = multiprocessing.parent_process()
+        return cancelled.is_set() or (parent is not None and not parent.is_alive())
+    lock = ProcessLock(State(state_path).path / 'locks', 'model-residency', process_lifetime=True)
+    if not lock.acquire(blocking=True, cancelled=stopped):
+        return None
+    if stopped():
+        lock.release()  # No engine was constructed.
+        return None
+    return lock
 
 
 class InferenceBatch:
@@ -25,15 +36,22 @@ class InferenceBatch:
         self.state = state if state is not None else State()
         self.retained = getattr(owner, '_mcp_direct_model_used', False)
         self.lock = getattr(owner, '_mcp_direct_lock', None) or ProcessLock(self.state.path / 'locks', 'inference')
+        self.residency = getattr(owner, '_mcp_direct_residency', None)
         if not self.lock.acquire():
             raise MCPError('INFERENCE_BUSY', '其他 GUI 或 MCP 工作正在使用模型；請等待工作結束或正常關閉該 GUI。')
         try:
             self.use_proxy = self.state.policy()['enabled']
+            if not self.use_proxy and self.residency is None:
+                self.residency = ProcessLock(self.state.path / 'locks', 'model-residency', process_lifetime=True)
+                if not self.residency.acquire():
+                    raise MCPError('INFERENCE_BUSY', '背景模型仍在使用中；請等待模型程序正常結束。')
             existing = getattr(owner, 'transcriber', None)
             if self.use_proxy and (self.retained or (existing is not None and not isinstance(existing, ProcessTranscriber))):
                 raise MCPError('RESTART_REQUIRED', '本視窗保留本機模型；請正常關閉並重新啟動程式。')
         except BaseException:
             if not self.retained:
+                if self.residency is not None:
+                    self.residency.release()
                 self.lock.release()
             raise
 
@@ -42,7 +60,9 @@ class InferenceBatch:
             self.retained = True
             self.owner._mcp_direct_model_used = True
             self.owner._mcp_direct_lock = self.lock
+            self.owner._mcp_direct_residency = self.residency
             _DIRECT_LOCKS.append(self.lock)
+            _DIRECT_LOCKS.append(self.residency)
 
     def close(self):
         if self.use_proxy:
@@ -51,11 +71,16 @@ class InferenceBatch:
                 engine.close()  # join must complete BEFORE shared lock release
                 self.owner.transcriber = None
         if not self.retained:
+            if self.residency is not None:
+                self.residency.release()
             self.lock.release()
 
 
-def _engine_child(connection, cancelled, args, kwargs, engine_factory):
+def _engine_child(connection, cancelled, args, kwargs, engine_factory, state_path):
     try:
+        residency = child_residency(state_path, cancelled)
+        if residency is None:
+            return
         if engine_factory is None:
             from transcriber import SubtitleTranscriber
             engine_factory = SubtitleTranscriber
@@ -90,13 +115,14 @@ def _engine_child(connection, cancelled, args, kwargs, engine_factory):
 class ProcessTranscriber:
     """Existing engine contract with one reusable child per GUI batch."""
     def __init__(self, model_size='small', device='cpu', compute_type='int8', download_root=None,
-                 cpu_threads=4, *, engine_factory=None):
+                 cpu_threads=4, *, engine_factory=None, state_path=None):
         self.model_size = model_size.split()[0].strip()
         self.device, self.compute_type = device, compute_type
         self.download_root, self.cpu_threads = download_root, cpu_threads
         self.model = None
         self.last_batch_decision = None
         self._factory = engine_factory
+        self._state_path = str(State(state_path).path)
         self._process = self._connection = self._cancelled = None
 
     def _start(self):
@@ -107,7 +133,7 @@ class ProcessTranscriber:
         self._cancelled = context.Event()
         process = context.Process(target=_engine_child, args=(child, self._cancelled,
             (self.model_size, self.device, self.compute_type),
-            {'download_root': self.download_root, 'cpu_threads': self.cpu_threads}, self._factory))
+            {'download_root': self.download_root, 'cpu_threads': self.cpu_threads}, self._factory, self._state_path))
         try:
             process.start()
         except BaseException:

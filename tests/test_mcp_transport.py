@@ -265,6 +265,15 @@ class TransportTests(unittest.TestCase):
                          {'version': 1, 'enabled': False, 'roots': [], 'jobs': []})
         self.assertFalse(self.state.path.exists())
 
+    def test_missing_sdk_entry_reports_actionable_install_without_state(self):
+        import io
+        import mcp_entry
+        with mock.patch.dict(sys.modules, {'mcp': None}), mock.patch('sys.stderr', new_callable=io.StringIO) as errors:
+            result = mcp_entry.main(['--state-dir', str(self.state.path)])
+        self.assertEqual(result, 2)
+        self.assertIn('mcp extra', errors.getvalue())
+        self.assertFalse(self.state.path.exists())
+
     @unittest.skipUnless(SDK, 'optional official MCP SDK is unavailable')
     def test_probe_exercises_configured_stdio_and_disabled_is_protocol_success(self):
         from mcp_transport import probe_connection
@@ -592,7 +601,7 @@ async def check():
             initial=await s.initialize()
             await s.send_ping()
             names=[t.name for t in (await s.list_tools()).tools]
-            assert 'configure' not in names and 'get_status' in names and len(names)==12
+            assert 'configure' not in names and 'get_status' in names and 'list_translation_drafts' in names and len(names)==13
             status=await s.call_tool('get_status',{})
             assert status.structuredContent['enabled'] is True and not status.isError
             denied=await s.call_tool('list_media',{'root_id':'missing'})
@@ -606,9 +615,10 @@ asyncio.run(check())
             result = subprocess.run([sys.executable, '-c', script, str(ROOT / 'app_entry.py'), str(self.state.path)],
                                     capture_output=True, text=True, timeout=25, cwd=self.temp.name)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(len(json.loads(result.stdout)['tools']), 12)
+            self.assertEqual(len(json.loads(result.stdout)['tools']), 13)
             self.assertEqual(client.handshake()['broker_id'], broker.identity)
 
+    @unittest.skipUnless(SDK, 'optional official MCP SDK is unavailable')
     def test_bootstrap_headless_and_self_test_preserve_off_policy(self):
         script = '''import runpy,sys
 class NoGUI:

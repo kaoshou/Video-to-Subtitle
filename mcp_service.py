@@ -16,7 +16,7 @@ import shutil
 import stat
 import threading
 
-from mcp_state import MCPError, ProcessLock, State, _private_directory
+from mcp_state import MCPError, ProcessLock, State, _private_directory, file_version, directory_identity
 from mcp_translation import batches, render_srt, validate_batch
 from safe_files import SafeDirectory, StagedDirectory
 from web_export import export_package, parse_subtitles
@@ -62,10 +62,15 @@ def _local_model_path(model_size, download_root=None, device='cpu', **kwargs):
     return _ready({'model': model_size, 'device': device, 'cache_dir': download_root})
 
 
-def _inference_child(settings, media_path, connection, cancelled):
+def _inference_child(settings, media_path, connection, cancelled, state_path):
     """One model lifetime per process; only bounded primitive IPC is emitted."""
     # Engine diagnostics must never escape into the broker's protocol stream.
     with open(os.devnull, 'w') as quiet, contextlib.redirect_stdout(quiet), contextlib.redirect_stderr(quiet):
+        from mcp_inference import child_residency
+        residency = child_residency(state_path, cancelled)
+        if residency is None:
+            connection.close()
+            return
         _child_run(settings, media_path, connection, cancelled)
 
 
@@ -113,6 +118,7 @@ def _run_engine(engine, settings, media_path, cancelled):
 
 class Service:
     def __init__(self, state: State, *, transcribe_factory=None):
+        state.require_no_cleanup()
         self.state, self._factory = state, transcribe_factory
         self._guard, self._queue = threading.RLock(), queue.Queue()
         self._closed, self._stop = False, threading.Event()
@@ -215,8 +221,9 @@ class Service:
 
     def _asset(self, id, generation=None):
         asset = self.state.get('assets', id)
-        with self.state.file(asset['root_id'], asset['relative'], admitted_generation=generation):
-            pass
+        with self.state.file(asset['root_id'], asset['relative'], admitted_generation=generation) as stream:
+            if asset.get('version') != file_version(stream):
+                raise MCPError('SOURCE_CHANGED', 'Asset changed; list and import the current file again.')
         return asset
 
     def _asset_hash(self, asset, generation=None):
@@ -229,7 +236,12 @@ class Service:
         origin = self._asset(source['origin_id'], generation)
         if self._asset_hash(origin, generation) != source['origin_hash']:
             raise MCPError('SOURCE_CHANGED', 'Source changed; import or transcribe a new revision.')
+        self._source_authorized(source, generation)
         return source
+
+    def _source_authorized(self, source, generation=None):
+        self._asset(source['media_id'], generation)
+        self._asset(source['origin_id'], generation)
 
     def _draft(self, id):
         draft = self.state.get('drafts', id)
@@ -262,14 +274,21 @@ class Service:
         items = []
         for name in candidates[cursor:cursor + limit]:
             rel = relative + '/' + name if relative else name
-            id = _digest([root_id, rel])
+            with self.state.file(root_id, rel) as stream:
+                version = file_version(stream)
+            id = _digest([root_id, rel, version])
             record = {'id': id, 'root_id': root_id, 'relative': rel,
+                      'version': version,
                       'kind': 'subtitle' if Path(name).suffix.lower() in _SUBTITLES else 'media'}
-            with self.state.file(root_id, rel):
-                self.state.put('assets', id, record)
+            with ProcessLock(self.state.path / 'locks', 'policy'):
+                with self.state.file(root_id, rel) as stream:
+                    if file_version(stream) != version:
+                        raise MCPError('SOURCE_CHANGED', 'Media changed during listing; list again.')
+                    self.state.put('assets', id, record)
             items.append({'asset_id': id, 'name': name, 'relative': rel, 'kind': record['kind']})
-        self.state.require_enabled()
-        return {'items': items, 'next_cursor': cursor + limit if cursor + limit < len(candidates) else None}
+        with ProcessLock(self.state.path / 'locks', 'policy'):
+            with self.state.directory(root_id, relative):
+                return {'items': items, 'next_cursor': cursor + limit if cursor + limit < len(candidates) else None}
 
     def _read_subtitle(self, stream, suffix):
         raw = stream.read(2 * 1024 * 1024 + 1)
@@ -283,14 +302,14 @@ class Service:
             cue['cue_id'] = secrets.token_hex(16)
         return raw, cues
 
-    def _save_source(self, media_id, origin_id, origin_hash, cues, language):
+    def _save_source(self, media_id, origin_id, origin_hash, cues, language, source_text):
         id, track_id = secrets.token_hex(16), secrets.token_hex(16)
         source = {'id': id, 'revision': origin_hash, 'media_id': media_id,
                   'origin_id': origin_id, 'origin_hash': origin_hash, 'cues': cues, 'language': language}
         self.state.put('sources', id, source)
         self.state.put('tracks', track_id, {'id': track_id, 'source_id': id, 'revision': origin_hash,
                                           'media_id': media_id, 'language': language, 'complete': True,
-                                          'text': render_srt(cues), 'review_status': 'original'})
+                                          'text': source_text, 'review_status': 'original'})
         return {'source_id': id, 'revision': origin_hash, 'track_id': track_id, 'cue_count': len(cues)}
 
     def _import_subtitle(self, media_id, subtitle_id, language='und'):
@@ -300,9 +319,11 @@ class Service:
             raise MCPError('INVALID_ARGUMENT', 'Expected media and subtitle asset IDs.')
         with self.state.file(subtitle['root_id'], subtitle['relative']) as stream:
             raw, cues = self._read_subtitle(stream, Path(subtitle['relative']).suffix)
-        self._asset(media_id)
-        self._asset(subtitle_id)
-        return self._save_source(media_id, subtitle_id, hashlib.sha256(raw).hexdigest(), cues, language)
+        version, text = hashlib.sha256(raw).hexdigest(), render_srt(cues)
+        with ProcessLock(self.state.path / 'locks', 'policy'):
+            self._asset(media_id)
+            self._asset(subtitle_id)
+            return self._save_source(media_id, subtitle_id, version, cues, language, text)
 
     @staticmethod
     def _language(value):
@@ -325,8 +346,9 @@ class Service:
                 break
             cues.append(cue)
             size += len(cue['text'])
-        self.state.require_enabled()
-        return {'source_id': source_id, 'revision': source['revision'], 'cues': cues, 'next_cursor': next_cursor}
+        with ProcessLock(self.state.path / 'locks', 'policy'):
+            self._source_authorized(source)
+            return {'source_id': source_id, 'revision': source['revision'], 'cues': cues, 'next_cursor': next_cursor}
 
     def _prepare_translation(self, source_id, revision, language, glossary='', style=''):
         source, language = self._source(source_id), self._language(language)
@@ -335,10 +357,33 @@ class Service:
         id = secrets.token_hex(16)
         draft = {'id': id, 'source_id': source_id, 'revision': revision, 'language': language,
                  'glossary': glossary, 'style': style, 'batches': batches(source['cues']), 'translations': {}}
-        self.state.require_enabled()
-        self.state.put('drafts', id, draft)
+        with ProcessLock(self.state.path / 'locks', 'policy'):
+            self._source_authorized(source)
+            self.state.put('drafts', id, draft)
         return {'draft_id': id, 'revision': revision, 'language': language,
                 'batches': [{'batch_id': b['batch_id'], 'cue_count': len(b['cue_ids'])} for b in draft['batches']]}
+
+    def _list_translation_drafts(self, source_id, language, cursor=0, limit=25):
+        source, language = self._source(source_id), self._language(language)
+        drafts = [d for d in self.state.records('drafts') if d['source_id'] == source_id and d['language'] == language]
+        items, size = [], 0
+        for draft in drafts[cursor:cursor + limit]:
+            complete = [b['batch_id'] for b in draft['batches'] if all(c in draft['translations'] for c in b['cue_ids'])]
+            item = {'draft_id': draft['id'], 'revision': draft['revision'], 'language': language,
+                          'completed_batches': complete,
+                          'missing_batches': [b['batch_id'] for b in draft['batches'] if b['batch_id'] not in complete],
+                          'track_id': draft.get('track_id')}
+            item_size = len(json.dumps(item).encode('utf-8'))
+            if size + item_size > 128 * 1024:
+                if not items:
+                    raise MCPError('STORAGE_LIMIT', 'Draft batch metadata exceeds the response bound.')
+                break
+            items.append(item)
+            size += item_size
+        with ProcessLock(self.state.path / 'locks', 'policy'):
+            self._source_authorized(source)
+            next_index = cursor + len(items)
+            return {'items': items, 'next_cursor': next_index if next_index < len(drafts) else None}
 
     @staticmethod
     def _batch(draft, batch_id):
@@ -351,13 +396,30 @@ class Service:
         draft, source = self._draft(draft_id)
         batch = self._batch(draft, batch_id)
         cues = [cue for cue in source['cues'] if cue['cue_id'] in batch['cue_ids']]
-        return {'draft_id': draft_id, 'batch_id': batch_id, 'revision': draft['revision'],
+        first = source['cues'].index(cues[0])
+        last = source['cues'].index(cues[-1])
+        def context(candidates):
+            result, size = [], 0
+            for cue in candidates:
+                if size + len(cue['text']) > 2000:
+                    break
+                result.append({'cue_id': cue['cue_id'], 'text': cue['text']})
+                size += len(cue['text'])
+            return result
+        result = {'draft_id': draft_id, 'batch_id': batch_id, 'revision': draft['revision'],
                 'language': draft['language'], 'glossary': draft['glossary'], 'style': draft['style'],
                 'cues': [{'cue_id': cue['cue_id'], 'text': cue['text']} for cue in cues],
+                'context_before': context(source['cues'][max(0, first - 2):first]),
+                'context_after': context(source['cues'][last + 1:last + 3]),
+                'context_role': 'read_only_not_for_translation',
                 'complete': all(c['cue_id'] in draft['translations'] for c in cues)}
+        with ProcessLock(self.state.path / 'locks', 'policy'):
+            self._source_authorized(source)
+            return result
 
     def _submit_translation_batch(self, draft_id, batch_id, revision, translations):
-        with self.state.mutation('drafts', draft_id) as draft:
+        with ProcessLock(self.state.path / 'locks', 'record-drafts-' + draft_id):
+            draft = self.state.get('drafts', draft_id)
             if not draft:
                 raise MCPError('NOT_FOUND', 'Unknown translation draft.')
             source = self._source(draft['source_id'])
@@ -367,18 +429,23 @@ class Service:
                 raise MCPError('REVISION_CONFLICT', 'Finalized translation is immutable.')
             batch = self._batch(draft, batch_id)
             validated = validate_batch(batch, translations)
-            self.state.require_enabled()
-            draft['translations'].update(validated)
+            with ProcessLock(self.state.path / 'locks', 'policy'):
+                self._source_authorized(source)
+                draft['translations'].update(validated)
+                self.state._put('drafts', draft_id, draft)
         return {'accepted': True, 'batch_id': batch_id}
 
     def _finalize_translation(self, draft_id):
-        with self.state.mutation('drafts', draft_id) as draft:
+        with ProcessLock(self.state.path / 'locks', 'record-drafts-' + draft_id):
+            draft = self.state.get('drafts', draft_id)
             if not draft:
                 raise MCPError('NOT_FOUND', 'Unknown translation draft.')
             source = self._source(draft['source_id'])
             if draft.get('track_id'):
-                return {'track_id': draft['track_id'], 'language': draft['language'], 'complete': True,
-                        'review_status': 'ai_translation_needs_review'}
+                with ProcessLock(self.state.path / 'locks', 'policy'):
+                    self._source_authorized(source)
+                    return {'track_id': draft['track_id'], 'language': draft['language'], 'complete': True,
+                            'review_status': 'ai_translation_needs_review'}
             text = render_srt(source['cues'], draft['translations'])
             track_id = secrets.token_hex(16)
             self._source(source['id'])
@@ -393,6 +460,7 @@ class Service:
                                'language': draft['language'], 'complete': True, 'text': text,
                                'review_status': 'ai_translation_needs_review'})
                 draft['track_id'] = track_id
+                self.state._put('drafts', draft_id, draft)
         return {'track_id': track_id, 'language': draft['language'], 'complete': True,
                 'review_status': 'ai_translation_needs_review'}
 
@@ -418,16 +486,19 @@ class Service:
         self._own_worker()
         if len(self._events) >= 16:
             raise MCPError('QUEUE_FULL', 'At most 16 accepted jobs may be pending.')
-        policy, asset = self.state.require_enabled(), self._asset(asset_id)
+        asset = self._asset(asset_id)
         relative_parent = Path(asset['relative']).parent
         relative = '' if relative_parent == Path('.') else relative_parent.as_posix()
         with self.state.directory(asset['root_id'], relative) as parent:
             if shutil.disk_usage(parent.path).free < 64 * 1024 * 1024:
                 raise MCPError('DISK_FULL', 'Insufficient free space beside the media.')
         id = secrets.token_hex(16)
-        job = {'id': id, 'kind': kind, 'asset_id': asset_id, 'state': 'queued',
-               'generation': policy['generation'], 'arguments': arguments}
-        self.state.put('jobs', id, job)
+        with ProcessLock(self.state.path / 'locks', 'policy'):
+            policy = self.state.require_enabled()
+            self._asset(asset_id)
+            job = {'id': id, 'kind': kind, 'asset_id': asset_id, 'state': 'queued',
+                   'generation': policy['generation'], 'arguments': arguments, 'input_version': asset['version']}
+            self.state.put('jobs', id, job)
         self._events[id] = threading.Event()
         self._queue.put(id)
         if self._thread is None:
@@ -474,35 +545,52 @@ class Service:
         job = self.state.get('jobs', job_id)
         result = {k: job[k] for k in ('state', 'stage', 'error') if k in job}
         result['job_id'] = job_id
-        if self.state.policy()['enabled']:
-            self._asset(job['asset_id'])
-            if 'result' in job:
-                result['result'] = job['result']
+        with ProcessLock(self.state.path / 'locks', 'policy'):
+            if self.state.policy()['enabled'] and 'result' in job:
+                try:
+                    self._asset(job['asset_id'])
+                except MCPError as error:
+                    if error.code not in ('ROOT_NOT_ALLOWED', 'SOURCE_CHANGED', 'UNSAFE_PATH', 'MCP_DISABLED'):
+                        raise
+                else:
+                    result['result'] = job['result']
         return result
 
     def _cancel_job(self, job_id):
-        with self.state.mutation('jobs', job_id) as job:
-            if not job:
-                raise MCPError('NOT_FOUND', 'Unknown local job.')
-            if job['state'] not in _TERMINAL:
-                job['cancel_requested'] = True
-                job['state'] = 'cancelling'
-                if job_id in self._events:
-                    self._events[job_id].set()
-        return {'job_id': job_id, 'state': job['state']}
+        result = self.state.cancel_job(job_id)
+        if result['state'] == 'cancelling' and job_id in self._events:
+            self._events[job_id].set()
+        return result
 
     def _checkpoint(self, job):
         current = self.state.get('jobs', job['id'])
         if (self._stop.is_set() or self._events[job['id']].is_set() or
                 current.get('cancel_requested')):
             raise MCPError('CANCELLED', 'Job cancellation was requested.')
-        return self._asset(job['asset_id'], job['generation'])
+        asset = self._asset(job['asset_id'], job['generation'])
+        if job.get('input_version') != asset.get('version'):
+            raise MCPError('SOURCE_CHANGED', 'Admitted input changed; submit a new job.')
+        return asset
 
     def _update_job(self, id, **values):
         with self.state.mutation('jobs', id) as record:
             if record.get('cancel_requested') and values.get('state') not in _TERMINAL:
                 values['state'] = 'cancelling'
             record.update(values)
+
+    @contextlib.contextmanager
+    def _job_commit(self, job):
+        """Lock order: request/service guard -> job/draft record -> policy ->
+        leaf source/track records -> namespace. Cancellation takes job record;
+        policy changes take policy only. No hash/copy/inference under policy.
+        Publish and terminal success are one serializable transaction.
+        """
+        with ProcessLock(self.state.path / 'locks', 'record-jobs-' + job['id']):
+            with ProcessLock(self.state.path / 'locks', 'policy'):
+                self._checkpoint(job)
+                current = self.state.get('jobs', job['id'])
+                yield current
+                self.state._put('jobs', job['id'], current)
 
     def _worker(self):
         while True:
@@ -562,16 +650,17 @@ class Service:
                 self._update_job(job['id'], state='validating', stage='subtitle')
                 with SafeDirectory(folder) as directory, directory.open_read(media.with_suffix('.srt').name) as stream:
                     _, cues = self._read_subtitle(stream, '.srt')
+                text = render_srt(cues)
                 self._checkpoint(job)
                 self._update_job(job['id'], state='publishing')
-                result = self._save_source(job['asset_id'], job['asset_id'], version, cues,
-                                           job['arguments']['settings']['language'])
-                if batch_decision is not None:
-                    result['batch_decision'] = batch_decision
+                with self._job_commit(job) as current:
+                    result = self._save_source(job['asset_id'], job['asset_id'], version, cues,
+                                               job['arguments']['settings']['language'], text)
+                    if batch_decision is not None:
+                        result['batch_decision'] = batch_decision
+                    current.update(state='succeeded', stage='complete', result=result)
             else:
-                result = self._export(job, asset, media, workspace, version)
-            # Publication is the commit point; a late cancel preserves success.
-            self._update_job(job['id'], state='succeeded', stage='complete', result=result)
+                self._export(job, asset, media, workspace, version)
 
     def _cancelled(self, job):
         self._checkpoint(job)
@@ -592,7 +681,7 @@ class Service:
         context = multiprocessing.get_context('spawn')
         read, write = context.Pipe(duplex=False)
         cancel = context.Event()
-        process = context.Process(target=_inference_child, args=(settings, str(media), write, cancel))
+        process = context.Process(target=_inference_child, args=(settings, str(media), write, cancel, str(self.state.path)))
         process.start()
         write.close()
         message, failure = None, None
@@ -673,15 +762,21 @@ class Service:
                 self._update_job(job['id'], state='publishing', stage='package')
                 base = Path(asset['relative']).stem + '-web'
                 validate_folder_name(base)
-                for collision in range(1, 10001):
-                    name = base if collision == 1 else base + '-' + str(collision)
-                    self._checkpoint(job)
-                    try:
-                        folder = output.publish(name)
-                        break
-                    except FileExistsError:
-                        continue
-                else:
-                    raise MCPError('OUTPUT_EXISTS', 'No fresh export name is available.')
-        return {'folder': str(folder), 'index_path': str(folder / 'index.html'),
-                'source_path': str(Path(parent.path) / Path(asset['relative']).name)}
+                with self._job_commit(job) as current:
+                    for track in tracks:
+                        self._source_authorized(self.state.get('sources', track['source_id']), job['generation'])
+                    for collision in range(1, 10001):
+                        name = base if collision == 1 else base + '-' + str(collision)
+                        try:
+                            folder = output.publish(name)
+                            break
+                        except FileExistsError:
+                            continue
+                    else:
+                        raise MCPError('OUTPUT_EXISTS', 'No fresh export name is available.')
+                    current.update(state='succeeded', stage='complete', result={
+                        'folder': str(folder), 'index_path': str(folder / 'index.html'),
+                        'source_path': str(Path(parent.path) / Path(asset['relative']).name)})
+                    with parent.child(name) as published, published.open_read('index.html') as index:
+                        current['result_validation'] = {'directory': directory_identity(published),
+                                                        'index': file_version(index)}

@@ -61,6 +61,8 @@ class MCPGuiTests(unittest.TestCase):
             self.root.tk.call('after', 'cancel', timer)
         if getattr(self.root, '_mcp_direct_lock', None):
             self.root._mcp_direct_lock.release()
+        if getattr(self.root, '_mcp_direct_residency', None):
+            self.root._mcp_direct_residency.release()
         self.root.destroy()
         self.dialog = self.root = None
         gc.collect()
@@ -103,6 +105,52 @@ class MCPGuiTests(unittest.TestCase):
         self.assertIsNone(dialog.top.grab_current())
         self.assertEqual(len(dialog.client_rows), 11)
 
+    def test_ambiguous_discovery_requires_explicit_target_and_allows_alternate(self):
+        from mcp_clients import discover_clients
+        dialog = self.open()
+        row = next(r for r in discover_clients(home=self.path, environ={'CODEX_HOME': 'relative'}) if r['id'] == 'codex')
+        dialog.client_rows['codex'].update(row)
+        dialog.client.set('codex')
+        selected = str(self.path / 'selected.toml')
+        with patch.object(dialog.filedialog, 'asksaveasfilename', return_value=''):
+            self.assertIsNone(dialog._target())
+        with patch.object(dialog.filedialog, 'asksaveasfilename', return_value=selected):
+            self.assertEqual(dialog._target(), ('codex', selected))
+        alternate = str(self.path / 'alternate.toml')
+        with patch.object(dialog.filedialog, 'asksaveasfilename', return_value=alternate):
+            dialog.choose_config()
+        self.assertEqual(dialog._target(), ('codex', alternate))
+
+    def test_activation_disclosure_and_job_monitor_show_actionable_details(self):
+        self.state.put('jobs', 'failed', {'id': 'failed', 'state': 'failed', 'stage': 'subtitle',
+            'error': {'code': 'INVALID_SUBTITLE', 'message': 'Invalid subtitle; reimport.'}})
+        self.state.put('jobs', 'done', {'id': 'done', 'state': 'succeeded', 'stage': 'complete',
+            'result': {'index_path': '/unvalidated/index.html'}})
+        dialog = self.open()
+        self.assertIn('雲端', dialog.privacy_notice.cget('text'))
+        self.assertIn('不是加密', dialog.privacy_notice.cget('text'))
+        dialog.refresh_jobs()
+        self.settle()
+        texts = [str(child.cget('text')) for row in dialog.jobs_frame.winfo_children()
+                 for child in row.winfo_children() if isinstance(child, (dialog.ctk.CTkLabel, dialog.ctk.CTkButton))]
+        self.assertTrue(any('INVALID_SUBTITLE' in text and 'subtitle' in text for text in texts), texts)
+        self.assertIn('開啟結果', texts)
+
+    def test_cleanup_confirmation_names_unfinished_translations_and_requires_consent(self):
+        self.state.put('drafts', 'pending', {'id': 'pending', 'text': 'unfinished'})
+        dialog = self.open()
+        confirmations = []
+        def no(title, message, **kwargs):
+            confirmations.append(message)
+            return False
+        with patch.object(dialog.messagebox, 'askyesno', side_effect=no):
+            dialog.cleanup_work()
+            self.settle()
+        self.assertIn(str(self.state.path), confirmations[0])
+        self.assertIn('未完成翻譯', confirmations[0])
+        self.assertIn('bytes', confirmations[0])
+        self.assertTrue(self.state.get('drafts', 'pending'))
+
     def test_explicit_settings_open_loads_saved_policy_without_writing(self):
         saved = self.state.configure(True, [self.path])
         original = (self.state.path / 'policy.json').read_bytes()
@@ -126,9 +174,9 @@ class MCPGuiTests(unittest.TestCase):
         self.root.is_running = True
         dialog.roots = []
         dialog.apply_policy()
+        self.settle()
         self.assertTrue(self.state.policy()['enabled'])
-        self.assertEqual(len(self.state.policy()['roots']), 1)
-        self.assertIn('等待', dialog.notice.cget('text'))
+        self.assertEqual(len(self.state.policy()['roots']), 0)
 
     def test_manual_generic_and_owned_configuration_require_consent(self):
         dialog = self.open()

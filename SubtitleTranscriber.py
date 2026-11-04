@@ -4634,6 +4634,8 @@ class App(BaseClass):
                 previous = self.transcriber
                 if isinstance(previous, ProcessTranscriber):
                     previous.close()
+                if inference_batch.use_proxy:
+                    options['state_path'] = inference_batch.state.path
                 return engine_class(model_size, device, compute_type, **options)
             
             # 建立或更新實例

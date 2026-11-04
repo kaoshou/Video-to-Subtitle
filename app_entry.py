@@ -24,7 +24,7 @@ def _mcp_admin(arguments):
             return 0
         deadline = time.monotonic() + 2
         while True:
-            locks = [ProcessLock(state.path / 'locks', name) for name in ('broker', 'inference')]
+            locks = [ProcessLock(state.path / 'locks', name) for name in ('broker', 'inference', 'model-residency')]
             try:
                 if all(lock.acquire() for lock in locks):
                     return 0

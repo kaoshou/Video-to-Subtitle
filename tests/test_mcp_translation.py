@@ -190,18 +190,25 @@ class TranslationTests(ServiceFixture):
         self.assertEqual(list(self.media.glob('lesson-web*')), [])
 
     def test_cancel_after_exclusive_publish_preserves_success_and_artifact(self):
+        import threading
         source = self.imported()
         original = self.api.StagedDirectory.publish
+        cancellers = []
         def cancel_after_publish(stage, name):
             result = original(stage, name)
             if Path(stage.parent.path) == self.media:
                 job = self.state.records('jobs')[0]
-                self.service.call('cancel_job', {'job_id': job['id']})
+                worker = threading.Thread(target=lambda: self.service.call('cancel_job', {'job_id': job['id']}))
+                cancellers.append(worker)
+                worker.start()
             return result
         with patch.object(self.api.StagedDirectory, 'publish', cancel_after_publish):
             accepted = self.service.call('export_player', {'asset_id': self.assets()['lesson.mp4'],
                 'track_ids': [source['track_id']], 'request_id': 'cancel-published'})
             job = self.wait_job(accepted['job_id'])
+        for worker in cancellers:
+            worker.join(3)
+            self.assertFalse(worker.is_alive())
         self.assertEqual(job['state'], 'succeeded', job)
         self.assertTrue(Path(job['result']['index_path']).is_file())
 

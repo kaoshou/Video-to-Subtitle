@@ -55,6 +55,9 @@ def connection_command(state, *, repair=False):
 
 def enable(state, roots, *, owner=None, **options):
     """Serialize permission changes against the GUI's final engine decision."""
+    reduced = state.reduce_roots(roots, **options) if state.policy()['enabled'] else None
+    if reduced is not None:
+        return reduced
     if owner is not None:
         if (getattr(owner, 'is_running', False) or getattr(owner, 'current_downloading_model', None)
                 or getattr(owner, '_storage_current_target', None)):
@@ -70,8 +73,14 @@ def enable(state, roots, *, owner=None, **options):
     if not lock.acquire():
         raise MCPError('INFERENCE_BUSY', '模型正在使用中；請等待工作結束，或正常關閉保留模型的 GUI 後再試。')
     try:
-        connection_command(state)
-        return state.configure(True, list(roots), **{**options, 'backend_command': backend_command()})
+        residency = ProcessLock(state.path / 'locks', 'model-residency')
+        if not residency.acquire():
+            raise MCPError('INFERENCE_BUSY', '背景模型仍在使用中；請等待模型程序正常結束。')
+        try:
+            connection_command(state)
+            return state.configure(True, list(roots), **{**options, 'backend_command': backend_command()})
+        finally:
+            residency.release()
     finally:
         lock.release()
 
@@ -79,3 +88,34 @@ def enable(state, roots, *, owner=None, **options):
 def disable(state, stop_mode='cancel'):
     """Immediately revoke tool access; let the service cooperatively drain."""
     return state.disable(stop_mode=stop_mode)
+
+
+def open_job_result(state, job_id, *, opener=None):
+    """Local explicit action only; validate the recorded publication and grant."""
+    from mcp_state import directory_identity, file_version
+    if opener is None:
+        import webbrowser
+        opener = webbrowser.open
+    with ProcessLock(state.path / 'locks', 'policy'):
+        policy = state.require_enabled()
+        job = state.get('jobs', job_id)
+        if job.get('state') != 'succeeded' or job.get('kind') != 'export' or not job.get('result_validation'):
+            raise MCPError('INVALID_RESULT', 'No validated player output is available for this job.')
+        asset = state.get('assets', job['asset_id'])
+        root = next((r for r in policy['roots'] if r['id'] == asset['root_id']), None)
+        if root is None:
+            raise MCPError('ROOT_NOT_ALLOWED', 'The result root is no longer authorized.')
+        folder = Path(job['result']['folder'])
+        try:
+            relative = folder.relative_to(root['path'])
+        except ValueError as error:
+            raise MCPError('INVALID_RESULT', 'Result is outside the authorized root.') from error
+        if (relative.parent != Path(asset['relative']).parent or
+                job['result']['index_path'] != str(folder / 'index.html')):
+            raise MCPError('INVALID_RESULT', 'Result no longer matches the published package.')
+        with state.directory(asset['root_id'], relative.as_posix()) as directory:
+            with directory.open_read('index.html') as index:
+                if (directory_identity(directory) != job['result_validation']['directory'] or
+                        file_version(index) != job['result_validation']['index']):
+                    raise MCPError('INVALID_RESULT', 'Published result changed; inspect it locally before opening.')
+                opener((folder / 'index.html').as_uri())

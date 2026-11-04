@@ -1,5 +1,6 @@
 """Packaging boundaries exercised without models, real configs or home state."""
 import json
+import importlib.util
 import os
 from pathlib import Path
 import subprocess
@@ -136,6 +137,7 @@ else:
                             backend_command(state)
                         self.assertEqual(caught.exception.code, 'BACKEND_REPAIR_REQUIRED')
 
+    @unittest.skipUnless(importlib.util.find_spec('mcp'), 'optional official MCP SDK is unavailable')
     def test_source_stdio_smoke_imports_two_languages_and_exports_player(self):
         result = subprocess.run([sys.executable, str(ROOT / 'scripts/smoke_mcp.py')],
                                 cwd=ROOT, capture_output=True, text=True, timeout=90)

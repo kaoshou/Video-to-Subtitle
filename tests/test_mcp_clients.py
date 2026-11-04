@@ -1,5 +1,6 @@
 """Client fixtures never inspect the real home or execute client programs."""
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,13 @@ from mcp_state import MCPError, State
 
 
 class ClientTests(unittest.TestCase):
+    def test_missing_toml_dependency_keeps_actionable_manual_route(self):
+        with mock.patch.dict(sys.modules, {'tomlkit': None}):
+            with self.assertRaises(MCPError) as error:
+                self.api()._tomlkit()
+            self.assertEqual(error.exception.code, 'MANUAL_ONLY')
+            self.assertIn('tomlkit', str(error.exception))
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -167,6 +175,7 @@ class ClientTests(unittest.TestCase):
         manual = json.loads(self.api().manual_configuration('vscode', self.command))
         self.assertEqual(manual['servers']['video-to-subtitle']['type'], 'stdio')
 
+    @unittest.skipUnless(importlib.util.find_spec('tomlkit'), 'optional tomlkit is unavailable')
     def test_codex_toml_comments_order_and_unrelated_values_survive(self):
         self.config = self.home / 'config.toml'
         content = '# heading\nmodel = "keep" # inline\n\n[mcp_servers.other]\ncommand = "/other" # secret\n'
@@ -177,6 +186,14 @@ class ClientTests(unittest.TestCase):
         self.assertIn(content, added)
         api.remove_connection('codex', self.config, state_dir=self.state)
         self.assertEqual(self.config.read_text().rstrip(), content.rstrip())
+
+    def test_json_exponent_overflow_is_actionable_and_preserves_config(self):
+        for content in ('{"other":1e400}', '{"nested":[{"other":-1e400}]}'):
+            self.config.write_text(content)
+            with self.assertRaises(MCPError) as error:
+                self.preview()
+            self.assertEqual(error.exception.code, 'INVALID_CONFIG')
+            self.assertEqual(self.config.read_text(), content)
 
     def test_claude_code_user_scope_never_changes_project_servers(self):
         self.config.write_text(json.dumps({'projects': {'/project': {'mcpServers': {'existing': {

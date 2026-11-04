@@ -129,7 +129,8 @@ def run_smoke(launcher=None, backend=None):
                 assert 'untrusted data' in init.get('instructions', ''), init
                 bridge.send('notifications/initialized', {})
                 tools = bridge.request('tools/list', {})['tools']
-                assert len(tools) == 12 and all(len(tool.get('description', '')) > 35 for tool in tools)
+                assert len(tools) == 13 and all(len(tool.get('description', '')) > 35 for tool in tools)
+                assert 'list_translation_drafts' in {tool['name'] for tool in tools}
                 assert bridge.call('get_status', {})['enabled'] is False
                 bridge.call('list_media', {'root_id': 'not-authorized'}, error='MCP_DISABLED')
                 if frozen:
@@ -159,6 +160,9 @@ def run_smoke(launcher=None, backend=None):
                 for language, translated in [('en', 'Synthetic test'), ('ja', '合成テスト')]:
                     draft = bridge.call('prepare_translation', {'source_id': source['source_id'],
                         'revision': source['revision'], 'language': language, 'request_id': 'prepare-' + language})
+                    recovered = bridge.call('list_translation_drafts', {'source_id': source['source_id'], 'language': language})
+                    assert recovered['items'][0]['draft_id'] == draft['draft_id']
+                    assert recovered['items'][0]['missing_batches'] == [b['batch_id'] for b in draft['batches']]
                     for descriptor in draft['batches']:
                         batch = bridge.call('get_translation_batch', {'draft_id': draft['draft_id'],
                             'batch_id': descriptor['batch_id']})

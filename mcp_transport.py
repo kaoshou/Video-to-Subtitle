@@ -521,6 +521,13 @@ class BrokerClient:
         try:
             self._ensure()
         except MCPError as error:
+            if error.code == 'MCP_DISABLED' and name in ('get_job', 'cancel_job'):
+                key = arguments['job_id']
+                if name == 'cancel_job':
+                    return self.state.cancel_job(key)
+                job = self.state.get('jobs', key)
+                # Never expose result paths/subtitle content from offline control.
+                return {'job_id': key, **{k: job[k] for k in ('state', 'stage', 'error') if k in job}}
             if error.code == 'MCP_DISABLED' and name == 'get_status':
                 policy = self.state.policy()
                 return {'version': 1, 'enabled': False,

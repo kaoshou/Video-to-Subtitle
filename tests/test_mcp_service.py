@@ -247,7 +247,7 @@ class ServiceTests(ServiceFixture):
         cancelled = context.Event()
         process = context.Process(target=self.api._inference_child,
             args=({'model': 'small', 'device': 'cpu', 'cache_dir': str(self.root / 'absent')},
-                  str(self.root / 'unused.mp4'), write, cancelled))
+                  str(self.root / 'unused.mp4'), write, cancelled, str(self.state.path)))
         process.start()
         write.close()
         try:

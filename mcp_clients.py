@@ -370,7 +370,13 @@ def _parse(raw, client_id, path):
                 return result
             def invalid(value):
                 raise ValueError('Nonfinite number')
-            document = json.loads(text or '{}', object_pairs_hook=unique, parse_constant=invalid)
+            def finite(value):
+                import math
+                number = float(value)
+                if not math.isfinite(number):
+                    raise ValueError('Nonfinite number')
+                return number
+            document = json.loads(text or '{}', object_pairs_hook=unique, parse_constant=invalid, parse_float=finite)
         if not isinstance(document, dict):
             raise ValueError('Object required')
         if any(key in document for key in ('version', 'schema_version', 'configVersion')):

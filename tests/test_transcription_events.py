@@ -68,7 +68,11 @@ class TranscriptionEvents(unittest.TestCase):
     def test_optional_observer_exceptions_cannot_fail_transcription(self):
         def broken(*args):
             raise RuntimeError('observer failed')
-        self.assertTrue(Path(self.run_job(stage_callback=broken, review_callback=broken)).is_file())
+        with self.assertLogs('transcriber', level='WARNING') as captured:
+            self.assertTrue(Path(self.run_job(stage_callback=broken, review_callback=broken)).is_file())
+        self.assertTrue(captured.records)
+        self.assertTrue(all(record.getMessage() == 'Transcription observer failed' for record in captured.records))
+        self.assertTrue(all(isinstance(record.exc_info[1], RuntimeError) for record in captured.records))
 
     def test_failure_emits_failed_not_complete_or_review(self):
         stages, reviews = [], []

@@ -97,6 +97,18 @@ def _absolute_directory(path):
         yield directory
 
 
+def directory_identity(directory):
+    # Windows SafeDirectory pins the directory and ancestors against rename;
+    # POSIX uses the opened descriptor, never a second pathname lookup.
+    info = os.fstat(directory.fd) if directory.fd is not None else os.stat(directory.path, follow_symlinks=False)
+    return [info.st_dev, info.st_ino]
+
+
+def file_version(stream):
+    info = os.fstat(stream.fileno())
+    return [info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns]
+
+
 def _windows_private(path, *, create=False):
     """Check current-user ownership and a user-only DACL; fail on API errors.
 
@@ -347,6 +359,36 @@ class State:
         self.path = Path(os.path.abspath(path if path is not None else default_state_dir()))
         self.state_dir = self.path
 
+    def require_no_cleanup(self):
+        try:
+            with _private_directory(self.path) as directory:
+                if directory.info('cleanup.json') is not None:
+                    raise MCPError('CLEANUP_PENDING', 'Private cleanup was interrupted; resume it in local AI connection settings before enabling access.')
+        except FileNotFoundError:
+            pass
+
+    def cancel_job(self, job_id):
+        """Metadata-only control shared by broker, offline bridge and local GUI.
+
+        Reset/control -> job record -> namespace. A reset holds the same guard
+        across inventory and deletion, so a paused cancellation cannot recreate
+        a deleted job or invalidate the confirmed cleanup inventory.
+        """
+        self.require_no_cleanup()
+        guard = ProcessLock(self.path / 'locks', 'cleanup-control')
+        if not guard.acquire():
+            raise MCPError('WORK_ACTIVE', 'Private cleanup/control is active; retry after it finishes.')
+        try:
+            self.require_no_cleanup()
+            with self.mutation('jobs', job_id) as job:
+                if not job:
+                    raise MCPError('NOT_FOUND', 'Unknown local job.')
+                if job['state'] not in ('succeeded', 'failed', 'cancelled', 'interrupted'):
+                    job.update(cancel_requested=True, state='cancelling')
+            return {'job_id': job_id, 'state': job['state']}
+        finally:
+            guard.release()
+
     def policy(self) -> dict:
         with _errors('invalid_policy'):
             try:
@@ -359,17 +401,24 @@ class State:
                 raise MCPError('invalid_policy', 'Malformed MCP policy.')
             ids, paths = set(), set()
             for root in policy['roots']:
-                if (not isinstance(root, dict) or set(root) != {'id', 'path', 'label'} or
+                if (not isinstance(root, dict) or set(root) not in ({'id', 'path', 'label'}, {'id', 'path', 'label', 'identity'}) or
                         not isinstance(root.get('path'), str) or len(root['path']) > 4096 or
                         not Path(root['path']).is_absolute() or '\x00' in root['path'] or
                         not isinstance(root.get('label'), str) or len(root['label']) > 1024):
                     raise MCPError('invalid_policy', 'Malformed root policy.')
                 _id(root.get('id'))
+                identity = root.get('identity')
+                if identity is not None and (not isinstance(identity, list) or len(identity) != 2 or
+                                             any(type(n) is not int or n < 0 for n in identity)):
+                    raise MCPError('invalid_policy', 'Malformed root identity.')
                 if root['id'] in ids or root['path'] in paths:
                     raise MCPError('invalid_policy', 'Duplicate root policy.')
                 ids.add(root['id'])
                 paths.add(root['path'])
             _validate_options(policy.get('options', {}))
+            floor = policy.get('admission_floor', policy['generation'])
+            if type(floor) is not int or not 0 <= floor <= policy['generation']:
+                raise MCPError('invalid_policy', 'Malformed admission range.')
             drain = policy.get('drain_generation')
             if drain is not None and (type(drain) is not int or drain <= 0 or
                                       drain >= policy['generation'] or policy['enabled']):
@@ -382,24 +431,49 @@ class State:
             raise MCPError('invalid_policy', 'Invalid local policy.')
         _validate_options(options)
         with _errors('invalid_policy'), ProcessLock(self.path / 'locks', 'policy'):
+            if enabled:
+                self.require_no_cleanup()
             old = self.policy()
-            old_ids = {root['path']: root['id'] for root in old['roots']}
+            old_roots = {root['path']: root for root in old['roots']}
             selected = []
             for root in roots:
                 resolved = str(Path(root).resolve(strict=True))
-                with _absolute_directory(resolved):
-                    pass
+                with _absolute_directory(resolved) as directory:
+                    identity = directory_identity(directory)
+                previous = old_roots.get(resolved, {})
                 if resolved not in {entry['path'] for entry in selected}:
-                    selected.append({'id': old_ids.get(resolved, secrets.token_hex(16)),
-                                     'path': resolved, 'label': Path(resolved).name or resolved})
+                    selected.append({'id': previous['id'] if previous.get('identity') == identity else secrets.token_hex(16),
+                                     'path': resolved, 'label': Path(resolved).name or resolved, 'identity': identity})
             policy = {'enabled': enabled, 'roots': selected, 'generation': old['generation'] + 1,
                       'options': {**old.get('options', {}), **options}}
+            policy['admission_floor'] = old.get('admission_floor', old['generation']) if old['enabled'] else policy['generation']
             if (not enabled and policy['options'].get('stop_mode') == 'finish' and
                     old['roots'] == selected):
                 admission = old['generation'] if old['enabled'] else old.get('drain_generation')
                 if admission is not None:
                     policy['drain_generation'] = admission
+                    policy['admission_floor'] = old.get('admission_floor', admission)
             with _private_directory(self.path, create=True) as directory:
+                _write_json(directory, 'policy.json', _encode(policy, MAX_POLICY_BYTES))
+            return policy
+
+    def reduce_roots(self, roots, **options):
+        """Try a pure reduction against the latest policy, without filesystem I/O.
+
+        None means a new grant, identity refresh, activation or option change
+        needs the normal inference-guarded enable path. No stale GUI policy is
+        written back, and missing disks do not prevent revocation.
+        """
+        paths = {os.path.abspath(root) for root in roots}
+        with ProcessLock(self.path / 'locks', 'policy'):
+            old = self.policy()
+            if (not old['enabled'] or not paths < {r['path'] for r in old['roots']} or
+                    any(old.get('options', {}).get(k) != v for k, v in options.items())):
+                return None
+            policy = {**old, 'roots': [r for r in old['roots'] if r['path'] in paths],
+                      'generation': old['generation'] + 1,
+                      'admission_floor': old.get('admission_floor', old['generation'])}
+            with _private_directory(self.path) as directory:
                 _write_json(directory, 'policy.json', _encode(policy, MAX_POLICY_BYTES))
             return policy
 
@@ -423,14 +497,19 @@ class State:
                 admission = old['generation'] if old['enabled'] else old.get('drain_generation')
                 if admission is not None:
                     policy['drain_generation'] = admission
+                    policy['admission_floor'] = old.get('admission_floor', admission)
             with _private_directory(self.path, create=True) as directory:
                 _write_json(directory, 'policy.json', _encode(policy, MAX_POLICY_BYTES))
             return policy
 
     def require_enabled(self, *, admitted_generation=None) -> dict:
+        self.require_no_cleanup()
         policy = self.policy()
+        if type(admitted_generation) is int and admitted_generation < policy.get('admission_floor', 0):
+            raise MCPError('disabled', 'This job admission was revoked; submit a new job.')
         if not policy['enabled'] and not (type(admitted_generation) is int and
-                                         admitted_generation == policy.get('drain_generation')):
+                policy.get('admission_floor', policy.get('drain_generation', 0)) <= admitted_generation <=
+                policy.get('drain_generation', -1)):
             raise MCPError('disabled', 'Local MCP access is disabled.')
         return policy
 
@@ -443,7 +522,11 @@ class State:
             root = next((root for root in policy['roots'] if root['id'] == root_id), None)
             if root is None:
                 raise MCPError('root_revoked', 'The selected root is not authorized.')
+            if 'identity' not in root:
+                raise MCPError('root_revoked', 'Legacy root grant requires local reauthorization: remove and add the folder again.')
             directory = stack.enter_context(_absolute_directory(root['path']))
+            if directory_identity(directory) != root['identity']:
+                raise MCPError('root_revoked', 'Root directory was replaced; locally reauthorize the new directory.')
             for part in parts:
                 directory = stack.enter_context(directory.child(part))
             current = self.require_enabled(admitted_generation=admitted_generation)
@@ -533,7 +616,7 @@ class State:
 
 class ProcessLock:
     """Crash-released OS lock. Lock files stay in place to preserve inode identity."""
-    def __init__(self, directory: Path, name='inference'):
+    def __init__(self, directory: Path, name='inference', *, process_lifetime=False):
         self.directory = Path(directory)
         # Record mutation names are two individually bounded identifiers.
         if (not isinstance(name, str) or len(name) > 256 or _RESERVED.fullmatch(name) or
@@ -542,11 +625,18 @@ class ProcessLock:
         self.name = name + '.lock'
         self._stream = None
         self._stack = None
+        self._process_lifetime = process_lifetime
+        self._raw_fd = None
 
     def acquire(self, blocking=False, cancelled=None) -> bool:
         if self._stream is not None:
             return True
         stack = contextlib.ExitStack()
+        raw_fd = None
+        def close_failed():
+            stack.close()
+            if raw_fd is not None:
+                os.close(raw_fd)
         with _errors('lock_failed'):
             try:
                 directory = stack.enter_context(_private_directory(self.directory, create=True))
@@ -590,7 +680,14 @@ class ProcessLock:
                         kernel.CloseHandle.argtypes = [w.HANDLE]
                         kernel.CloseHandle(handle)
                         raise
-                stream = stack.enter_context(os.fdopen(fd, 'r+b', buffering=0))
+                if self._process_lifetime:
+                    raw_fd = fd
+                # A native engine may survive Python object destruction and
+                # atexit callbacks. Lifetime leases use a raw non-inherited FD:
+                # FileIO/GC cannot close it; only explicit release or OS exit.
+                os.set_inheritable(fd, False)
+                stream = stack.enter_context(os.fdopen(fd, 'r+b', buffering=0,
+                                                       closefd=not self._process_lifetime))
                 info = os.fstat(stream.fileno())
                 if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or
                         getattr(info, 'st_file_attributes', 0) & 0x400):
@@ -601,7 +698,7 @@ class ProcessLock:
                     raise MCPError('private_storage', 'Lock permissions are not private.')
                 while True:
                     if cancelled and cancelled():
-                        stack.close()
+                        close_failed()
                         return False
                     try:
                         if os.name == 'nt':
@@ -612,16 +709,17 @@ class ProcessLock:
                             import fcntl
                             fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                         self._stream, self._stack = stream, stack
+                        self._raw_fd = raw_fd
                         return True
                     except OSError as error:
                         if error.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
                             raise
                         if not blocking:
-                            stack.close()
+                            close_failed()
                             return False
                         time.sleep(0.05)
             except BaseException:
-                stack.close()
+                close_failed()
                 raise
 
     def release(self):
@@ -637,6 +735,9 @@ class ProcessLock:
                 fcntl.flock(self._stream.fileno(), fcntl.LOCK_UN)
         finally:
             self._stack.close()
+            if self._raw_fd is not None:
+                os.close(self._raw_fd)
+                self._raw_fd = None
             self._stream = self._stack = None
 
     def __enter__(self):
