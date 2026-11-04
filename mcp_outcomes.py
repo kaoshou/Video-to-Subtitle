@@ -1,10 +1,12 @@
 """Compact advisory outcome metadata shared by workers and job cards."""
 from collections import Counter
 from pathlib import Path
+import json
 
 from safe_files import SafeDirectory
 from subtitle_review import review_cues
 from web_export import parse_subtitles
+from web_export_model import canonical_language
 
 REVIEW_REASONS = {'long_text': '單段文字偏長', 'reading_speed': '閱讀速度偏快',
                   'possibly_untranslated': '疑似未翻譯', 'glossary_mismatch': '專有名詞與指定譯法不符'}
@@ -38,3 +40,24 @@ def track_review(track, source):
     if track.get('review_status') == 'original':
         return source.get('review')
     return None  # A legacy translation cannot inherit its original's ASR checks.
+
+
+def player_inventory(folder, kind):
+    """Describe the finished package, including native preserved languages."""
+    with SafeDirectory(folder) as directory:
+        if kind == 'opencam':
+            from opencam_integration import _read_project
+            tracks = (_read_project(directory).data.get('subtitles') or {}).get('tracks', [])
+        else:
+            with directory.open_read('subtitles-data.js') as stream:
+                raw = stream.read(32 * 1024 * 1024 + 1)
+            if len(raw) > 32 * 1024 * 1024:
+                raise ValueError('Player subtitle data exceeds its bound.')
+            text = raw.decode('utf-8')
+            prefix = 'window.EVERCAM_SUBTITLES = '
+            if not text.startswith(prefix):
+                raise ValueError('Unsupported player subtitle data.')
+            tracks = json.loads(text[len(prefix):].strip().removesuffix(';'))['tracks']
+        if len(tracks) > 32:
+            raise ValueError('Player exceeds 32 subtitle languages.')
+        return {canonical_language(track['language']): len(track.get('cues', [])) for track in tracks}

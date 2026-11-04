@@ -1,6 +1,6 @@
 # MCP Workflow Improvements Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Make local transcription and multilingual player jobs understandable, resumable and quality-aware without adding repetitive confirmations.
 
@@ -31,12 +31,12 @@
 
 **Files:** `mcp_contracts.py`, `mcp_service.py`, `tests/test_mcp_service.py`, `docs/MCP.zh-TW.md`.
 
-**Interfaces:** Add `preview_transcription(asset_id, settings={}) -> {settings, model_status, can_start, blockers, source_name, output_parent, project_type}` using existing settings resolution and authorization. Never return cache paths. Add the resolved execution plan to accepted transcription responses. Preserve old request shapes.
+**Interfaces:** Add `preview_transcription(asset_id, settings={}) -> {settings, model_status, can_start, blockers, source_name, output_parent, project_type}` using existing settings resolution and authorization. Never return cache paths. Expose the persisted execution plan through authorized get_job; keep accepted responses job_id-only for existing clients. Preserve old request shapes.
 
-- [ ] Write tests for explicit/default model, missing cache, no download/load, policy revocation and preview/start race; run and observe failure.
-- [ ] Implement preview using shared resolution and existing offline cache checks; keep start-time validation authoritative.
-- [ ] Update AI instructions: disclose resolved plan, ask only for missing choices or changed strategy, never silently downgrade.
-- [ ] Run `PYTHONPATH=tests python -m unittest test_mcp_service` and inspect the diff before a scoped commit.
+- [x] Write tests for explicit/default model, missing cache, no download/load, policy revocation and preview/start race; run and observe failure.
+- [x] Implement preview using shared resolution and existing offline cache checks; keep start-time validation authoritative.
+- [x] Update AI instructions: disclose resolved plan, ask only for missing choices or changed strategy, never silently downgrade.
+- [x] Run `PYTHONPATH=tests python -m unittest test_mcp_service` and inspect the diff before a scoped commit.
 
 ### Task 2: Real progress and lifecycle timing
 
@@ -44,10 +44,10 @@
 
 **Interfaces:** Job fields `progress: {stage, fraction: float|null}`, `started_at`, `finished_at`, `elapsed_seconds`. Engine callbacks emit bounded primitive progress/stage events; final report stays distinct from events. Export byte progress uses existing copy callbacks.
 
-- [ ] Write tests for callback progress, invalid event fractions, duplicate events, cancellation, queued versus running time and final-message ordering; demonstrate failure.
-- [ ] Implement validated/coalesced subprocess events, throttled job persistence, phase-aware progress and terminal timing. Do not expose subtitle text through progress events.
-- [ ] Render meaningful stage/progress and elapsed values without estimating unsupported completion times.
-- [ ] Run service and job-card tests; run targeted desktop tests with `VTS_RUN_GUI_TESTS=1`; review and commit scoped changes.
+- [x] Write tests for callback progress, invalid event fractions, duplicate events, cancellation, queued versus running time and final-message ordering; demonstrate failure.
+- [x] Implement validated/coalesced subprocess events, throttled job persistence, phase-aware progress and terminal timing. Do not expose subtitle text through progress events.
+- [x] Render meaningful stage/progress and elapsed values without estimating unsupported completion times.
+- [x] Run service and job-card tests; run targeted desktop tests with `VTS_RUN_GUI_TESTS=1`; review and commit scoped changes.
 
 ### Task 3: Discover recoverable work by media
 
@@ -55,21 +55,21 @@
 
 **Interfaces:** Add `list_work(asset_id, cursor=0, limit=20)` returning bounded authorized source/job/draft references, language, revision validity, completed/missing batch counts and next action. Reuse `list_translation_drafts` for actual batch IDs.
 
-- [ ] Write tests for finding completed transcription without old IDs, partially translated languages, pagination, source version changes and access revocation; observe failure.
-- [ ] Implement media-scoped discovery, no whole-filesystem scan, and explicit retry guidance for interrupted inference. Keep completed batches immutable under identical request replay.
-- [ ] Document a new-dialog recovery prompt and distinction between translation resume and inference restart.
-- [ ] Run service/idempotency/authorization tests; review and commit scoped changes.
+- [x] Write tests for finding completed transcription without old IDs, partially translated languages, pagination, source version changes and access revocation; observe failure.
+- [x] Implement media-scoped discovery, no whole-filesystem scan, and explicit retry guidance for interrupted inference. Keep completed batches immutable under identical request replay.
+- [x] Document a new-dialog recovery prompt and distinction between translation resume and inference restart.
+- [x] Run service/idempotency/authorization tests; review and commit scoped changes.
 
 ### Task 4: Translation quality and glossary checks
 
 **Files:** `mcp_translation.py`, `mcp_contracts.py`, `mcp_service.py`, `tests/test_mcp_translation.py`, `tests/test_mcp_service.py`.
 
-**Interfaces:** Add pure `quality_report(cues, translations, source_language, target_language, glossary_terms) -> {review_count, reason_counts, items, truncated}`. Bounded items reference cue IDs and reason codes. Optional structured `glossary_terms` map supplements legacy glossary text. Persist report with finalized tracks and expose bounded review details through a paginated tool.
+**Interfaces:** Add pure `quality_report(cues, translations, source_language, target_language, glossary_terms) -> {review_count, reason_counts, items, truncated}`. Bounded items reference cue IDs and reason codes. Optional structured `glossary_terms` source/target pair list supplements legacy glossary text. Persist report with finalized tracks and expose bounded review details through a paginated tool.
 
-- [ ] Write tests for missing/empty cues remaining hard errors, unchanged timestamps, reading-speed/length warnings, source-target language equality, non-Latin text, deterministic glossary mismatches and warning truncation; observe failure.
-- [ ] Implement conservative advisory rules with documented thresholds; no semantic correctness claims or automatic text replacement. Reports cover all cues even when detail items are bounded.
-- [ ] Preserve old glossary/string-only submissions and draft replay behavior; verify persisted review summaries survive service restart.
-- [ ] Run translation/service tests, review and commit scoped changes.
+- [x] Write tests for missing/empty cues remaining hard errors, unchanged timestamps, reading-speed/length warnings, source-target language equality, non-Latin text, deterministic glossary mismatches and warning truncation; observe failure.
+- [x] Implement conservative advisory rules with documented thresholds; no semantic correctness claims or automatic text replacement. Reports cover all cues even when detail items are bounded.
+- [x] Preserve old glossary/string-only submissions and draft replay behavior; verify persisted review summaries survive service restart.
+- [x] Run translation/service tests, review and commit scoped changes.
 
 ### Task 5: Unified outcome summaries and UI
 
@@ -77,7 +77,7 @@
 
 **Interfaces:** Extend result summaries with actual transcription metadata, duration, output language(s), cue count, aggregated review reasons and authorized output locations. Additive fields only; imported subtitles never claim an inference model.
 
-- [ ] Write tests for old jobs, imported subtitles, multilingual exports, failed/cancelled jobs, review counts, detail expansion and result opening; observe failure.
-- [ ] Wire source/track review and timing metadata to export results, AI completion instructions and concise desktop cards. Retain technical IDs under details.
-- [ ] Update manual with actual field examples, thresholds, limitations and recovery workflow.
-- [ ] Run full Python suite, player tests and native GUI tests; inspect `git diff --check`. Record actual results and limitations before declaring completion.
+- [x] Write tests for old jobs, imported subtitles, multilingual exports, failed/cancelled jobs, review counts, detail expansion and result opening; observe failure.
+- [x] Wire source/track review and timing metadata to export results, AI completion instructions and concise desktop cards. Retain technical IDs under details.
+- [x] Update manual with actual field examples, thresholds, limitations and recovery workflow.
+- [x] Run full Python suite, player tests and native GUI tests; inspect `git diff --check`. Record actual results and limitations before declaring completion.

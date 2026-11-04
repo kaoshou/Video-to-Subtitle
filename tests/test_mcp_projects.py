@@ -43,6 +43,9 @@ class ProjectPlayers(ServiceFixture):
         from opencam_integration import load_project
         data = load_project(folder).data
         self.assertEqual(result['player_type'], 'opencam')
+        self.assertEqual(set(result['languages']), {'en', 'ja'})
+        self.assertEqual(result['cue_counts']['ja'], 1)
+        self.assertIn('ja', result['unchecked_languages'])
         self.assertEqual(data['chapters'][0]['title'], '第一章')
         self.assertEqual({t['language'] for t in data['subtitles']['tracks']}, {'en', 'ja'})
         self.assertEqual(data['subtitles']['tracks'][0], other)
@@ -71,6 +74,8 @@ class ProjectPlayers(ServiceFixture):
         folder, result = self.export(item, imported['track_id'])
         self.assertEqual(item['project_type'], 'evercam')
         self.assertEqual(result['player_type'], 'evercam')
+        self.assertTrue({'en', 'ja'} <= set(result['languages']))
+        self.assertIn('ja', result['unchecked_languages'])
         self.assertIn('第一章', (folder / 'config.js').read_text())
         payload = (folder / 'subtitles-data.js').read_text().split('window.EVERCAM_SUBTITLES = ', 1)[1].strip().removesuffix(';')
         self.assertTrue({'en', 'ja'} <= {t['language'] for t in json.loads(payload)['tracks']})

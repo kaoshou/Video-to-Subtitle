@@ -17,7 +17,7 @@ import stat
 import threading
 import time
 from mcp_progress import ProgressEmitter, valid_progress
-from mcp_outcomes import transcription_review, review_summary, track_review
+from mcp_outcomes import transcription_review, review_summary, track_review, player_inventory
 
 from mcp_state import MCPError, ProcessLock, State, _private_directory, file_version, directory_identity
 from mcp_translation import batches, render_srt, validate_batch, quality_report
@@ -1000,6 +1000,7 @@ class Service:
         else:
             built = export_package(request, app_version='mcp-1', progress=lambda done, total: progress.progress(done / total if total else 1.),
                                    cancelled=lambda: self._cancelled(job))
+        inventory = player_inventory(built.folder, player_type)
         self._checkpoint(job)
         if self._asset_hash(asset, job['generation']) != version:
             raise MCPError('SOURCE_CHANGED', 'Media changed during export.')
@@ -1042,14 +1043,14 @@ class Service:
                 with self._job_commit(job) as current:
                     project_for_asset(self.state, asset, job['generation'])
                     transcriptions = []
-                    cue_counts, reviews = {}, {}
+                    cue_counts = dict(inventory)
+                    reviews = {language: review_summary(None) for language in inventory}
                     for track in tracks:
                         source = self.state.get('sources', track['source_id'])
                         self._source_authorized(source, job['generation'])
                         info = source.get('transcription')
                         if info is not None and info not in transcriptions:
                             transcriptions.append(info)
-                        cue_counts[track['language']] = len(source['cues'])
                         reviews[track['language']] = review_summary(track_review(track, source))
                     # Attest the pinned package before its exclusive rename.
                     # On Windows the publisher retains DELETE access; reopening
@@ -1071,7 +1072,7 @@ class Service:
                     current.update(state='succeeded', stage='complete', result={
                         'folder': str(folder), 'index_path': str(folder / 'index.html'),
                         'player_type': player_type,
-                        'languages': [track['language'] for track in tracks], 'cue_counts': cue_counts,
+                        'languages': list(inventory), 'cue_counts': cue_counts,
                         'review_by_language': reviews,
                         'unchecked_languages': [language for language, review in reviews.items() if review.get('review_count') is None],
                         'transcriptions': transcriptions,
