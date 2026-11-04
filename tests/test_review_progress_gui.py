@@ -436,6 +436,10 @@ class ReviewProgressGUI(unittest.TestCase):
         # This console/review observer fixture supplies a standard recognizer,
         # not a media file or batch decoder. Exercise the standard route.
         app.batch_acceleration_var.set(False)
+        # Keep the GUI selection consistent with the recorded recognizer.
+        # Otherwise process_batch correctly replaces it with the selected
+        # default model, accidentally performing real inference in this test.
+        app.model_var.set('medium')
         app.file_list = [media]
         app.transcriber = self.desktop.SubtitleTranscriber('medium', 'cpu', 'int8')
         item = SimpleNamespace(start=0, end=2, text='老師好', words=None, avg_logprob=-1.2)
@@ -449,6 +453,8 @@ class ReviewProgressGUI(unittest.TestCase):
         # must not abort transcription when filenames contain Chinese.
         console = io.TextIOWrapper(io.BytesIO(), encoding='cp1252')
         with patch('sys.stdout', console), \
+                patch.object(self.desktop.SubtitleTranscriber, 'load_model',
+                             side_effect=AssertionError('Fixture must not load a real model')), \
                 patch.object(app.transcriber, 'load_model'), patch.object(app, 'refresh_model_menu'), \
                 patch.object(app, 'show_completion_dialog', side_effect=completed):
             app.process_batch(token)

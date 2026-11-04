@@ -41,5 +41,5 @@ class Notices(unittest.TestCase):
             self.assertEqual(len(resources), 2)
             for index, (source, destination) in enumerate(resources):
                 self.assertEqual(Path(source).read_text(), f'Original copyright and terms {index}')
-                self.assertTrue(destination.startswith('licenses/sample/1.0/'))
+                self.assertEqual(Path(destination).parts[:3], ('licenses', 'sample', '1.0'))
                 self.assertNotIn('..', Path(destination).parts)

@@ -15,11 +15,11 @@ class ProjectPlayers(ServiceFixture):
             data = dict(format='opencam.web-player', schemaVersion=1, entry='index.html',
                         media='media.mp4', title='課程',
                         chapters=[dict(title='第一章', start=0, end=1)], subtitles=subtitles)
-            (self.media / 'index.html').write_text('<script src="opencam-player.js"></script><video src="media.mp4"></video>')
+            (self.media / 'index.html').write_text('<script src="opencam-player.js"></script><video src="media.mp4"></video>', encoding='utf-8')
             (self.media / 'opencam-player.js').write_text('window.OpenCamPlayerData = ' + json.dumps(data) + ';', encoding='utf-8')
         else:
-            (self.media / 'config.js').write_text('var config = {title:"課程",index:[{title:"第一章",time:0}],src:[{src:"media.mp4"}]};')
-            (self.media / 'index.html').write_text('original evercam')
+            (self.media / 'config.js').write_text('var config = {title:"課程",index:[{title:"第一章",time:0}],src:[{src:"media.mp4"}]};', encoding='utf-8')
+            (self.media / 'index.html').write_text('original evercam', encoding='utf-8')
         listed = self.service.call('list_media', {'root_id': self.root_id})['items']
         item = next(i for i in listed if i['name'] == 'media.mp4')
         sub = next(i for i in listed if i['name'] == 'media.srt')
@@ -67,7 +67,7 @@ class ProjectPlayers(ServiceFixture):
     def test_evercam_exports_native_chapters_and_multiple_languages(self):
         item, track = self.project('evercam')
         # Relist after adding a project resource, as required for a new revision.
-        (self.media / 'media.ja.srt').write_text(SRT.replace('First', '日本語'))
+        (self.media / 'media.ja.srt').write_text(SRT.replace('First', '日本語'), encoding='utf-8')
         item = next(i for i in self.service.call('list_media', {'root_id': self.root_id})['items'] if i['name'] == 'media.mp4')
         imported = self.service.call('import_subtitle', dict(media_id=item['asset_id'],
             subtitle_id=self.assets()['media.srt'], language='en', request_id='import-current'))
@@ -76,10 +76,10 @@ class ProjectPlayers(ServiceFixture):
         self.assertEqual(result['player_type'], 'evercam')
         self.assertTrue({'en', 'ja'} <= set(result['languages']))
         self.assertIn('ja', result['unchecked_languages'])
-        self.assertIn('第一章', (folder / 'config.js').read_text())
-        payload = (folder / 'subtitles-data.js').read_text().split('window.EVERCAM_SUBTITLES = ', 1)[1].strip().removesuffix(';')
+        self.assertIn('第一章', (folder / 'config.js').read_text(encoding='utf-8'))
+        payload = (folder / 'subtitles-data.js').read_text(encoding='utf-8').split('window.EVERCAM_SUBTITLES = ', 1)[1].strip().removesuffix(';')
         self.assertTrue({'en', 'ja'} <= {t['language'] for t in json.loads(payload)['tracks']})
-        self.assertEqual((self.media / 'index.html').read_text(), 'original evercam')
+        self.assertEqual((self.media / 'index.html').read_text(encoding='utf-8'), 'original evercam')
 
     def test_unrelated_mp4_is_not_opencam_and_explicit_mismatch_fails(self):
         self.project('opencam')
@@ -135,7 +135,7 @@ class ProjectPlayers(ServiceFixture):
             subtitle_id=self.assets()['media.srt'], language='en', request_id='replace-old'))
         folder, _ = self.export(item, source['track_id'])
         self.assertFalse((folder / 'media.en.vtt').exists())
-        payload = json.loads((folder / 'subtitles-data.js').read_text().split('window.EVERCAM_SUBTITLES = ')[1].strip().removesuffix(';'))
+        payload = json.loads((folder / 'subtitles-data.js').read_text(encoding='utf-8').split('window.EVERCAM_SUBTITLES = ')[1].strip().removesuffix(';'))
         self.assertEqual(payload['defaultLanguage'], 'en')
         english = next(t for t in payload['tracks'] if t['language'] == 'en')
         self.assertEqual(english['cues'][0]['text'], 'First')

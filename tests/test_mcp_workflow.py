@@ -246,7 +246,7 @@ class OutcomeTests(ServiceFixture):
     def test_confidence_summary_maps_to_final_subtitle_without_reading_another_path(self):
         from mcp_outcomes import transcription_review
         output = self.media / 'generated.srt'
-        output.write_text('1\n00:00:01,000 --> 00:00:03,000\n字幕\n')
+        output.write_text('1\n00:00:01,000 --> 00:00:03,000\n字幕\n', encoding='utf-8')
         report = transcription_review(output, output, [
             {'start': 1, 'end': 3, 'text': '字幕', 'reasons': ['辨識信心偏低']}])
         self.assertEqual(report['review_count'], 1)
@@ -269,7 +269,7 @@ class OutcomeTests(ServiceFixture):
         self.assertEqual(result['review_by_language']['ja']['review_count'], 2)
         self.assertEqual(result['review_by_language']['ja']['reason_counts']['long_text'], 2)
         self.assertEqual(result['unchecked_languages'], ['en'])
-        self.assertIn('00:00:00,123 --> 00:00:00,456', (Path(result['folder']) / 'media.ja.srt').read_text())
+        self.assertIn('00:00:00,123 --> 00:00:00,456', (Path(result['folder']) / 'media.ja.srt').read_text(encoding='utf-8'))
 
     def test_old_translation_never_inherits_original_language_quality_report(self):
         source = self.imported()
