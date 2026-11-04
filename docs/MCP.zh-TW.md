@@ -67,6 +67,33 @@ MCP 讓支援本機工具的 AI 客戶端在本機轉錄、讀取字幕、分批
 
 匯出在原影片旁建立新資料夾；名稱碰撞會加 `-2`、`-3`，不覆寫原影音、字幕或既有播放器。請保留整包影片與網頁檔案。新播放器沿用逐字稿搜尋、點擊跳轉、跟隨播放、語言切換、閱讀設定、HTML／TXT 下載與鍵盤操作；播放器取得焦點時 Space 播放／暫停、方向鍵快退／快轉，輸入欄位保留原本按鍵用途。完整操作見[使用手冊](USER_GUIDE.zh-TW.md#網頁播放器的逐字稿搜尋)。
 
+### 自動辨識 OpenCam／EverCam 與對應播放器
+
+`list_media` 可指定專案資料夾或 MP4 的完整路徑；回傳的每個影音項目都有 `project_type`。資料夾即使名稱以 `.mp4` 結尾，仍會列出資料夾內的影音，不會當成影片檔。此工具列舉指定目錄的一層內容；批次課程請分別指定各課程目錄。
+
+| `project_type` | 辨識與輸出方式 |
+| --- | --- |
+| `opencam` | 關聯的 `media.mp4`、`index.html` 與合法的 schema-v1 `opencam-player.js`。複製 OpenCam 播放器，保留章節、其他語系字幕及原資料備份，再合併選定字幕。沒有字幕的專案也可建立第一軌。 |
+| `evercam` | MP4 同目錄有 `config.js`。保留原章節設定，套用內建 EverCam 現代化播放器，合併原有 `media.srt`／`media.<語系>.srt`／VTT 與選定字幕；新字幕優先取代同語系舊檔。 |
+| `mp4` | 一般 MP4，輸出逐字稿播放器，不產生虛構章節。OpenCam 旁的其他 MP4 不會誤認為其關聯影片。 |
+| `media` | 其他支援的影音，可轉錄；網頁播放器匯出仍需 MP4。 |
+
+OpenCam 的 `project` 資訊另含標題、章節數與既有字幕語言。匯出預設 `player_type: "auto"`，依辨識類型選擇播放器；若使用者明確只需要一般 MP4 播放器，可指定 `"mp4"`。指定 `"opencam"` 或 `"evercam"` 而來源不符時會回報 `PROJECT_TYPE_MISMATCH`。
+
+```json
+{
+  "asset_id": "list_media 回傳的影片 asset_id",
+  "track_ids": ["已匯入或完成翻譯的 track_id"],
+  "player_type": "auto",
+  "default_subtitle": "zh-TW",
+  "request_id": "export-course-001"
+}
+```
+
+對 AI 可直接說：「請辨識這個 OpenCam／EverCam 課程，產生繁體中文字幕、翻譯成英文與日文，並保留章節輸出對應的多語播放器。」先完成所有指定語系，再呼叫 `export_player`；`get_job` 的結果會回報實際 `player_type`、輸出資料夾與 `index.html`。
+
+三種類型都另建資料夾，原課程不會被修改。OpenCam 保留原匯出版本的播放器介面；EverCam 與一般 MP4 沿用本工具的播放器。專案設定只作為資料解析／複製，伺服器不執行匯入的 JavaScript；OpenCam 資料無效、檔案為連結或匯出期間專案已變更時會停止，請修正來源並重新列舉。每個專案資源檔限制 32 MiB，合計限制 64 MiB；目前 OpenCam 支援標準自含式的 index/data/media 結構。
+
 ## 背景工作、停用與運算單元
 
 關閉主視窗、設定視窗或 AI 客戶端，不會取消已接受的工作。按「停用存取」會立即拒絕新的內容存取；可選「完成已接受工作」或「取消已接受工作」。取消是合作式處理，正在執行的原生推論可能需先返回，不會強制終止模型程序。

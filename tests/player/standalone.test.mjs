@@ -29,6 +29,16 @@ function player(config, {standalone = true, preferences = {}, blockedStorage = f
   return {dom, w, tracks};
 }
 
+test('EverCam honors an explicitly exported default language or captions off while retaining chapters', t => {
+  for (const language of ['en', 'off']) {
+    const {dom,w}=player({title:'course',defaultSubtitle:language,
+      index:[{time:0,title:'Chapter one'}]}, {standalone:false});
+    t.after(()=>dom.window.close());
+    assert.equal(w.document.querySelector('#caption-menu [data-value="'+language+'"]').getAttribute('aria-checked'),'true');
+    assert.equal(w.document.querySelector('#chapters-tab').hidden,false);
+  }
+});
+
 test('MP4 uses the same visible player and transcript controls as EverCam, except chapters', t => {
   const shared={title:'同一份教材',author:'講師',organization:'教學中心',description:'課程簡介',
     duration:120,defaultSubtitle:'zh-TW',index:[{time:0,title:'開始'}]};

@@ -813,11 +813,12 @@
         captionButton.title = "字幕";
         var languages = nativeTracks.map(function (item) { return item.language; });
         var preferred = readPreference(subtitleStorageKey);
-        var defaultLanguage = preferred && (languages.indexOf(preferred) !== -1 || (standalone && preferred === "off"))
+        var allowDefaultOff = standalone || courseConfig.defaultSubtitle === "off";
+        var defaultLanguage = preferred && (languages.indexOf(preferred) !== -1 || (allowDefaultOff && preferred === "off"))
             ? preferred
-            : (standalone ? courseConfig.defaultSubtitle : subtitleData.defaultLanguage);
+            : (courseConfig.defaultSubtitle || subtitleData.defaultLanguage);
 
-        if ((!standalone || defaultLanguage !== "off") && (!defaultLanguage || languages.indexOf(defaultLanguage) === -1)) {
+        if ((!allowDefaultOff || defaultLanguage !== "off") && (!defaultLanguage || languages.indexOf(defaultLanguage) === -1)) {
             defaultLanguage = languages.indexOf("zh-TW") !== -1 ? "zh-TW" : languages[0];
         }
         setSubtitleLanguage(defaultLanguage || "off", !standalone);

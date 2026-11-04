@@ -187,12 +187,50 @@ def run_smoke(launcher=None, backend=None):
                 assert folder.parent == media and (folder / 'index.html').is_file()
                 manifest = json.loads((folder / 'web-export.json').read_text(encoding='utf-8'))
                 assert [track['language'] for track in manifest['subtitles']] == ['en', 'ja']
+                # Exercise project detection/native builders through real STDIO,
+                # including frozen executables with no host Python/Node on PATH.
+                for kind in ('opencam', 'evercam'):
+                    project = media / kind
+                    project.mkdir()
+                    (project / 'media.mp4').write_bytes((media / 'lesson.mp4').read_bytes())
+                    (project / 'media.srt').write_bytes((media / 'lesson.srt').read_bytes())
+                    if kind == 'opencam':
+                        (project / 'index.html').write_text('<script src="opencam-player.js"></script><video src="media.mp4"></video>', encoding='utf-8')
+                        data = {'format': 'opencam.web-player', 'schemaVersion': 1,
+                            'entry': 'index.html', 'media': 'media.mp4', 'title': 'Synthetic OpenCam',
+                            'chapters': [{'title': 'Chapter one', 'start': 0, 'end': 1}], 'subtitles': None}
+                        (project / 'opencam-player.js').write_text('window.OpenCamPlayerData = ' + json.dumps(data) + ';', encoding='utf-8')
+                    else:
+                        (project / 'config.js').write_text('var config={title:"Synthetic EverCam",index:[{title:"Chapter one",time:0}]};', encoding='utf-8')
+                    entries = bridge.call('list_media', {'root_id': policy['roots'][0]['id'], 'relative': kind})['items']
+                    video = next(item for item in entries if item['name'] == 'media.mp4')
+                    subtitle = next(item for item in entries if item['name'] == 'media.srt')
+                    assert video['project_type'] == kind, video
+                    imported = bridge.call('import_subtitle', {'media_id': video['asset_id'],
+                        'subtitle_id': subtitle['asset_id'], 'language': 'zh-TW', 'request_id': kind + '-import'})
+                    accepted = bridge.call('export_player', {'asset_id': video['asset_id'],
+                        'track_ids': [imported['track_id']], 'request_id': kind + '-export'})
+                    deadline = time.monotonic() + 60
+                    while True:
+                        finished = bridge.call('get_job', accepted)
+                        if finished['state'] in ('succeeded', 'failed', 'cancelled', 'interrupted'):
+                            break
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError(kind + ' export completion')
+                        time.sleep(.05)
+                    assert finished['state'] == 'succeeded', finished
+                    assert finished['result']['player_type'] == kind
+                    destination = Path(finished['result']['folder'])
+                    expected = 'opencam-player.js' if kind == 'opencam' else 'config.js'
+                    assert 'Chapter one' in (destination / expected).read_text(encoding='utf-8')
+                    assert (destination / 'media.zh-TW.srt').is_file()
                 for language in ('en', 'ja'):
                     assert '00:00:00,123 --> 00:00:01,456' in (folder / f'media.{language}.srt').read_text(encoding='utf-8')
                 assert (folder / 'media.mp4').read_bytes() == (media / 'lesson.mp4').read_bytes()
                 state.disable('finish')
                 bridge.call('list_media', {'root_id': policy['roots'][0]['id']}, error='MCP_DISABLED')
                 return {'frozen': frozen, 'languages': ['en', 'ja'], 'disabled_denied': True,
+                        'project_players': ['opencam', 'evercam'],
                         'protocol_only_stdout': True, 'no_host_runtime_on_path': True,
                         'protocol_version': init['protocolVersion'], 'live_client_verified': False}
             except Exception:

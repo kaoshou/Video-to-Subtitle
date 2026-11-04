@@ -18,6 +18,7 @@ import threading
 
 from mcp_state import MCPError, ProcessLock, State, _private_directory, file_version, directory_identity
 from mcp_translation import batches, render_srt, validate_batch
+from mcp_projects import inspect_project, project_for_asset, build_project
 from safe_files import SafeDirectory, StagedDirectory
 from web_export import export_package, parse_subtitles
 from web_export_model import ExportRequest, Metadata, SubtitleSource, canonical_language, validate_folder_name
@@ -294,16 +295,24 @@ class Service:
             rel = relative + '/' + name if relative else name
             with self.state.file(root_id, rel) as stream:
                 version = file_version(stream)
-            id = _digest([root_id, rel, version])
+            with self.state.directory(root_id, relative) as directory:
+                project = inspect_project(directory, name) if Path(name).suffix.lower() in _MEDIA else None
+            id = _digest([root_id, rel, version, project])
             record = {'id': id, 'root_id': root_id, 'relative': rel,
                       'version': version,
                       'kind': 'subtitle' if Path(name).suffix.lower() in _SUBTITLES else 'media'}
+            if project is not None:
+                record['project'] = project
             with ProcessLock(self.state.path / 'locks', 'policy'):
                 with self.state.file(root_id, rel) as stream:
                     if file_version(stream) != version:
                         raise MCPError('SOURCE_CHANGED', 'Media changed during listing; list again.')
                     self.state.put('assets', id, record)
-            items.append({'asset_id': id, 'name': name, 'relative': rel, 'kind': record['kind']})
+            item = {'asset_id': id, 'name': name, 'relative': rel, 'kind': record['kind']}
+            if project is not None:
+                item['project_type'] = project['type']
+                item['project'] = {k: v for k, v in project.items() if k != 'files'}
+            items.append(item)
         with ProcessLock(self.state.path / 'locks', 'policy'):
             with self.state.directory(root_id, relative):
                 return {'items': items, 'next_cursor': cursor + limit if cursor + limit < len(candidates) else None}
@@ -548,16 +557,20 @@ class Service:
             tracks.append(track)
         return tracks
 
-    def _export_player(self, asset_id, track_ids, title=None, default_subtitle=None):
+    def _export_player(self, asset_id, track_ids, title=None, default_subtitle=None, player_type='auto'):
         asset = self._asset(asset_id)
         if Path(asset['relative']).suffix.lower() != '.mp4':
             raise MCPError('INVALID_ARGUMENT', 'Player export requires an MP4 asset.')
+        project = project_for_asset(self.state, asset)
+        selected = project['type'] if player_type == 'auto' else player_type
+        if selected != 'mp4' and selected != project['type']:
+            raise MCPError('PROJECT_TYPE_MISMATCH', 'Requested player type does not match the detected project.')
         tracks = self._tracks(asset_id, track_ids)
         default = default_subtitle or tracks[0]['language']
         if default != 'off' and self._language(default) not in {t['language'] for t in tracks}:
             raise MCPError('TRANSLATION_INCOMPLETE', 'Requested default language is not a complete selected track.')
         return self._admit('export', asset_id, {'track_ids': track_ids, 'title': title,
-                                               'default_subtitle': default})
+                                               'default_subtitle': default, 'player_type': selected})
 
     def _get_job(self, job_id):
         job = self.state.get('jobs', job_id)
@@ -742,8 +755,14 @@ class Service:
         request = ExportRequest(media, tuple(subtitles),
                                 Metadata(arguments['title'] or Path(asset['relative']).stem),
                                 Path(workspace.path), 'package', arguments['default_subtitle'])
-        built = export_package(request, app_version='mcp-1', progress=lambda done, total: None,
-                               cancelled=lambda: self._cancelled(job))
+        player_type = arguments.get('player_type', 'mp4')
+        if player_type in ('opencam', 'evercam'):
+            from types import SimpleNamespace
+            built = SimpleNamespace(folder=build_project(self.state, asset, job, media, workspace,
+                tuple(subtitles), lambda: self._cancelled(job)))
+        else:
+            built = export_package(request, app_version='mcp-1', progress=lambda done, total: None,
+                                   cancelled=lambda: self._cancelled(job))
         self._checkpoint(job)
         if self._asset_hash(asset, job['generation']) != version:
             raise MCPError('SOURCE_CHANGED', 'Media changed during export.')
@@ -768,9 +787,10 @@ class Service:
                             current = package
                             for part in Path(name).parts[:-1]:
                                 current = stack.enter_context(current.child(part))
+                            resource_limit = (32 if player_type in ('opencam', 'evercam') else 8) * 1024 * 1024
                             with current.open_read(Path(name).name) as source:
-                                raw = source.read(8 * 1024 * 1024 + 1)
-                            if len(raw) > 8 * 1024 * 1024:
+                                raw = source.read(resource_limit + 1)
+                            if len(raw) > resource_limit:
                                 raise MCPError('STORAGE_LIMIT', 'Package resource exceeds its size limit.')
                             output.write_bytes(name, raw)
                 self._tracks(job['asset_id'], arguments['track_ids'], job['generation'])
@@ -781,6 +801,7 @@ class Service:
                 base = Path(asset['relative']).stem + '-web'
                 validate_folder_name(base)
                 with self._job_commit(job) as current:
+                    project_for_asset(self.state, asset, job['generation'])
                     for track in tracks:
                         self._source_authorized(self.state.get('sources', track['source_id']), job['generation'])
                     # Attest the pinned package before its exclusive rename.
@@ -802,5 +823,6 @@ class Service:
                         raise MCPError('OUTPUT_EXISTS', 'No fresh export name is available.')
                     current.update(state='succeeded', stage='complete', result={
                         'folder': str(folder), 'index_path': str(folder / 'index.html'),
+                        'player_type': player_type,
                         'source_path': str(Path(parent.path) / Path(asset['relative']).name)})
                     current['result_validation'] = validation

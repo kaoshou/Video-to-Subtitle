@@ -8,6 +8,9 @@ SERVER_INSTRUCTIONS = (
     'that the entire workflow stays offline. '
     'Use get_status to check access_mode. In general mode call list_media with an absolute '
     'directory or media/subtitle file path supplied by the user; no folder setup is needed. '
+    'list_media returns project_type (opencam, evercam, mp4 or media). export_player defaults '
+    'to auto: preserve native OpenCam data or convert EverCam with chapters; use mp4 only '
+    'when explicitly requested. Source projects are preserved and output is a new directory. '
     'In restricted mode use configured root IDs or paths within those roots. Start local '
     'transcription and poll get_job, or import an existing subtitle. Read the '
     'source, list_translation_drafts to discover/resume saved work by source and language '
@@ -25,7 +28,7 @@ SERVER_INSTRUCTIONS = (
 
 TOOL_DESCRIPTIONS = MappingProxyType({
     'get_status': 'Read enabled state, authorized root IDs and job summaries; no media contents.',
-    'list_media': 'List supported media/subtitles by absolute directory or file path, or configured root ID. General mode needs no folder setup; restricted mode enforces configured roots.',
+    'list_media': 'List media/subtitles and identify OpenCam/EverCam projects by absolute directory/file path or root ID. Each media item reports project_type; general mode needs no folder setup and restricted mode enforces roots.',
     'start_transcription': 'Queue local transcription of an asset using an already downloaded model. Poll the returned job ID.',
     'get_job': 'Poll one accepted job for progress, terminal errors or its completed result.',
     'cancel_job': 'Request cooperative cancellation of one job; a current native inference call may finish first.',
@@ -36,7 +39,7 @@ TOOL_DESCRIPTIONS = MappingProxyType({
     'get_translation_batch': 'Read up to 50 cues and 8000 source characters for translation; preserve every cue ID.',
     'submit_translation_batch': 'Submit plain translated text for exactly the batch cue IDs and revision; no timing edits.',
     'finalize_translation': 'Publish a complete language track with server-owned timing, marked pending human review.',
-    'export_player': 'Queue a new multilingual MP4 player beside the source, using explicit completed track IDs; never overwrite originals.',
+    'export_player': 'Queue a new multilingual player beside the source. Auto preserves OpenCam/EverCam chapters and existing languages, otherwise exports an MP4 player. Use explicit completed track IDs; never overwrite originals.',
 })
 
 _ID = {'type': 'string', 'minLength': 1, 'maxLength': 128}
@@ -92,6 +95,7 @@ TOOL_SCHEMAS = MappingProxyType({
                                         ('draft_id', 'batch_id', 'revision', 'translations', 'request_id')),
     'finalize_translation': _schema({'draft_id': _ID, **_REQUEST}, ('draft_id', 'request_id')),
     'export_player': _schema({'asset_id': _ID, 'track_ids': {'type': 'array', 'minItems': 1, 'maxItems': 32, 'items': _ID},
+                              'player_type': {'type': 'string', 'enum': ['auto', 'mp4', 'opencam', 'evercam']},
                               'title': {'type': 'string', 'minLength': 1, 'maxLength': 200},
                               'default_subtitle': {'type': 'string', 'maxLength': 20}, **_REQUEST},
                              ('asset_id', 'track_ids', 'request_id')),
