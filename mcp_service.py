@@ -19,7 +19,7 @@ import time
 from mcp_progress import ProgressEmitter, valid_progress
 
 from mcp_state import MCPError, ProcessLock, State, _private_directory, file_version, directory_identity
-from mcp_translation import batches, render_srt, validate_batch
+from mcp_translation import batches, render_srt, validate_batch, quality_report
 from app_settings import DEFAULT_MODEL
 from subtitle_languages import output_language
 from mcp_projects import inspect_project, project_for_asset, build_project
@@ -416,13 +416,25 @@ class Service:
             self._source_authorized(source)
             return {'source_id': source_id, 'revision': source['revision'], 'cues': cues, 'next_cursor': next_cursor}
 
-    def _prepare_translation(self, source_id, revision, language, glossary='', style=''):
+    def _prepare_translation(self, source_id, revision, language, glossary='', style='', glossary_terms=None):
         source, language = self._source(source_id), self._language(language)
         if revision != source['revision']:
             raise MCPError('REVISION_CONFLICT', 'Source revision does not match.')
+        terms, seen = [], {}
+        for term in glossary_terms or []:
+            source_term, target_term = term['source'].strip(), term['target'].strip()
+            if not source_term or not target_term:
+                raise MCPError('INVALID_ARGUMENT', 'Glossary source and target cannot be blank.')
+            key = source_term.casefold()
+            if key in seen and seen[key] != target_term:
+                raise MCPError('INVALID_ARGUMENT', 'Conflicting glossary targets for one source term.')
+            if key not in seen:
+                terms.append({'source': source_term, 'target': target_term})
+            seen[key] = target_term
         id = secrets.token_hex(16)
         draft = {'id': id, 'source_id': source_id, 'revision': revision, 'language': language,
-                 'glossary': glossary, 'style': style, 'batches': batches(source['cues']), 'translations': {}}
+                 'glossary': glossary, 'glossary_terms': terms, 'style': style,
+                 'batches': batches(source['cues']), 'translations': {}}
         with ProcessLock(self.state.path / 'locks', 'policy'):
             self._source_authorized(source)
             self.state.put('drafts', id, draft)
@@ -547,6 +559,7 @@ class Service:
             return result
         result = {'draft_id': draft_id, 'batch_id': batch_id, 'revision': draft['revision'],
                 'language': draft['language'], 'glossary': draft['glossary'], 'style': draft['style'],
+                'glossary_terms': draft.get('glossary_terms', []),
                 'cues': [{'cue_id': cue['cue_id'], 'text': cue['text']} for cue in cues],
                 'context_before': context(source['cues'][max(0, first - 2):first]),
                 'context_after': context(source['cues'][last + 1:last + 3]),
@@ -583,9 +596,13 @@ class Service:
             if draft.get('track_id'):
                 with ProcessLock(self.state.path / 'locks', 'policy'):
                     self._source_authorized(source)
+                    track = self.state.get('tracks', draft['track_id'])
                     return {'track_id': draft['track_id'], 'language': draft['language'], 'complete': True,
-                            'review_status': 'ai_translation_needs_review'}
+                            'review_status': 'ai_translation_needs_review',
+                            **({'review': track['review']} if track.get('review') else {})}
             text = render_srt(source['cues'], draft['translations'])
+            review = quality_report(source['cues'], draft['translations'], source['language'],
+                                    draft['language'], draft.get('glossary_terms', []))
             track_id = secrets.token_hex(16)
             self._source(source['id'])
             # configure() uses this same lock. Keep the final root checks and
@@ -597,11 +614,27 @@ class Service:
                 self.state.put('tracks', track_id, {'id': track_id, 'source_id': source['id'],
                                'revision': source['revision'], 'media_id': source['media_id'],
                                'language': draft['language'], 'complete': True, 'text': text,
+                               'draft_id': draft_id, 'review': review,
                                'review_status': 'ai_translation_needs_review'})
                 draft['track_id'] = track_id
                 self.state._put('drafts', draft_id, draft)
         return {'track_id': track_id, 'language': draft['language'], 'complete': True,
+                'review': review,
                 'review_status': 'ai_translation_needs_review'}
+
+    def _read_review(self, track_id, cursor=0, limit=50):
+        track = self.state.get('tracks', track_id)
+        source = self._source(track['source_id'])
+        if track.get('draft_id'):
+            draft, _ = self._draft(track['draft_id'])
+            report = quality_report(source['cues'], draft['translations'], source['language'],
+                                    track['language'], draft.get('glossary_terms', []), cursor=cursor, limit=limit)
+        else:
+            report = {'review_count': None, 'reason_counts': {}, 'items': [],
+                      'next_cursor': None, 'review_status': 'not_checked'}
+        with ProcessLock(self.state.path / 'locks', 'policy'):
+            self._source_authorized(source)
+            return dict(report, track_id=track_id, language=track['language'], revision=source['revision'])
 
     def _settings(self, settings):
         policy = self.state.policy().get('options', {})

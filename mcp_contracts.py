@@ -10,6 +10,10 @@ SERVER_INSTRUCTIONS = (
     'On a new conversation use list_work(asset_id) to find completed sources, jobs and translation '
     'drafts. Resume only valid revisions and missing translation batches; interrupted inference '
     'requires explicit restart with a new request_id. Never repeat completed work automatically. '
+    'Use optional glossary_terms source/target pairs for deterministic terminology checks. '
+    'After finalize_translation inspect review and read_review pages for flagged cues; '
+    'warnings are advisory, never proof of semantic accuracy. Never silently rewrite translations '
+    'or claim zero warnings means no human review is needed. '
     'Transcription runs locally. Your AI client may send returned subtitle text '
     'to its cloud service. Private local storage is not encryption or a promise '
     'that the entire workflow stays offline. '
@@ -45,6 +49,7 @@ SERVER_INSTRUCTIONS = (
 )
 
 TOOL_DESCRIPTIONS = MappingProxyType({
+    'read_review': 'Read bounded translation review references with source-owned timing and reasons. Advisory long-text, reading-speed, unchanged-sentence and explicit glossary checks, not semantic accuracy verification.',
     'list_work': 'Discover saved work for one authorized media asset: sources, job states, translation languages and missing batch counts. Bounded pages, no subtitle text. Stale revisions cannot resume; interrupted inference needs explicit restart.',
     'preview_transcription': 'Read-only execution preview: resolved settings, local model readiness, source/project type and output location. No loading, downloading or job submission. Rechecked at start.',
     'get_status': 'Read enabled state, default transcription model/device, downloaded-model catalog for faster-whisper and MLX, authorized roots and job summaries. Read-only offline cache checks, no model loading or downloads.',
@@ -85,6 +90,8 @@ def _schema(properties, required=()):
 
 
 TOOL_SCHEMAS = MappingProxyType({
+    'read_review': _schema({'track_id': _ID, 'cursor': {'type': 'integer', 'minimum': 0},
+                           'limit': {'type': 'integer', 'minimum': 1, 'maximum': 50}}, ('track_id',)),
     'list_work': _schema({'asset_id': _ID, 'cursor': {'type': 'integer', 'minimum': 0, 'maximum': 12288},
                          'limit': {'type': 'integer', 'minimum': 1, 'maximum': 50}}, ('asset_id',)),
     'preview_transcription': _schema({'asset_id': _ID, 'settings': _schema(_SETTINGS)}, ('asset_id',)),
@@ -104,6 +111,9 @@ TOOL_SCHEMAS = MappingProxyType({
     'prepare_translation': _schema({'source_id': _ID, 'revision': _ID,
                                     'language': {'type': 'string', 'maxLength': 20},
                                     'glossary': {'type': 'string', 'maxLength': 4000},
+                                    'glossary_terms': {'type': 'array', 'maxItems': 50, 'items': _schema({
+                                        'source': {'type': 'string', 'minLength': 1, 'maxLength': 100},
+                                        'target': {'type': 'string', 'minLength': 1, 'maxLength': 100}}, ('source', 'target'))},
                                     'style': {'type': 'string', 'maxLength': 2000}, **_REQUEST},
                                    ('source_id', 'revision', 'language', 'request_id')),
     'list_translation_drafts': _schema({'source_id': _ID, 'language': {'type': 'string', 'maxLength': 20},

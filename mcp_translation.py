@@ -1,8 +1,62 @@
 """Bounded translation data operations. Timings always come from the source."""
 import re
 import secrets
+import unicodedata
 
 from mcp_state import MCPError
+
+
+def _normalized(text):
+    return ' '.join(unicodedata.normalize('NFKC', text).casefold().split())
+
+
+def _contains(text, term):
+    text, term = _normalized(text), _normalized(term)
+    if re.fullmatch(r'[a-z0-9_ +.#-]+', term):
+        return re.search(r'(?<!\w)' + re.escape(term) + r'(?!\w)', text) is not None
+    return term in text
+
+
+def quality_report(cues, translations, source_language, target_language, glossary_terms, *, cursor=0, limit=200):
+    """Conservative editorial hints, not a semantic translation verdict.
+
+    All cues contribute to totals; only a bounded page of warning references
+    is returned. Structural completeness is mandatory even for advisory use.
+    """
+    if set(translations) != {cue['cue_id'] for cue in cues}:
+        raise MCPError('TRANSLATION_INCOMPLETE', 'Every source cue requires translation text.')
+    items, reason_counts, count = [], {}, 0
+    different = (source_language or 'und').split('-')[0] != (target_language or 'und').split('-')[0]
+    known_source = source_language not in (None, '', 'und')
+    for index, cue in enumerate(cues):
+        text = translations[cue['cue_id']]
+        if not isinstance(text, str) or not text.strip():
+            raise MCPError('TRANSLATION_INCOMPLETE', 'Every source cue requires translation text.')
+        reasons = []
+        length = len(re.sub(r'\s', '', text))
+        duration = cue['end'] - cue['start']
+        if length > 120:
+            reasons.append('long_text')
+        if duration > 0 and length / duration > 25:
+            reasons.append('reading_speed')
+        original = _normalized(cue['text'])
+        sentence = len(original.split()) >= 4 or bool(re.search(r'[。！？]', original))
+        if known_source and different and len(original) >= 20 and sentence and original == _normalized(text):
+            reasons.append('possibly_untranslated')
+        if any(_contains(cue['text'], term['source']) and not _contains(text, term['target']) for term in glossary_terms):
+            reasons.append('glossary_mismatch')
+        if not reasons:
+            continue
+        if cursor <= count < cursor + min(max(limit, 1), 200):
+            items.append({'cue_id': cue['cue_id'], 'cue_number': index + 1,
+                          'start': cue['start'], 'end': cue['end'], 'reasons': reasons})
+        count += 1
+        for reason in reasons:
+            reason_counts[reason] = reason_counts.get(reason, 0) + 1
+    next_cursor = cursor + len(items)
+    return {'review_count': count, 'reason_counts': reason_counts, 'items': items,
+            'truncated': count > len(items), 'next_cursor': next_cursor if next_cursor < count else None,
+            'review_status': 'ai_translation_needs_review', 'semantic_accuracy_verified': False}
 
 
 def batches(cues):
