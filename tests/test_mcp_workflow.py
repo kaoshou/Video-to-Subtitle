@@ -132,3 +132,53 @@ class ProgressTests(ServiceFixture):
         self.assertEqual(old['timing_text'], '')
         done = job_card({'id': 'done', 'state': 'succeeded', 'stage': 'complete', 'elapsed_seconds': 71.9})
         self.assertIn('1 分 12 秒', done['timing_text'])
+
+
+class RecoveryTests(ServiceFixture):
+    def test_new_conversation_discovers_source_and_only_missing_translation_batches(self):
+        (self.media / 'lesson.srt').write_text(''.join(
+            f'{i+1}\n00:00:{i % 60:02},000 --> 00:01:{i % 60:02},000\nSentence {i}\n\n' for i in range(51)))
+        source = self.imported()
+        draft = self.service.call('prepare_translation', {'source_id': source['source_id'],
+            'revision': source['revision'], 'language': 'ja', 'request_id': 'draft'})
+        batch = self.service.call('get_translation_batch', {'draft_id': draft['draft_id'],
+            'batch_id': draft['batches'][0]['batch_id']})
+        args = {'draft_id': draft['draft_id'], 'batch_id': batch['batch_id'], 'revision': source['revision'],
+            'translations': [{'cue_id': cue['cue_id'], 'text': '訳文'} for cue in batch['cues']], 'request_id': 'batch'}
+        self.service.call('submit_translation_batch', args)
+        self.service.close(); self.service = self.api.Service(self.state)
+        asset = self.assets()['lesson.mp4']
+        first = self.service.call('list_work', {'asset_id': asset, 'limit': 1})
+        self.assertEqual(len(first['items']), 1)
+        self.assertIsNotNone(first['next_cursor'])
+        result = self.service.call('list_work', {'asset_id': asset})
+        src = next(item for item in result['items'] if item['kind'] == 'source')
+        self.assertEqual(src['source_id'], source['source_id'])
+        self.assertIn(source['track_id'], src['track_ids'])
+        self.assertTrue(src['revision_valid'])
+        pending = next(item for item in result['items'] if item['kind'] == 'translation')
+        self.assertEqual((pending['completed_batches'], pending['missing_batches']), (1, 1))
+        self.assertEqual(pending['next_action'], 'resume_translation')
+        self.assertNotIn('Sentence', str(result))
+        # Replaying the same batch is safe and does not erase prior work.
+        self.assertEqual(self.service.call('submit_translation_batch', args)['accepted'], True)
+
+    def test_changed_subtitle_is_marked_stale_and_revoked_media_is_not_disclosed(self):
+        self.imported()
+        asset = self.assets()['lesson.mp4']
+        (self.media / 'lesson.srt').write_text(SRT + '\n')
+        result = self.service.call('list_work', {'asset_id': asset})
+        source = next(i for i in result['items'] if i['kind'] == 'source')
+        self.assertFalse(source['revision_valid'])
+        self.assertEqual(source['next_action'], 'reimport_source')
+        self.state.configure(True, [], access_mode='restricted')
+        with self.assertRaises(MCPError):
+            self.service.call('list_work', {'asset_id': asset})
+
+    def test_interrupted_inference_explicitly_requires_restart_not_resume(self):
+        asset = self.assets()['lesson.mp4']
+        self.state.put('jobs', 'old', {'id': 'old', 'asset_id': asset, 'kind': 'transcription',
+            'state': 'interrupted'})
+        result = self.service.call('list_work', {'asset_id': asset})
+        job = next(i for i in result['items'] if i['kind'] == 'job')
+        self.assertEqual(job['next_action'], 'restart_with_new_request_id')

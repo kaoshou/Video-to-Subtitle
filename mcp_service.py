@@ -458,6 +458,79 @@ class Service:
             raise MCPError('NOT_FOUND', 'Unknown translation batch.')
         return batch
 
+    def _list_work(self, asset_id, cursor=0, limit=20):
+        self._asset(asset_id)
+        sources, validity, hashes = {}, {}, {}
+        items = []
+        for source in self.state.records('sources'):
+            if source['media_id'] != asset_id:
+                continue
+            try:
+                origin = self._asset(source['origin_id'])
+                if origin['id'] not in hashes:
+                    hashes[origin['id']] = self._asset_hash(origin)
+                valid = hashes[origin['id']] == source['origin_hash']
+            except MCPError as error:
+                if error.code == 'SOURCE_CHANGED':
+                    valid = False
+                elif error.code in ('ROOT_NOT_ALLOWED', 'UNSAFE_PATH', 'NOT_FOUND'):
+                    continue  # Do not disclose work whose origin is no longer authorized.
+                else:
+                    raise
+            sources[source['id']] = source
+            validity[source['id']] = valid
+            items.append({'kind': 'source', 'source_id': source['id'], 'revision': source['revision'],
+                          'language': source['language'], 'cue_count': len(source['cues']), 'revision_valid': valid,
+                          'next_action': 'translate_or_export' if valid else 'reimport_source'})
+        for draft in self.state.records('drafts'):
+            if draft['source_id'] not in sources:
+                continue
+            valid = validity[draft['source_id']] and draft['revision'] == sources[draft['source_id']]['revision']
+            complete = sum(all(c in draft['translations'] for c in b['cue_ids']) for b in draft['batches'])
+            missing = len(draft['batches']) - complete
+            items.append({'kind': 'translation', 'draft_id': draft['id'], 'source_id': draft['source_id'],
+                          'revision': draft['revision'], 'language': draft['language'], 'revision_valid': valid,
+                          'completed_batches': complete, 'missing_batches': missing, 'track_id': draft.get('track_id'),
+                          'next_action': 'reimport_source' if not valid else 'export_track' if draft.get('track_id')
+                          else 'resume_translation' if missing else 'finalize_translation'})
+        for job in self.state.records('jobs'):
+            if job.get('asset_id') != asset_id:
+                continue
+            state = job['state']
+            items.append({'kind': 'job', 'job_id': job['id'], 'job_type': job.get('kind'), 'state': state,
+                          'source_id': job.get('result', {}).get('source_id'),
+                          'next_action': 'inspect_result' if state == 'succeeded' else
+                          'restart_with_new_request_id' if state in ('failed', 'interrupted', 'cancelled') else 'poll_job'})
+        tracks_by_source = {}
+        for track in self.state.records('tracks'):
+            if track.get('source_id') in sources and track.get('complete'):
+                tracks_by_source.setdefault(track['source_id'], []).append(track['id'])
+        for item in items:
+            if item['kind'] == 'source':
+                available = tracks_by_source.get(item['source_id'], []) if item['revision_valid'] else []
+                item.update(track_ids=available[:32], tracks_truncated=len(available) > 32)
+        items.sort(key=lambda item: (item['kind'], item.get('source_id') or '',
+                                    item.get('draft_id') or item.get('job_id') or ''))
+        selected, size = [], 0
+        for item in items[cursor:cursor + limit]:
+            item_size = len(json.dumps(item).encode('utf-8'))
+            if size + item_size > 128 * 1024:
+                break
+            selected.append(item)
+            size += item_size
+        with ProcessLock(self.state.path / 'locks', 'policy'):
+            self._asset(asset_id)
+            for source in sources.values():
+                try:
+                    self._asset(source['origin_id'])
+                except MCPError as error:
+                    if error.code != 'SOURCE_CHANGED':
+                        raise
+            next_cursor = cursor + len(selected)
+            return {'asset_id': asset_id, 'items': selected,
+                    'next_cursor': next_cursor if next_cursor < len(items) else None,
+                    'inference_resume_supported': False}
+
     def _get_translation_batch(self, draft_id, batch_id):
         draft, source = self._draft(draft_id)
         batch = self._batch(draft, batch_id)
