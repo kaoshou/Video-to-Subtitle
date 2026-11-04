@@ -50,6 +50,8 @@ def show_dialog(window, parent, width, height, *, modal=False):
     window.attributes('-alpha', 1.0)
     window.deiconify()
     window.lift()
-    window.focus_set()
+    # Preserve the original user-opened dialog activation semantics. On
+    # Windows, focus_set alone may leave keyboard input in the parent window.
+    window.focus_force()
     if modal and sys.platform != 'darwin':
         window.grab_set()
