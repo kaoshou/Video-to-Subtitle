@@ -21,6 +21,7 @@ from ui_drop import dropped_paths, register_file_drop
 from ui_open import open_local_page
 from subtitle_review import review_cues
 from ui_flow import AutoHideScrollableFrame, FlowToolbar
+from ui_windows import DialogWindow, show_dialog
 
 # Import core logic from transcriber.py
 from transcriber import (
@@ -209,81 +210,11 @@ ctk.CTk._windows_set_titlebar_color = _patch_windows_set_titlebar_color
 
 # 支援的檔案格式
 SUPPORTED_EXTENSIONS = {".mp4", ".mp3", ".mkv", ".wav", ".mov", ".avi", ".m4a", ".flac", ".ogg", ".webm"}
-
 def create_smooth_toplevel(parent):
-    """建立自帶防閃爍與背景透明預渲染防護的 CTkToplevel 子視窗"""
-    top = ctk.CTkToplevel(parent)
-    top.withdraw()  # 立即鎖定隱藏，避免 200x200 預設視窗閃爍
-    if platform.system() == "Windows":
-        try:
-            top.attributes("-alpha", 0.0)  # 先行鎖定全透明，徹底杜絕子元件在眼前逐一繪製產生的過程
-        except Exception:
-            pass
-    return top
+    return DialogWindow(parent)
 
 def center_and_smooth_show(window, parent, width, height, is_modal=True):
-    """
-    將子視窗相對於父視窗置中，並在後台完成所有元件渲染後一次性平滑呈現，
-    徹底消除 CTkToplevel 閃爍與元件逐一產生的視覺跳動感。
-    """
-    is_win = (platform.system() == "Windows")
-    
-    # 在 Windows 上若支援透明度，先行鎖定完全透明，避免繪圖過程外露
-    if is_win:
-        try:
-            window.attributes("-alpha", 0.0)
-        except Exception:
-            pass
-
-    try:
-        if parent and parent.winfo_exists() and parent.state() != "withdrawn":
-            p_x = parent.winfo_rootx()
-            p_y = parent.winfo_rooty()
-            p_w = parent.winfo_width()
-            p_h = parent.winfo_height()
-        else:
-            p_x = 0
-            p_y = 0
-            p_w = window.winfo_screenwidth()
-            p_h = window.winfo_screenheight()
-        
-        # 計算置中座標
-        x = p_x + max(0, (p_w - width) // 2)
-        y = p_y + max(0, (p_h - height) // 2)
-        
-        # 螢幕邊界保護
-        screen_w = window.winfo_screenwidth()
-        screen_h = window.winfo_screenheight()
-        x = max(10, min(screen_w - width - 10, x))
-        y = max(10, min(screen_h - height - 40, y))
-        
-        window.geometry(f"{width}x{height}+{x}+{y}")
-    except Exception as e:
-        print(f"Centering error: {e}")
-        window.geometry(f"{width}x{height}")
-        
-    window.deiconify()
-    window.lift()
-    window.focus_force()
-    
-    if is_modal and platform.system() != "Darwin":
-        try:
-            window.grab_set()
-        except Exception:
-            pass
-
-    # 關鍵核心：在透明隱匿狀態下強制觸發所有元件的佈局與 Canvas 繪製 (WM_PAINT)
-    try:
-        window.update()
-    except Exception:
-        window.update_idletasks()
-        
-    # 所有元件已 100% 於後台記憶體繪製完畢，瞬間一體成型顯現，極致流暢自然！
-    if is_win:
-        try:
-            window.attributes("-alpha", 1.0)
-        except Exception:
-            pass
+    show_dialog(window, parent, width, height, modal=is_modal)
 
 # --- 圖形介面區 (CustomTkinter UI) ---
 
@@ -1115,7 +1046,7 @@ class VideoPlayerWidget(ctk.CTkFrame):
         delay_ms = max(15, int(35 / speed)) if speed > 0 else 35
         self._play_timer = self.after(delay_ms, self._render_loop)
 
-class SubtitleEditorWindow(ctk.CTkToplevel):
+class SubtitleEditorWindow(DialogWindow):
     """
     全新專業高效字幕校對編輯器：
     1. 結構化表格模式：使用原生高效 ttk.Treeview，支援數千筆字幕秒開（<0.02秒）、順暢滾動零卡頓。

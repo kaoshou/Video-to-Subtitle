@@ -14,7 +14,7 @@ import stat
 from mcp_state import MCPError, ProcessLock, _private_directory, _write_json
 from safe_files import _retry_sharing_violation
 
-SCOPE = ('assets', 'jobs', 'sources', 'drafts', 'tracks', 'requests', 'workspaces')
+SCOPE = ('assets', 'jobs', 'sources', 'drafts', 'tracks', 'requests', 'workspaces', 'locations')
 
 
 def _safe(info):

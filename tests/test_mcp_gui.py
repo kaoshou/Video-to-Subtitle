@@ -178,6 +178,22 @@ class MCPGuiTests(unittest.TestCase):
         self.assertTrue(self.state.policy()['enabled'])
         self.assertEqual(len(self.state.policy()['roots']), 0)
 
+    def test_first_activation_needs_no_folders_and_restriction_is_optional(self):
+        dialog = self.open()
+        self.assertFalse(dialog.restricted.get())
+        dialog.enabled.set(True)
+        dialog.apply_policy()
+        self.settle()
+        self.assertTrue(self.state.policy()['enabled'])
+        self.assertEqual(self.state.policy()['roots'], [])
+        self.assertEqual(self.state.policy()['options']['access_mode'], 'general')
+        dialog.restricted.set(True)
+        dialog.add_root(self.path)
+        dialog.apply_policy()
+        self.settle()
+        self.assertEqual(self.state.policy()['options']['access_mode'], 'restricted')
+        self.assertEqual(len(self.state.policy()['roots']), 1)
+
     def test_manual_generic_and_owned_configuration_require_consent(self):
         dialog = self.open()
         dialog.client.set('generic')

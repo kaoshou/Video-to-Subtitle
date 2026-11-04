@@ -8,6 +8,8 @@ class AutoHideScrollableFrame(ctk.CTkScrollableFrame):
     """Keep scrolling available, showing its bar only for overflowing content."""
     def __init__(self, master, **kwargs):
         self._scroll_check = None
+        self._scroll_fractions = None
+        self._scroll_colors = None
         super().__init__(master, **kwargs)
         self._bar_colors = (self._scrollbar.cget('button_color'),
                             self._scrollbar.cget('button_hover_color'))
@@ -23,8 +25,19 @@ class AutoHideScrollableFrame(ctk.CTkScrollableFrame):
             self._scroll_check = self.after_idle(self._sync_scrollbar)
 
     def _sync_scrollbar(self):
-        self._scroll_check = None
-        self._scrollbar.set(*self._parent_canvas.yview())
+        # CTkScrollbar.set() itself flushes idle tasks. Keep this callback
+        # marked pending during drawing so it cannot recursively reschedule
+        # itself while a withdrawn dialog is being laid out.
+        try:
+            self._draw_scrollbar()
+        finally:
+            self._scroll_check = None
+
+    def _draw_scrollbar(self):
+        fractions = self._parent_canvas.yview()
+        if fractions != self._scroll_fractions:
+            self._scroll_fractions = fractions
+            self._scrollbar.set(*fractions)
         # Keep geometry stable: unmapping CTk's scaled scrollbar can leave a
         # native macOS drawing artifact. Blend the full-range bar into its
         # background instead; restore both normal/hover colors on overflow.
@@ -32,8 +45,11 @@ class AutoHideScrollableFrame(ctk.CTkScrollableFrame):
         overflow = bool(bounds and bounds[3] - bounds[1] > self._parent_canvas.winfo_height())
         background = self.cget('fg_color')
         normal, hover = self._bar_colors if overflow else (background, background)
-        self._scrollbar.configure(fg_color=background, button_color=normal,
-                                  button_hover_color=hover)
+        colors = (background, normal, hover)
+        if colors != self._scroll_colors:
+            self._scroll_colors = colors
+            self._scrollbar.configure(fg_color=background, button_color=normal,
+                                      button_hover_color=hover)
 
     def destroy(self):
         if self._scroll_check is not None:

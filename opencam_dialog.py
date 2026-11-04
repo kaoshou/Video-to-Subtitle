@@ -81,7 +81,8 @@ class OpenCamSubtitleDialog:
         self.action_issue = ''
         self.inputs = []
         self.controls = []
-        self.top = ctk.CTkToplevel(parent)
+        from ui_windows import DialogWindow, show_dialog
+        self.top = DialogWindow(parent)
         self.top.withdraw()
         # Keep the tool above its owning homepage, including the native focus
         # restoration when the source-selection popup closes. Not globally
@@ -142,9 +143,7 @@ class OpenCamSubtitleDialog:
         else:
             self.render()
         register_file_drop(self.top, self.on_drop)
-        self.top.deiconify()
-        self.top.lift()
-        self.top.focus_force()
+        show_dialog(self.top, parent, 760, 650)
 
     def select_project(self, folder, subtitles=()):
         if self.job: return

@@ -264,7 +264,7 @@ class TransportTests(unittest.TestCase):
         from mcp_transport import BrokerClient
         client = BrokerClient(self.state, command=['/not/an/executable'])
         self.assertEqual(client.call('get_status', {}),
-                         {'version': 1, 'enabled': False, 'roots': [], 'jobs': []})
+                         {'version': 1, 'enabled': False, 'access_mode': 'restricted', 'roots': [], 'jobs': []})
         self.assertFalse(self.state.path.exists())
 
     def test_missing_sdk_entry_reports_actionable_install_without_state(self):

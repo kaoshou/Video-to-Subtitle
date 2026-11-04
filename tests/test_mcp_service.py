@@ -51,6 +51,57 @@ class ServiceFixture(unittest.TestCase):
 
 
 class ServiceTests(ServiceFixture):
+    def test_general_mode_lists_direct_paths_without_changing_allowlist(self):
+        self.state.configure(True, [], access_mode='general')
+        listed = self.service.call('list_media', {'path': str(self.media)})
+        self.assertEqual({i['name'] for i in listed['items']}, {'lesson.mp4', 'lesson.srt'})
+        selected = self.service.call('list_media', {'path': str(self.media / 'lesson.mp4')})
+        self.assertEqual([i['name'] for i in selected['items']], ['lesson.mp4'])
+        self.assertEqual(self.state.policy()['roots'], [])
+        assets = {i['name']: i['asset_id'] for i in listed['items']}
+        result = self.service.call('import_subtitle', {'media_id': assets['lesson.mp4'],
+            'subtitle_id': assets['lesson.srt'], 'language': 'en', 'request_id': 'general-import'})
+        job = self.service.call('export_player', {'asset_id': assets['lesson.mp4'],
+            'track_ids': [result['track_id']], 'request_id': 'general-export'})
+        finished = self.wait_job(job['job_id'])
+        self.assertEqual(finished['state'], 'succeeded', finished)
+        from mcp_runtime import open_job_result
+        opened = []
+        open_job_result(self.state, job['job_id'], opener=opened.append)
+        self.assertEqual(len(opened), 1)
+        self.state.configure(True, [], access_mode='restricted')
+        with self.assertRaises(MCPError):
+            self.service.call('read_transcript', {'source_id': result['source_id']})
+        with self.assertRaises(MCPError):
+            self.service.call('list_media', {'path': str(self.media)})
+
+    def test_direct_path_obeys_restricted_mode_and_rejects_unsafe_inputs(self):
+        self.assertEqual(len(self.service.call('list_media', {'path': str(self.media)})['items']), 2)
+        for args in ({}, {'path': str(self.root)}, {'path': 'relative.mp4'},
+                     {'path': str(self.media / 'secret.txt')},
+                     {'path': str(self.media), 'root_id': self.root_id}):
+            with self.subTest(args=args), self.assertRaises(MCPError):
+                self.service.call('list_media', args)
+        self.state.configure(True, [], access_mode='general')
+        link = self.root / 'linked'
+        try:
+            link.symlink_to(self.media, target_is_directory=True)
+        except OSError:
+            return  # Windows runners may not grant symlink creation.
+        for path in (link, link / 'lesson.mp4'):
+            with self.subTest(path=path), self.assertRaises(MCPError):
+                self.service.call('list_media', {'path': str(path)})
+
+    def test_general_locations_do_not_revive_after_reenable(self):
+        self.state.configure(True, [], access_mode='general')
+        item = self.service.call('list_media', {'path': str(self.media / 'lesson.mp4')})['items'][0]
+        self.state.disable()
+        self.state.configure(True, [], access_mode='general')
+        with self.assertRaises(MCPError):
+            self.service._asset(item['asset_id'])
+        fresh = self.service.call('list_media', {'path': str(self.media / 'lesson.mp4')})['items'][0]
+        self.service._asset(fresh['asset_id'])
+
     def test_listing_is_supported_bounded_relative_and_schema_rejects_internal_capability(self):
         self.assertEqual(set(self.assets()), {'lesson.mp4', 'lesson.srt'})
         with self.assertRaises(MCPError):

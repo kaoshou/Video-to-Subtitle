@@ -102,9 +102,7 @@ def open_job_result(state, job_id, *, opener=None):
         if job.get('state') != 'succeeded' or job.get('kind') != 'export' or not job.get('result_validation'):
             raise MCPError('INVALID_RESULT', 'No validated player output is available for this job.')
         asset = state.get('assets', job['asset_id'])
-        root = next((r for r in policy['roots'] if r['id'] == asset['root_id']), None)
-        if root is None:
-            raise MCPError('ROOT_NOT_ALLOWED', 'The result root is no longer authorized.')
+        root = state._authorized_root(policy, asset['root_id'])
         folder = Path(job['result']['folder'])
         try:
             relative = folder.relative_to(root['path'])

@@ -71,7 +71,8 @@ class HoverHint:
         self.timer = None
         if not self.widget.winfo_exists():
             return
-        self.window = ctk.CTkToplevel(self.widget)
+        from ui_windows import DialogWindow
+        self.window = DialogWindow(self.widget)
         self.window.withdraw()
         self.window.overrideredirect(True)
         self.window.transient(self.widget.winfo_toplevel())

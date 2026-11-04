@@ -30,12 +30,14 @@ class MCPSettingsDialog:
         self.busy = self.closed = False
         self._policy_ready = False
         self._jobs_due = None
-        self.top = ctk.CTkToplevel(parent)
+        from ui_windows import DialogWindow, show_dialog
+        self.top = DialogWindow(parent)
         self.top.title('AI 工具連接')
         self.top.geometry('860x820')
         self.top.minsize(680, 580)
         self.top.protocol('WM_DELETE_WINDOW', self.close)
         self.enabled = tk.BooleanVar(master=self.top, value=False)
+        self.restricted = tk.BooleanVar(master=self.top, value=False)
         self.client = tk.StringVar(master=self.top, value='generic')
         self.stop_mode = tk.StringVar(master=self.top, value='取消已接受工作')
         header = ctk.CTkFrame(self.top, fg_color='transparent')
@@ -60,23 +62,29 @@ class MCPSettingsDialog:
         self.pages = {}
         for name in ('開始連接', '工作狀態', '進階管理'):
             tab = self.tabs.add(name)
+            # The tabview owns page dimensions. Wrapped text in an inactive
+            # page must not resize the tabview and feed back into its own wrap.
+            tab.pack_propagate(False)
             page = AutoHideScrollableFrame(tab, fg_color=BACKGROUND)
             page.pack(fill='both', expand=True)
             self.pages[name] = page
         self.form = self.pages['開始連接']
-        permissions = self.section(self.form, '1', '選擇允許存取的資料夾', 'AI 只能處理你授權範圍內的檔案。')
+        permissions = self.section(self.form, '1', '啟用 AI 連接', '啟用後，直接在 AI 對話指定影片或字幕路徑即可。')
         self.master_switch = ctk.CTkSwitch(permissions, text='啟用 AI 連接（套用後生效）',
                                           variable=self.enabled, state='disabled')
         self.master_switch.pack(anchor='w', padx=16, pady=(8, 4))
-        self.roots_frame = ctk.CTkFrame(permissions, fg_color='transparent', height=1)
+        scope = self.section(self.pages['進階管理'], '', '資料夾限制（選用）', '一般模式可處理目前使用者有權讀取的影音與字幕；需要縮小範圍時再開啟限制。')
+        ctk.CTkSwitch(scope, text='僅允許指定資料夾', variable=self.restricted).pack(anchor='w', padx=16, pady=8)
+        self.roots_frame = ctk.CTkFrame(scope, fg_color='transparent', height=1)
         self.roots_frame.pack(fill='x', padx=12, pady=4)
         self._render_roots()
         row = ctk.CTkFrame(permissions, fg_color='transparent', height=1)
         row.pack(fill='x', padx=16, pady=4)
-        self.button(row, '＋ 加入資料夾', self.choose_root).pack(side='left')
+        self.button(scope, '＋ 加入資料夾', self.choose_root).pack(anchor='w', padx=16, pady=4)
+        self.button(scope, '套用資料夾限制', self.apply_policy).pack(anchor='e', padx=16, pady=8)
         self.primary_button(row, '套用權限', self.apply_policy).pack(side='right')
         self.privacy_notice = ctk.CTkLabel(permissions,
-            text='轉錄在本機執行；AI 工具可能將字幕傳送至雲端。私人儲存不是加密。\n按「套用權限」表示同意上述資料流與選定範圍。',
+            text='一般模式可處理目前使用者有權讀取的影音與字幕，無須預先加入資料夾。\n轉錄在本機執行；AI 工具可能將字幕傳送至雲端，私人儲存不是加密。需要限制範圍可至「進階管理」設定。',
             text_color=MUTED, font=ui_font(size=12), height=1,
             justify='left', anchor='w', wraplength=660)
         self.privacy_notice.pack(fill='x', padx=16, pady=(6, 12))
@@ -103,7 +111,7 @@ class MCPSettingsDialog:
         self._client_changed()
         verify = self.section(self.form, '3', '確認連接，開始使用', '完成設定後，重新啟動或重新載入 AI 工具。')
         self.button(verify, '測試本機連接', self.test_connection).pack(anchor='w', padx=16, pady=8)
-        self.description(verify, '通過測試後，回到 AI 對話試著說：\n「請將授權資料夾內的影片轉成繁體中文字幕。」\n本機測試不代表 AI 工具已完成連接，仍需在 AI 工具中確認。')
+        self.description(verify, '通過測試後，回到 AI 對話提供影片完整路徑，並說：\n「請將這部影片轉成繁體中文字幕。」\n本機測試不代表 AI 工具已完成連接，仍需在 AI 工具中確認。')
         jobs = self.pages['工作狀態']
         self.description(jobs, '查看 AI 發起的工作、取消處理中的工作，或開啟已完成的網頁。')
         self.button(jobs, '更新工作狀態', self.refresh_jobs).pack(anchor='w', padx=16, pady=8)
@@ -130,6 +138,7 @@ class MCPSettingsDialog:
         # Opening this explicit settings UI authorizes an offline policy read.
         # App startup still does not construct the dialog or access MCP state.
         self.load_policy()
+        show_dialog(self.top, parent, 860, 820)
 
     def description(self, parent, text):
         label = self.ctk.CTkLabel(parent, text=text, text_color=MUTED, justify='left', anchor='w', wraplength=620, height=1, font=ui_font(size=12))
@@ -238,6 +247,7 @@ class MCPSettingsDialog:
     def load_policy(self):
         def display(policy):
             self.enabled.set(policy['enabled'])
+            self.restricted.set(policy.get('options', {}).get('access_mode', 'restricted' if policy['generation'] else 'general') == 'restricted')
             self.roots = [Path(root['path']) for root in policy['roots']]
             self._render_roots()
             self._policy_ready = True
@@ -268,10 +278,10 @@ class MCPSettingsDialog:
         for path in self.roots:
             row = self.ctk.CTkFrame(self.roots_frame, fg_color='transparent', height=1)
             row.pack(fill='x', pady=3)
-            self.button(row, '移除', lambda p=path: self.remove_root(p)).pack(side='right', padx=4)
-            label = self.ctk.CTkLabel(row, text=str(path), wraplength=480, justify='left', anchor='w')
-            label.pack(side='left', fill='x', expand=True, padx=4)
-            wrap_to_width(label)
+            row.grid_columnconfigure(0, weight=1)
+            self.button(row, '移除', lambda p=path: self.remove_root(p)).grid(row=0, column=1, padx=4)
+            label = self.ctk.CTkLabel(row, text=str(path), width=1, wraplength=360, justify='left', anchor='w')
+            label.grid(row=0, column=0, sticky='ew', padx=4)
 
     def remove_root(self, path):
         if self._guard_permissions(allow_busy=True):
@@ -284,7 +294,7 @@ class MCPSettingsDialog:
         from mcp_runtime import enable
         roots, enabled = list(self.roots), self.enabled.get()
         # Capture all Tk values here. Workers never call a Tk variable getter.
-        options = {}
+        options = {'access_mode': 'restricted' if self.restricted.get() else 'general'}
         for key, attribute in (('device', 'device_var'), ('cache_dir', 'model_path_var')):
             variable = getattr(self.parent, attribute, None)
             if variable is not None:
@@ -357,13 +367,15 @@ class MCPSettingsDialog:
         from mcp_clients import preview_connection, apply_connection
         from mcp_runtime import connection_command
         client_id, path = target
-        draft_scope = '\n'.join(str(root) for root in self.roots) or '未指定'
+        draft_scope = ('\n'.join(str(root) for root in self.roots) or '未指定') if self.restricted.get() else '一般模式：直接指定影音或字幕路徑'
         def preview():
             plan = preview_connection(client_id, path, connection_command(self.state), state_dir=self.state.path)
             return plan, self.state.policy()
         def confirm(result):
             plan, policy = result
             actual_scope = '\n'.join(root['path'] for root in policy['roots']) or '無'
+            if policy.get('options', {}).get('access_mode') == 'general':
+                actual_scope = '一般模式：目前使用者有權讀取的影音與字幕'
             details = json.dumps({'before': plan['entry_before'], 'after': plan['entry_after']}, ensure_ascii=False, indent=2)
             self._output(details)
             text = (f"工具：{self.client_rows[client_id]['name']}\n設定檔：{path}\n"
@@ -391,7 +403,8 @@ class MCPSettingsDialog:
         # A separate, non-modal window gives code/results their own scroll area.
         # Never nest a textbox scrollbar inside the setup page's scrollbar.
         if self.details_window is None or not self.details_window.winfo_exists():
-            self.details_window = self.ctk.CTkToplevel(self.top)
+            from ui_windows import DialogWindow
+            self.details_window = DialogWindow(self.top)
             self.details_window.withdraw()
             self.details_window.title('連接設定與測試詳細資訊')
             self.details_window.geometry('700x480')
@@ -412,8 +425,8 @@ class MCPSettingsDialog:
         self.output.insert('1.0', text)
         self.output.configure(state='disabled')
         if show:
-            self.details_window.deiconify()
-            self.details_window.lift()
+            from ui_windows import show_dialog
+            show_dialog(self.details_window, self.top, 700, 480)
 
     def copy_output(self):
         self.top.clipboard_clear()

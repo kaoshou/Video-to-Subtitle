@@ -250,6 +250,7 @@ class Service:
     def _get_status(self):
         policy = self.state.policy()
         result = {'version': 1, 'enabled': policy['enabled'],
+                  'access_mode': policy.get('options', {}).get('access_mode', 'restricted'),
                   'roots': [{'id': r['id'], 'label': r['label']} for r in policy['roots']],
                   'jobs': [{'job_id': j['id'], 'state': j['state']} for j in self.state.records('jobs')]}
         if policy['enabled']:
@@ -260,7 +261,24 @@ class Service:
                 result.update(model_ready=False, model_error=error.code)
         return result
 
-    def _list_media(self, root_id, relative='', cursor=0, limit=100):
+    def _list_media(self, root_id=None, relative='', cursor=0, limit=100, path=None):
+        if (root_id is None) == (path is None) or (path is not None and relative):
+            raise MCPError('INVALID_ARGUMENT', 'Supply either path or root_id (with optional relative).')
+        selected_name = None
+        if path is not None:
+            if not Path(path).is_absolute() or '..' in Path(path).parts:
+                raise MCPError('UNSAFE_PATH', 'Use an absolute local path without parent traversal.')
+            try:
+                info = os.lstat(path)
+            except OSError as error:
+                raise MCPError('NOT_FOUND', 'The requested path is unavailable.') from error
+            if stat.S_ISDIR(info.st_mode):
+                root_id, relative = self.state.path_location(path)
+            elif stat.S_ISREG(info.st_mode) and Path(path).suffix.lower() in _MEDIA | _SUBTITLES:
+                selected_name = Path(path).name
+                root_id, relative = self.state.path_location(str(Path(path).parent))
+            else:
+                raise MCPError('UNSAFE_PATH', 'Expected a regular supported media/subtitle file or directory.')
         candidates = []
         with self.state.directory(root_id, relative) as directory:
             with os.scandir(directory.fd if directory.fd is not None else directory.path) as entries:
@@ -268,7 +286,7 @@ class Service:
                     if index >= 4096:
                         raise MCPError('LIST_LIMIT', 'Select a smaller media directory.')
                     suffix = Path(entry.name).suffix.lower()
-                    if suffix in _MEDIA | _SUBTITLES and stat.S_ISREG(entry.stat(follow_symlinks=False).st_mode):
+                    if (selected_name is None or entry.name == selected_name) and suffix in _MEDIA | _SUBTITLES and stat.S_ISREG(entry.stat(follow_symlinks=False).st_mode):
                         candidates.append(entry.name)
         candidates.sort()
         items = []

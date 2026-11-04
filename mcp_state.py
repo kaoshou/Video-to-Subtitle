@@ -21,10 +21,10 @@ MAX_POLICY_BYTES = 1024 * 1024
 MAX_RECORD_BYTES = 8 * 1024 * 1024
 MAX_RECORDS = 4096
 KINDS = frozenset(('assets', 'jobs', 'sources', 'drafts', 'tracks', 'requests',
-                   'connections', 'backups'))
+                   'connections', 'backups', 'locations'))
 _ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z')
 _OPTIONS = frozenset(('model', 'device', 'cache', 'cache_dir', 'model_cache_dir',
-                      'stop_mode', 'backend_command'))
+                      'stop_mode', 'backend_command', 'access_mode'))
 _RESERVED = re.compile(r'(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?\Z', re.I)
 _STAGING = re.compile(r'\.mcp-[0-9a-f]{32}\Z')
 
@@ -398,6 +398,8 @@ def _validate_options(options):
         raise MCPError('invalid_policy', 'Unknown or secret-bearing policy option.')
     if options.get('stop_mode', 'cancel') not in ('finish', 'cancel'):
         raise MCPError('invalid_policy', 'Invalid stop mode.')
+    if options.get('access_mode', 'restricted') not in ('general', 'restricted'):
+        raise MCPError('invalid_policy', 'Invalid access mode.')
     for key, value in options.items():
         if key == 'backend_command':
             if (not isinstance(value, list) or not 1 <= len(value) <= 64 or
@@ -505,6 +507,8 @@ class State:
             policy = {'enabled': enabled, 'roots': selected, 'generation': old['generation'] + 1,
                       'options': {**old.get('options', {}), **options}}
             policy['admission_floor'] = old.get('admission_floor', old['generation']) if old['enabled'] else policy['generation']
+            if old.get('options', {}).get('access_mode', 'restricted') != policy['options'].get('access_mode', 'restricted'):
+                policy['admission_floor'] = policy['generation']
             if (not enabled and policy['options'].get('stop_mode') == 'finish' and
                     old['roots'] == selected):
                 admission = old['generation'] if old['enabled'] else old.get('drain_generation')
@@ -571,15 +575,51 @@ class State:
             raise MCPError('disabled', 'Local MCP access is disabled.')
         return policy
 
+    def path_location(self, path):
+        """Pin a requested directory; never expand the configured allowlist."""
+        if not isinstance(path, str) or not Path(path).is_absolute() or len(path) > 4096 or '\x00' in path or '..' in Path(path).parts:
+            raise MCPError('UNSAFE_PATH', 'Use an absolute local path without parent traversal.')
+        with _errors(), ProcessLock(self.path / 'locks', 'policy'):
+            policy = self.require_enabled()
+            if policy.get('options', {}).get('access_mode', 'restricted') != 'general':
+                for root in policy['roots']:
+                    try:
+                        relative = Path(path).relative_to(root['path']).as_posix()
+                    except ValueError:
+                        continue
+                    return root['id'], '' if relative == '.' else relative
+                raise MCPError('ROOT_NOT_ALLOWED', 'Select a path within the configured folders.')
+            with _absolute_directory(path) as directory:
+                identity = directory_identity(directory)
+            import hashlib
+            floor = policy.get('admission_floor', policy['generation'])
+            record = {'path': str(Path(path)), 'identity': identity, 'floor': floor}
+            identifier = hashlib.sha256(json.dumps(record, sort_keys=True).encode()).hexdigest()
+            self.put('locations', identifier, record)
+            return identifier, ''
+
+    def _authorized_root(self, policy, root_id):
+        root = next((root for root in policy['roots'] if root['id'] == root_id), None)
+        if root is not None:
+            return root
+        if policy.get('options', {}).get('access_mode', 'restricted') == 'general':
+            try:
+                location = self.get('locations', root_id)
+            except MCPError as error:
+                if error.code != 'NOT_FOUND':
+                    raise
+            else:
+                if location.get('floor') == policy.get('admission_floor', policy['generation']):
+                    return location
+        raise MCPError('ROOT_NOT_ALLOWED', 'The selected location is no longer authorized.')
+
     @contextlib.contextmanager
     def directory(self, root_id, relative='', *, admitted_generation=None):
         _id(root_id)
         parts = _relative(relative)
         with _errors(), contextlib.ExitStack() as stack:
             policy = self.require_enabled(admitted_generation=admitted_generation)
-            root = next((root for root in policy['roots'] if root['id'] == root_id), None)
-            if root is None:
-                raise MCPError('root_revoked', 'The selected root is not authorized.')
+            root = self._authorized_root(policy, root_id)
             if 'identity' not in root:
                 raise MCPError('root_revoked', 'Legacy root grant requires local reauthorization: remove and add the folder again.')
             directory = stack.enter_context(_absolute_directory(root['path']))
@@ -588,7 +628,7 @@ class State:
             for part in parts:
                 directory = stack.enter_context(directory.child(part))
             current = self.require_enabled(admitted_generation=admitted_generation)
-            if root not in current['roots']:
+            if root != self._authorized_root(current, root_id):
                 raise MCPError('root_revoked', 'The selected root is no longer authorized.')
             yield directory
 
@@ -598,8 +638,7 @@ class State:
         with _errors(), self.directory(root_id, '/'.join(parts[:-1]), admitted_generation=admitted_generation) as directory:
             with directory.open_read(parts[-1]) as stream:
                 current = self.require_enabled(admitted_generation=admitted_generation)
-                if not any(root['id'] == root_id for root in current['roots']):
-                    raise MCPError('root_revoked', 'The selected root is no longer authorized.')
+                self._authorized_root(current, root_id)
                 yield stream
 
     def get(self, kind, id) -> dict:

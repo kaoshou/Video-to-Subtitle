@@ -6,7 +6,9 @@ SERVER_INSTRUCTIONS = (
     'Transcription runs locally. Your AI client may send returned subtitle text '
     'to its cloud service. Private local storage is not encryption or a promise '
     'that the entire workflow stays offline. '
-    'Use get_status to obtain authorized root IDs, then list_media. Start local '
+    'Use get_status to check access_mode. In general mode call list_media with an absolute '
+    'directory or media/subtitle file path supplied by the user; no folder setup is needed. '
+    'In restricted mode use configured root IDs or paths within those roots. Start local '
     'transcription and poll get_job, or import an existing subtitle. Read the '
     'source, list_translation_drafts to discover/resume saved work by source and language '
     'without an old request ID, or prepare a new draft, get and submit every batch, '
@@ -23,7 +25,7 @@ SERVER_INSTRUCTIONS = (
 
 TOOL_DESCRIPTIONS = MappingProxyType({
     'get_status': 'Read enabled state, authorized root IDs and job summaries; no media contents.',
-    'list_media': 'List supported media and subtitles within an authorized root, using bounded pagination.',
+    'list_media': 'List supported media/subtitles by absolute directory or file path, or configured root ID. General mode needs no folder setup; restricted mode enforces configured roots.',
     'start_transcription': 'Queue local transcription of an asset using an already downloaded model. Poll the returned job ID.',
     'get_job': 'Poll one accepted job for progress, terminal errors or its completed result.',
     'cancel_job': 'Request cooperative cancellation of one job; a current native inference call may finish first.',
@@ -61,9 +63,9 @@ def _schema(properties, required=()):
 
 TOOL_SCHEMAS = MappingProxyType({
     'get_status': _schema({}),
-    'list_media': _schema({'root_id': _ID, 'relative': {'type': 'string', 'maxLength': 4096},
+    'list_media': _schema({'root_id': _ID, 'path': {'type': 'string', 'minLength': 1, 'maxLength': 4096}, 'relative': {'type': 'string', 'maxLength': 4096},
                            'cursor': {'type': 'integer', 'minimum': 0, 'maximum': 4096},
-                           'limit': {'type': 'integer', 'minimum': 1, 'maximum': 100}}, ('root_id',)),
+                           'limit': {'type': 'integer', 'minimum': 1, 'maximum': 100}}),
     'start_transcription': _schema({'asset_id': _ID, 'settings': _schema(_SETTINGS), **_REQUEST}, ('asset_id', 'request_id')),
     'get_job': _schema({'job_id': _ID}, ('job_id',)),
     'cancel_job': _schema({'job_id': _ID}, ('job_id',)),

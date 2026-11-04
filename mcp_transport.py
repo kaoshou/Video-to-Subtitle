@@ -531,6 +531,7 @@ class BrokerClient:
             if error.code == 'MCP_DISABLED' and name == 'get_status':
                 policy = self.state.policy()
                 return {'version': 1, 'enabled': False,
+                        'access_mode': policy.get('options', {}).get('access_mode', 'restricted'),
                         'roots': [{'id': root['id'], 'label': root['label']} for root in policy['roots']],
                         'jobs': [{'job_id': job['id'], 'state': job['state']} for job in self.state.records('jobs')]}
             raise

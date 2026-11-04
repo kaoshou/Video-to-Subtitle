@@ -75,7 +75,8 @@ class WebExportDialog:
         install_theme()
         self.ctk, self.tk, self.filedialog, self.messagebox = ctk, tk, filedialog, messagebox
         self.version = app_version
-        self.top = ctk.CTkToplevel(parent)
+        from ui_windows import DialogWindow, show_dialog
+        self.top = DialogWindow(parent)
         self.top.title('建立字幕網頁')
         self.top.geometry('800x740')
         self.top.minsize(720, 640)
@@ -197,7 +198,7 @@ class WebExportDialog:
         self.drop_available = register_file_drop(self.top, self.on_drop)
         if not self.drop_available:
             self.video_button.configure(text='選擇 MP4 影片…（此環境未啟用拖放）')
-        self.top.after(100, self.top.lift)
+        show_dialog(self.top, parent, 800, 740)
 
     def on_drop(self, event):
         if self.job:
