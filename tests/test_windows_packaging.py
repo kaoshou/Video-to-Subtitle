@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 import runpy
+import sys
 import tempfile
 import types
 import unittest
@@ -10,6 +11,8 @@ from unittest.mock import patch
 
 class WindowsPackaging(unittest.TestCase):
     def spec(self, mode):
+        original_path = sys.path[:]
+        self.addCleanup(lambda: sys.path.__setitem__(slice(None), original_path))
         records = {}
         temporary = tempfile.TemporaryDirectory(prefix='vts-spec-fixture-')
         self.addCleanup(temporary.cleanup)
@@ -36,7 +39,8 @@ class WindowsPackaging(unittest.TestCase):
                         'PyInstaller.utils.hooks': hooks}), patch('sys.platform', 'win32'), \
                 patch.dict(os.environ, {'VTS_WINDOWS_BUNDLE': mode, 'VTS_MCP_LAUNCHER': str(payload)}):
             runpy.run_path(str(Path(__file__).resolve().parents[1] / 'VideoToSubtitle.spec'),
-                           init_globals={'DISTPATH': temporary.name, 'Analysis': analysis, 'PYZ': build('PYZ'),
+                           init_globals={'SPECPATH': str(Path(__file__).resolve().parents[1]),
+                                         'DISTPATH': temporary.name, 'Analysis': analysis, 'PYZ': build('PYZ'),
                                          'EXE': build('EXE'), 'COLLECT': build('COLLECT')})
         return records
 
