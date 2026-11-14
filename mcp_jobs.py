@@ -8,6 +8,63 @@ from web_export_form import language_label
 STATES = {'queued':'等待處理', 'preparing':'準備中', 'running':'處理中',
           'validating':'檢查成果', 'publishing':'儲存成果', 'cancelling':'取消中',
           'succeeded':'已完成', 'failed':'未完成', 'cancelled':'已取消', 'interrupted':'已中斷'}
+
+
+def clear_completed_jobs(state):
+    """Dismiss successful cards locally; retain results and retry references."""
+    count = 0
+    for item in state.records('jobs'):
+        if item.get('state') != 'succeeded' or item.get('hidden_from_history'):
+            continue
+        with state.mutation('jobs', item['id']) as job:
+            if job.get('state') == 'succeeded' and not job.get('hidden_from_history'):
+                job['hidden_from_history'] = True
+                count += 1
+    return count
+
+
+def dismiss_job(state, job_id):
+    from mcp_state import MCPError
+    with state.mutation('jobs', job_id) as job:
+        if job.get('state') not in ('succeeded', 'failed', 'cancelled', 'interrupted'):
+            raise MCPError('WORK_ACTIVE', '處理中的工作不能從清單移除。')
+        job['hidden_from_history'] = True
+
+
+def filter_jobs(jobs, selection='全部工作'):
+    return [job for job in jobs if not job.get('hidden_from_history') and
+            (selection != '失敗／中斷' or job.get('state') in ('failed', 'interrupted'))]
+
+
+def diagnostic_report(job):
+    """Export explicit metadata only; omit transcript, paths, prompts and tokens."""
+    import platform
+    import tomllib
+    try:
+        with Path(__file__).with_name('pyproject.toml').open('rb') as stream:
+            version = tomllib.load(stream)['project']['version']
+    except (OSError, ValueError, KeyError):
+        version = 'unknown'
+    fields = ('id', 'kind', 'state', 'stage', 'created_at', 'started_at',
+              'finished_at', 'elapsed_seconds')
+    result = {key: job[key] for key in fields if key in job}
+    settings = job.get('arguments', {}).get('settings', {})
+    result['requested_settings'] = {key: settings[key] for key in
+        ('model', 'device', 'language', 'force_zh_tw', 'task', 'batch_acceleration',
+         'batch_mode', 'batch_size') if key in settings}
+    actual = job.get('transcription_report', {}).get('transcription') or job.get('result', {}).get('transcription')
+    result['actual_transcription'] = ({key: actual[key] for key in ('model', 'device', 'backend') if key in actual}
+                                      if actual else None)
+    error = job.get('error', {})
+    result['error_code'] = error.get('code')
+    diagnostic = error.get('diagnostic') or job.get('worker_diagnostic') or {}
+    result['diagnostic'] = {'exception': diagnostic.get('exception'), 'frames': [
+        {'file': str(frame.get('file', '')).replace('\\', '/').rsplit('/', 1)[-1],
+         'line': frame.get('line'), 'function': frame.get('function')}
+        for frame in diagnostic.get('frames', [])[-8:]]}
+    return {'schema_version': 1, 'app_version': version, 'system': platform.system(),
+            'machine': platform.machine(), 'python': platform.python_version(), 'job': result}
+
 STAGES = {'snapshot':'建立工作副本', 'transcription':'辨識語音並產生字幕',
           'model':'準備辨識模型', 'audio':'處理音訊', 'recognition':'辨識語音',
           'output':'整理字幕', 'retry':'調整批次後重新辨識',
@@ -41,6 +98,8 @@ def job_card(job):
     elif state == 'queued':
         description = '已接受工作，等待前一項工作釋放運算資源。'
     reports = ([result['transcription']] if result.get('transcription') else result.get('transcriptions', []))
+    if not reports and job.get('transcription_report', {}).get('transcription'):
+        reports = [job['transcription_report']['transcription']]
     model_lines = []
     for info in reports:
         device = 'MLX' if info['device'] in ('mlx', 'mps') else info['device'].upper()
@@ -50,6 +109,11 @@ def job_card(job):
         technical += '\n輸出位置：' + result['folder']
     if job.get('error'):
         technical += '\n' + job['error'].get('code', '') + ': ' + job['error'].get('message', '')[:1000]
+    diagnostic = job.get('error', {}).get('diagnostic') or job.get('worker_diagnostic')
+    if diagnostic:
+        technical += '\n例外類型：' + diagnostic.get('exception', '')
+        for frame in diagnostic.get('frames', [])[-8:]:
+            technical += f"\n{frame['file']}:{frame['line']} · {frame['function']}"
     for info in reports:
         technical += '\n辨識引擎：' + info.get('backend', '未記錄')
     project = {'opencam':'OpenCam', 'evercam':'EverCam', 'mp4':'MP4'}.get(

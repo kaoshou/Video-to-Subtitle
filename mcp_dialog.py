@@ -117,7 +117,10 @@ class MCPSettingsDialog:
         self.description(verify, '通過測試後，回到 AI 對話提供影片完整路徑，並說：\n「請將這部影片轉成繁體中文字幕。」\n本機測試不代表 AI 工具已完成連接，仍需在 AI 工具中確認。')
         jobs = self.pages['工作狀態']
         self.description(jobs, '查看 AI 發起的工作、取消處理中的工作，或開啟已完成的網頁。')
-        self.button(jobs, '更新工作狀態', self.refresh_jobs).pack(anchor='w', padx=16, pady=8)
+        self.job_filter = tk.StringVar(master=self.top, value='全部工作')
+        ctk.CTkSegmentedButton(jobs, values=['全部工作', '失敗／中斷'], variable=self.job_filter,
+                              command=lambda _: self.refresh_jobs()).pack(fill='x', padx=16, pady=8)
+        self.action_grid(jobs, (('更新工作狀態', self.refresh_jobs), ('清除已完成工作', self.clear_completed_jobs)))
         self.jobs_frame = ctk.CTkFrame(jobs, fg_color='transparent', height=1)
         self.jobs_frame.pack(fill='x', padx=12, pady=8)
         self.description(self.jobs_frame, '尚未載入工作。按「更新工作狀態」查看。')
@@ -468,18 +471,28 @@ class MCPSettingsDialog:
             self._submit(lambda: export_mcpb(Path(path), connection_command(self.state)),
                          lambda value: self._notice('MCPB 已匯出；請在 Claude Desktop 審閱並安裝，尚未驗證實際連線。'))
 
+    def clear_completed_jobs(self):
+        from mcp_jobs import clear_completed_jobs
+        def finished(count):
+            self.refresh_jobs()
+            self._notice(f'已從清單移除 {count} 個已完成工作；字幕、翻譯與播放器均保留。')
+        self._submit(lambda: clear_completed_jobs(self.state), finished)
+
     def refresh_jobs(self):
         self._jobs_due = time.monotonic() + 2
         def display(jobs):
-            from mcp_jobs import job_card
-            signature = json.dumps(jobs, sort_keys=True, ensure_ascii=False)
+            from mcp_jobs import job_card, filter_jobs
+            selection = self.job_filter.get()
+            jobs = filter_jobs(jobs, selection)
+            signature = selection + json.dumps(jobs, sort_keys=True, ensure_ascii=False)
             if signature == self._jobs_signature:
                 return
             self._jobs_signature = signature
             for child in self.jobs_frame.winfo_children():
                 child.destroy()
             if not jobs:
-                self.description(self.jobs_frame, '目前沒有工作。\n回到 AI 對話提供影片路徑，即可開始產生字幕。')
+                self.description(self.jobs_frame, '目前沒有失敗或中斷的工作。' if selection == '失敗／中斷' else
+                                 '目前沒有工作。\n回到 AI 對話提供影片路徑，即可開始產生字幕。')
             for job in jobs:
                 card = job_card(job)
                 row = self.ctk.CTkFrame(self.jobs_frame, fg_color=CARD, border_width=1, border_color=BORDER)
@@ -517,13 +530,17 @@ class MCPSettingsDialog:
                         self._expanded_jobs.add(key)
                         label.pack(fill='x', padx=14, pady=(0, 12))
                 self.button(actions, '詳細資訊', toggle).pack(side='left')
+                extra = [('匯出診斷資料…', lambda key=job['id']: self.export_diagnostic(key))]
+                if job['state'] in _TERMINAL:
+                    extra.append(('從清單移除', lambda key=job['id']: self.dismiss_job(key)))
+                self.action_grid(row, extra)
                 if job['id'] in self._expanded_jobs:
                     technical.pack(fill='x', padx=14, pady=(0, 12))
             active = sum(job['state'] not in _TERMINAL for job in jobs)
             completed = sum(job['state'] == 'succeeded' for job in jobs)
             self._notice(f'共 {len(jobs)} 個工作 · {active} 個處理中 · {completed} 個已完成。關閉此視窗不影響工作。')
         def load():
-            jobs = self.state.records('jobs')
+            jobs = [job for job in self.state.records('jobs') if not job.get('hidden_from_history')]
             for job in jobs:
                 if job.get('asset_id'):
                     try:
@@ -534,6 +551,23 @@ class MCPSettingsDialog:
                     job['project_type'] = asset.get('project', {}).get('type')
             return jobs
         self._submit(load, display, quiet=True)
+
+    def dismiss_job(self, job_id):
+        from mcp_jobs import dismiss_job
+        self._submit(lambda: dismiss_job(self.state, job_id), lambda _: self.refresh_jobs())
+
+    def export_diagnostic(self, job_id):
+        from mcp_jobs import diagnostic_report
+        from safe_files import atomic_write_text
+        path = self.filedialog.asksaveasfilename(parent=self.top, title='匯出工作診斷資料',
+            initialfile=f'字幕工作診斷-{job_id[:8]}.json', defaultextension='.json',
+            filetypes=[('JSON 診斷資料', '*.json')])
+        if not path:
+            return
+        def save():
+            report = diagnostic_report(self.state.get('jobs', job_id))
+            atomic_write_text(path, json.dumps(report, ensure_ascii=False, indent=2) + '\n')
+        self._submit(save, lambda _: self._notice('已匯出診斷資料；不包含字幕內容、完整路徑或前導提示。'))
 
     def open_result(self, job_id):
         from mcp_runtime import open_job_result
@@ -550,8 +584,11 @@ class MCPSettingsDialog:
                     '需先停用 MCP 並等待工作及模型程序正常結束。刪除無法復原。\n'
                     + ('上次清理中斷；是否繼續？' if plan['resume'] else '是否清除上述全部私人工作資料？'))
             if self.messagebox.askyesno('確認清理私人工作資料', text, parent=self.top):
+                def cleaned(result):
+                    self.refresh_jobs()
+                    self._notice(f"已清理私人工作資料（{result['removed_bytes']} bytes）；保留原片、成果、模型與備份。")
                 self._submit(lambda: apply_cleanup(self.state, plan, consent=True),
-                             lambda result: self._notice(f"已清理私人工作資料（{result['removed_bytes']} bytes）；保留原片、成果、模型與備份。"))
+                             cleaned)
             else:
                 self._notice('已取消清理；私人工作資料保留。')
         self._submit(lambda: preview_cleanup(self.state), confirm)

@@ -53,6 +53,38 @@ class ServiceFixture(unittest.TestCase):
 
 
 class ServiceTests(ServiceFixture):
+    def test_diagnostic_records_code_location_without_exception_content(self):
+        try:
+            raise OSError('private subtitle text and C:/private/media.mp4')
+        except OSError as error:
+            diagnostic = self.api._failure_diagnostic(error)
+        self.assertEqual(diagnostic['exception'], 'OSError')
+        self.assertEqual(diagnostic['frames'][-1]['file'], 'test_mcp_service.py')
+        self.assertNotIn('private subtitle', str(diagnostic))
+        self.assertNotIn('C:/private', str(diagnostic))
+
+    def test_validation_failure_keeps_model_and_identifies_bad_timestamp(self):
+        class Fake:
+            def __init__(self, **kwargs):
+                self.model_size = kwargs['model_size']
+                self.device = 'cpu'
+                self.model_type = 'faster-whisper'
+                self.last_output_language = 'zh-TW'
+            def load_model(self, **kwargs): pass
+            def run(self, path, **kwargs):
+                target = Path(path).with_suffix('.srt')
+                target.write_text('1\n00:00:01,000 --> 00:00:01,000\n測試\n', encoding='utf-8')
+                return str(target)
+        self.service.close()
+        self.service = self.api.Service(self.state, transcribe_factory=Fake)
+        job = self.service.call('start_transcription', {'asset_id': self.assets()['lesson.mp4'],
+            'settings': {'model': 'large-v3-turbo', 'device': 'cpu', 'force_zh_tw': True},
+            'request_id': 'bad-timing'})
+        result = self.wait_job(job['job_id'])
+        self.assertEqual(result['state'], 'failed')
+        self.assertIn('結束時間必須晚於開始時間', result['error']['message'])
+        self.assertEqual(result['transcription_report']['transcription']['model'], 'large-v3-turbo')
+
     def test_general_mode_lists_direct_paths_without_changing_allowlist(self):
         self.state.configure(True, [], access_mode='general')
         listed = self.service.call('list_media', {'path': str(self.media)})

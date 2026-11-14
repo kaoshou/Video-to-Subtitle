@@ -54,6 +54,15 @@ def _stream_hash(stream):
     return digest.hexdigest()
 
 
+def _failure_diagnostic(error):
+    """Bounded code locations only: omit exception text, locals and user paths."""
+    import traceback
+    return {'exception': type(error).__name__,
+            'frames': [{'file': Path(frame.filename).name, 'line': frame.lineno,
+                        'function': frame.name}
+                       for frame in traceback.extract_tb(error.__traceback__)[-8:]]}
+
+
 def _ready(settings):
     from transcriber import inspect_model_cache
     status = inspect_model_cache(settings['model'], settings.get('cache_dir'), settings['device'])
@@ -98,8 +107,9 @@ def _child_run(settings, media_path, connection, cancelled):
         connection.send_bytes(json.dumps({'ok': bool(result), **_execution_report(engine, settings)}).encode('utf-8'))
     except MCPError as error:
         connection.send_bytes(json.dumps({'error': error.code}).encode('utf-8'))
-    except Exception:
-        connection.send_bytes(b'{"error":"TRANSCRIPTION_FAILED"}')
+    except Exception as error:
+        connection.send_bytes(json.dumps({'error': 'TRANSCRIPTION_FAILED',
+                                          'diagnostic': _failure_diagnostic(error)}).encode('utf-8'))
     finally:
         connection.close()
 
@@ -366,8 +376,12 @@ class Service:
             raise MCPError('INVALID_SUBTITLE', 'Subtitle exceeds the 2 MiB input limit.')
         try:
             cues = parse_subtitles(raw.decode('utf-8-sig'), suffix, 'subtitle')
-        except (ValueError, UnicodeError) as error:
-            raise MCPError('INVALID_SUBTITLE', 'Invalid UTF-8 SRT/VTT source.') from error
+        except UnicodeError as error:
+            raise MCPError('INVALID_SUBTITLE', '字幕不是有效的 UTF-8 編碼。') from error
+        except ValueError as error:
+            # Parser diagnostics contain a fixed filename, line and reason,
+            # never the source path or subtitle text.
+            raise MCPError('INVALID_SUBTITLE', str(error)) from error
         for cue in cues:
             cue['cue_id'] = secrets.token_hex(16)
         return raw, cues
@@ -759,7 +773,7 @@ class Service:
     def _get_job(self, job_id):
         job = self.state.get('jobs', job_id)
         result = {k: job[k] for k in ('state', 'stage', 'error', 'progress', 'created_at',
-                                    'started_at', 'finished_at', 'elapsed_seconds') if k in job}
+                                    'started_at', 'finished_at', 'elapsed_seconds', 'worker_diagnostic') if k in job}
         result['job_id'] = job_id
         with ProcessLock(self.state.path / 'locks', 'policy'):
             if self.state.policy()['enabled'] and ('result' in job or job.get('arguments', {}).get('execution_plan')):
@@ -773,6 +787,8 @@ class Service:
                         result['execution_plan'] = job['arguments']['execution_plan']
                     if 'result' in job:
                         result['result'] = job['result']
+                    if 'transcription_report' in job:
+                        result['transcription_report'] = job['transcription_report']
         return result
 
     def _cancel_job(self, job_id):
@@ -858,9 +874,10 @@ class Service:
             except MCPError as error:
                 self._update_job(id, state='cancelled' if error.code == 'CANCELLED' else 'failed',
                                  error={'code': error.code, 'message': str(error)})
-            except Exception:
+            except Exception as error:
                 self._update_job(id, state='failed', error={'code': 'JOB_FAILED',
-                                                          'message': 'Local job failed; inspect local diagnostics.'})
+                                                          'message': 'Local job failed (' + type(error).__name__ + ').',
+                                                          'diagnostic': _failure_diagnostic(error)})
             finally:
                 with self._guard:
                     self._events.pop(id, None)
@@ -891,6 +908,9 @@ class Service:
             self._update_job(job['id'], state='running', stage=job['kind'])
             if job['kind'] == 'transcription':
                 report = self._transcribe(job, media)
+                # Keep verified execution metadata even if validation or
+                # registration fails after the recognizer has finished.
+                self._update_job(job['id'], transcription_report=report)
                 self._checkpoint(job)
                 if self._asset_hash(asset, job['generation']) != version:
                     raise MCPError('SOURCE_CHANGED', 'Media changed during transcription.')
@@ -940,8 +960,11 @@ class Service:
                 except MCPError as error:
                     failure = error
                     cancel.set()
-                if message is None and read.poll(.05):
+                if message is None and failure is None:
                     try:
+                        if not read.poll(.05):
+                            process.join(.05)
+                            continue
                         event = json.loads(read.recv_bytes(4096).decode())
                         if isinstance(event, dict) and event.get('event') == 'progress':
                             value = {k: v for k, v in event.items() if k != 'event'}
@@ -952,13 +975,21 @@ class Service:
                             message = event
                     except (ValueError, OSError, EOFError):
                         failure = MCPError('TRANSCRIPTION_FAILED', 'Invalid worker response.')
+                        cancel.set()
                 process.join(.05)
             process.join()  # MUST exit before releasing the shared inference lock.
-            while read.poll():
+            # The final response ends this protocol. On Windows, polling a
+            # drained named pipe after its writer exits can raise WinError 109.
+            # Never discard a received result by probing the closed pipe again.
+            while message is None and failure is None:
                 try:
+                    if not read.poll():
+                        break
                     event = json.loads(read.recv_bytes(4096).decode())
                 except EOFError:
                     break
+                except (ValueError, OSError) as error:
+                    raise MCPError('TRANSCRIPTION_FAILED', 'Worker connection ended without a valid result.') from error
                 if isinstance(event, dict) and event.get('event') == 'progress':
                     value = {k: v for k, v in event.items() if k != 'event'}
                     if not valid_progress(value):
@@ -969,6 +1000,9 @@ class Service:
             if failure:
                 raise failure
             if not isinstance(message, dict) or not message.get('ok'):
+                if isinstance(message, dict) and message.get('diagnostic'):
+                    diagnostic = message['diagnostic']
+                    self._update_job(job['id'], worker_diagnostic=diagnostic)
                 raise MCPError((message or {}).get('error', 'TRANSCRIPTION_FAILED'), 'Transcription did not complete.')
             return {'transcription': message['transcription'], 'batch_decision': message.get('batch_decision'),
                     'output_language': output_language(message.get('output_language')), 'review': message.get('review')}

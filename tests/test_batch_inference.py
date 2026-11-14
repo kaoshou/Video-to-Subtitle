@@ -79,6 +79,15 @@ class BatchInference(unittest.TestCase):
                 if fmt == 'json':
                     self.assertEqual(json.loads(text)[0]['start'], 55)
 
+    def test_mcp_translation_keeps_fixed_private_filename(self):
+        for accelerated in (False, True):
+            with self.subTest(accelerated=accelerated):
+                path = Path(self.run_job(task='translate', _tag_language=False,
+                                         batch_acceleration=accelerated, batch_size=4))
+                self.assertEqual(path.name, 'media.srt')
+                self.assertEqual(self.worker.last_output_language, 'en')
+                path.unlink()
+
     def test_auto_plans_after_model_load_and_reprobes_each_file(self):
         from batch_policy import ResourceSnapshot
         self.worker.model_size, self.worker.compute_type = 'small', 'float16'

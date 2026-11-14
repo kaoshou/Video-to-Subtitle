@@ -1013,8 +1013,6 @@ class SubtitleTranscriber:
                 base = os.path.splitext(os.path.abspath(file_path))[0]
                 if options['_tag_language']:
                     base += '.' + self.last_output_language
-                elif task == 'translate':
-                    base += '.en'
                 # Exclusive safe publication preserves existing subtitles and rejects links.
                 with SafeDirectory(os.path.dirname(base)) as destination:
                     counter = 0
@@ -1239,7 +1237,7 @@ class SubtitleTranscriber:
             log_callback(f"影片長度: {datetime.timedelta(seconds=int(total_duration))}")
         
         ext = f".{output_format.lower()}"
-        suffix = '.' + self.last_output_language if _tag_language else '.en' if task == 'translate' else ''
+        suffix = '.' + self.last_output_language if _tag_language else ''
         
         base_output_path = _output_path or (os.path.splitext(file_path)[0] + suffix + ext)
         output_path = base_output_path
