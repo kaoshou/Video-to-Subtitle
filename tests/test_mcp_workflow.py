@@ -65,14 +65,16 @@ class ProgressTests(ServiceFixture):
                 kwargs['stage_callback']('recognition', 'no raw transcript')
                 kwargs['progress_callback'](.5)
                 entered.set()
-                release.wait(3)
+                release.wait(60)
                 output = Path(path).with_suffix('.srt'); output.write_text(SRT)
                 return str(output)
         self.service.close()
         self.service = self.api.Service(self.state, transcribe_factory=Engine)
         asset = self.assets()['lesson.mp4']
         first = self.service.call('start_transcription', {'asset_id': asset, 'request_id': 'first'})
-        self.assertTrue(entered.wait(2))
+        # Windows CI may spend several seconds validating private ACLs and
+        # publishing progress. Synchronize on the event, not runner speed.
+        self.assertTrue(entered.wait(30), self.service.call('get_job', first))
         live = self.service.call('get_job', first)
         self.assertEqual(live['progress'], {'stage': 'recognition', 'fraction': .5})
         self.assertIn('started_at', live)
