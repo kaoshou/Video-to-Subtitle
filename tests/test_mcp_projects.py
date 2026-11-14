@@ -111,6 +111,19 @@ class ProjectPlayers(ServiceFixture):
         self.assertEqual((folder / 'index.html').read_bytes(), index.read_bytes())
 
     def test_changed_project_during_build_is_never_published(self):
+        import contextlib
+        import traceback
+        import mcp_state
+        original_errors = mcp_state._errors
+        @contextlib.contextmanager
+        def diagnosed_errors(*args, **kwargs):
+            try:
+                with original_errors(*args, **kwargs):
+                    yield
+            except MCPError as error:
+                if error.code == 'INVALID_STATE':
+                    traceback.print_exc()
+                raise
         item, track = self.project('evercam')
         from mcp_projects import build_project
         def changed(*args):
@@ -118,7 +131,7 @@ class ProjectPlayers(ServiceFixture):
             config = self.media / 'config.js'
             config.write_bytes(config.read_bytes() + b'\n//changed')
             return built
-        with patch('mcp_service.build_project', side_effect=changed):
+        with patch('mcp_service.build_project', side_effect=changed), patch('mcp_state._errors', diagnosed_errors):
             accepted = self.service.call('export_player', dict(asset_id=item['asset_id'],
                 track_ids=[track], request_id='change-during-build'))
             result = self.wait_job(accepted['job_id'])
